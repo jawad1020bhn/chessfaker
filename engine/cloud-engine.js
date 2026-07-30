@@ -1,12 +1,12 @@
 /**
  * Chess Hint Assistant — Cloud Engine v9.0.0
  *
- * 3-API Rotation Engine Metadata
+ * Cloud Provider Metadata
  *
  * v9.0.0: Metadata retained for the rebuilt Standard/Human-like style pipeline.
  * v8.5.0: Removed unused duplicate cache (localCache/clearLocalCache/getCacheStats)
- *         — background.js has its own memoryCache and is the only consumer.
- * v7.5.0 — API Rotation & Anti-Ban:
+ *         — background.js owns caching through its central coordinator.
+ * v7.5.0 — Earlier API rotation metadata:
  *  - Lichess Masters Explorer as third analysis source
  *  - Health-based weighted round-robin API rotation
  *  - Phase-aware source selection (openings → masters, midgame → engines)

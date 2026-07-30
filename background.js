@@ -1,8 +1,8 @@
-importScripts('engine/core-utils.js');
+importScripts('engine/core-utils.js', 'engine/api-coordinator.js');
 
 /**
  * Chess Hint Assistant — Background Service Worker v9.0.0
- * 3-API Rotation Engine with Anti-Ban Protection
+ * Centralized API reliability, cache, quota, and cooldown protection
  *
  * v9.0.0 — Three-mode style engine, Human-like selection setting,
  *            stateful FEN reconciliation, safer rendering, and regression coverage.
@@ -10,12 +10,9 @@ importScripts('engine/core-utils.js');
  * v8.5.0 — Bug-fix & Enhancement Release:
  *  - FIX: Removed dead message handlers ('position_update_from_panel', 'position_changed',
  *         'position_update', 'analysis_info') and the dead handlePositionUpdate() path
- *  - FIX: smartThrottling & minimalFootprint settings now actually gate rate-limiter jitter
- *         and request spacing (previously placebo toggles)
  *  - FIX: Masters Explorer score now correctly normalised to White's perspective
  *  - FIX: Masters Explorer multiPv now respects user setting instead of hardcoded 3
  *  - FIX: Fallback loop no longer re-calls sources that failed non-fatally (e.g. 404)
- *  - FIX: cacheFirstMode cache keys now match runtime keys exactly
  *  - FIX: hintUsageTracker now resets on player_color_changed (was only reset on new game)
  *  - FIX: inFlightRequests rejection-safe (no orphan entries on unexpected throw)
  *  - FIX: memoryCache LRU eviction when over cap (was only TTL-based)
@@ -26,13 +23,12 @@ importScripts('engine/core-utils.js');
  *  - ENH (I): Tracks player-move / engine-recommendation correlation; sidepanel reads it
  *  - ENH (J): ECO openings now loaded from engine/eco.json (with inline fallback)
  *
- * v7.5.0 — API Rotation & Anti-Ban (preserved):
+ * v7.5.0 — Earlier API rotation design (superseded by the central coordinator):
  *  - 3-API rotation (Chess-API.com, Lichess Cloud Eval, Lichess Masters Explorer)
  *  - Health-based weighted round-robin — distributes load evenly across APIs
  *  - Lichess Masters Explorer as third source — human grandmaster move choices
  *  - Phase-aware source selection — openings prefer master games, midgame prefers engines
  *  - Cache-only enrichment — never makes extra API calls for PV enrichment
- *  - Anti-ban jitter on all rate limiters — random ±200-300ms spacing
  *  - Adaptive backoff escalation — 60s→120s→300s for repeated rate limits
  *
  * v7.3.0 preserved features:
@@ -70,9 +66,6 @@ const DEFAULT_SETTINGS = {
   showCandidateMoves: true,
   coachModeEnabled: true,
   coachModeMaxHints: 3,
-  minimalFootprint: false,
-  smartThrottling: true,
-  cacheFirstMode: false,
   // v8.5.0 enhancements
   depthTarget: 0,                  // 0 = no minimum; otherwise min depth for L4/L5
   correlationThreshold: 100        // 100 = off; otherwise % cap that downgrades L5→L3
@@ -99,7 +92,7 @@ function shouldAnalyzePosition(fen, playerColor) {
   }
   const activeColor = fen.split(' ')[1] || 'w';
   const isPlayerTurn = activeColor === playerColor;
-  if (fen === turnState.lastAnalyzedFen) {
+  if (ApiReliability.canonicalAnalysisFen(fen) === ApiReliability.canonicalAnalysisFen(turnState.lastAnalyzedFen)) {
     return { shouldAnalyze: false, reason: 'same_position', isPlayerTurn };
   }
   if (!isPlayerTurn) {
@@ -132,337 +125,186 @@ function resetAnalysisState() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// ─── Adaptive Circuit Breaker v3 — Escalating Backoff ────────────────
+// ─── Central API Request Coordinator ─────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
-class AdaptiveCircuitBreaker {
-  constructor(name, config = {}) {
-    this.name = name;
-    this.failures = 0;
-    this.lastFailureTime = 0;
-    this.state = 'closed';
-    this.failureThreshold = config.failureThreshold || 3;
-    this.defaultRecoveryTime = config.defaultRecoveryTime || 20000;
-    this.currentRecoveryTime = this.defaultRecoveryTime;
-    this.maxRecoveryTime = config.maxRecoveryTime || 300000; // v7.5.0: max 5 min
-    this.halfOpenTries = 0;
-    this.halfOpenMaxTries = 2;
-    this.successCount = 0;
-    this.lastSuccessTime = 0;
-    this.consecutiveFailures = 0;
-    this.rateLimitHits = 0; // v7.5.0: track rate limit count for escalation
-  }
-
-  recordFailure(errorType = 'unknown') {
-    this.failures++;
-    this.consecutiveFailures++;
-    this.lastFailureTime = Date.now();
-
-    switch (errorType) {
-      case 'rate_limit':
-        this.rateLimitHits++;
-        // v7.5.0: Escalating backoff for repeated rate limits
-        if (this.rateLimitHits >= 3) {
-          this.currentRecoveryTime = Math.min(300000, 60000 * this.rateLimitHits);
-        } else if (this.name.includes('lichess')) {
-          this.currentRecoveryTime = Math.min(this.maxRecoveryTime, 60000 * this.rateLimitHits);
-        } else {
-          this.currentRecoveryTime = Math.min(this.maxRecoveryTime, 30000 * this.rateLimitHits);
-        }
-        break;
-      case 'server_error':
-        this.currentRecoveryTime = 20000;
-        break;
-      case 'timeout':
-        this.currentRecoveryTime = 15000;
-        break;
-      case 'network':
-        this.currentRecoveryTime = 10000;
-        break;
-      case 'not_found':
-        return;
-      case 'circuit_open':
-        return;
-      default:
-        this.currentRecoveryTime = this.defaultRecoveryTime;
-    }
-
-    if (this.consecutiveFailures >= this.failureThreshold) {
-      this.state = 'open';
-      console.warn(`[Background] Circuit breaker OPEN for ${this.name} — ${this.consecutiveFailures} consecutive failures (recovery: ${this.currentRecoveryTime}ms)`);
-    }
-  }
-
-  recordSuccess() {
-    this.failures = 0;
-    this.consecutiveFailures = 0;
-    this.state = 'closed';
-    this.halfOpenTries = 0;
-    this.successCount++;
-    this.lastSuccessTime = Date.now();
-    this.currentRecoveryTime = this.defaultRecoveryTime;
-    this.rateLimitHits = Math.max(0, this.rateLimitHits - 1); // Gradually reduce escalation
-  }
-
-  canTry() {
-    if (this.state === 'closed') return true;
-    if (this.state === 'open') {
-      const elapsed = Date.now() - this.lastFailureTime;
-      if (elapsed >= this.currentRecoveryTime) {
-        this.state = 'half-open';
-        this.halfOpenTries = 0;
-        console.log(`[Background] Circuit breaker HALF-OPEN for ${this.name} — testing recovery`);
-        return true;
-      }
-      return false;
-    }
-    if (this.state === 'half-open') {
-      return this.halfOpenTries < this.halfOpenMaxTries;
-    }
-    return false;
-  }
-
-  incrementHalfOpen() {
-    this.halfOpenTries++;
-  }
-
-  reset() {
-    this.failures = 0;
-    this.consecutiveFailures = 0;
-    this.state = 'closed';
-    this.halfOpenTries = 0;
-    this.currentRecoveryTime = this.defaultRecoveryTime;
-    this.rateLimitHits = 0;
-  }
-
-  getStatus() {
-    return {
-      name: this.name,
-      state: this.state,
-      failures: this.failures,
-      consecutiveFailures: this.consecutiveFailures,
-      successCount: this.successCount,
-      lastFailureTime: this.lastFailureTime,
-      lastSuccessTime: this.lastSuccessTime,
-      currentRecoveryTime: this.currentRecoveryTime,
-      rateLimitHits: this.rateLimitHits,
-      healthScore: this.getHealthScore()
-    };
-  }
-
-  getHealthScore() {
-    if (this.consecutiveFailures === 0 && this.rateLimitHits === 0) return 100;
-    if (this.state === 'open') return 0;
-    if (this.state === 'half-open') return 30;
-    return Math.max(10, 100 - (this.consecutiveFailures * 20) - (this.rateLimitHits * 10));
-  }
-}
-
-// ─── Create Circuit Breakers ─────────────────────────────────────────
-const breakers = {
-  chessApi: new AdaptiveCircuitBreaker('chess-api', {
-    failureThreshold: 4,
-    defaultRecoveryTime: 15000,
-    maxRecoveryTime: 180000
-  }),
-  lichessCloudEval: new AdaptiveCircuitBreaker('lichess-cloud-eval', {
-    failureThreshold: 4,
-    defaultRecoveryTime: 20000,
-    maxRecoveryTime: 300000
-  }),
-  lichessMastersExplorer: new AdaptiveCircuitBreaker('lichess-masters-explorer', {
-    failureThreshold: 4,
-    defaultRecoveryTime: 20000,
-    maxRecoveryTime: 300000
-  }),
-  lichessOpeningExplorer: new AdaptiveCircuitBreaker('lichess-opening-explorer', {
-    failureThreshold: 4,
-    defaultRecoveryTime: 15000
-  }),
-  lichessTablebase: new AdaptiveCircuitBreaker('lichess-tablebase', {
-    failureThreshold: 3,
-    defaultRecoveryTime: 15000
-  })
-};
-
-// ═══════════════════════════════════════════════════════════════════════
-// ─── Sliding Window Rate Limiter v2 — With Anti-Ban Jitter ───────────
-// ═══════════════════════════════════════════════════════════════════════
-// v8.5.0: Now respects live settings — smartThrottling gates jitter,
-//         minimalFootprint roughly doubles the spacing & halves the cap.
-class SlidingWindowRateLimiter {
-  constructor(config = {}) {
-    this.windows = new Map();
-    this.maxRequests = config.maxRequests || 20;
-    this.windowMs = config.windowMs || 60000;
-    this.minSpacing = config.minSpacing || 1000;
-    this.jitterMs = config.jitterMs || 200;
-    this.lastRequestTime = 0;
-    // v8.5.0: live settings overrides (read on each acquire)
-    this._settingsProvider = null;
-  }
-
-  setSettingsProvider(fn) { this._settingsProvider = fn; }
-
-  _liveSettings() {
-    if (typeof this._settingsProvider === 'function') {
-      try { return this._settingsProvider() || {}; } catch (_) { return {}; }
-    }
-    return {};
-  }
-
-  async acquire() {
-    const s = this._liveSettings();
-    const smartOn = s.smartThrottling !== false; // default ON
-    const minimal = s.minimalFootprint === true;
-
-    // v8.5.0: minimalFootprint doubles spacing & halves throughput.
-    const spacingMultiplier = minimal ? 2.0 : 1.0;
-    const capMultiplier = minimal ? 0.5 : 1.0;
-    // Jitter is gated by smartThrottling (off → no jitter, deterministic spacing).
-    const jitter = smartOn ? this.jitterMs : 0;
-
-    const now = Date.now();
-    const effectiveSpacing = (this.minSpacing * spacingMultiplier) + (jitter > 0 ? Math.random() * jitter : 0);
-
-    if (now - this.lastRequestTime < effectiveSpacing) {
-      await new Promise(r => setTimeout(r, effectiveSpacing - (now - this.lastRequestTime)));
-    }
-
-    let window = this.windows.get('default');
-    if (!window || now - window.start >= this.windowMs) {
-      window = { count: 0, start: now };
-      this.windows.set('default', window);
-    }
-
-    const effectiveCap = Math.max(1, Math.floor(this.maxRequests * capMultiplier));
-    if (window.count >= effectiveCap) {
-      const waitTime = this.windowMs - (now - window.start) + 100 + (smartOn ? Math.random() * 500 : 0);
-      console.warn(`[Background] Rate limiter: at limit (${window.count}/${effectiveCap} per ${this.windowMs / 1000}s), waiting ${Math.round(waitTime / 1000)}s`);
-      await new Promise(r => setTimeout(r, waitTime));
-      window = { count: 0, start: Date.now() };
-      this.windows.set('default', window);
-    }
-
-    window.count++;
-    this.lastRequestTime = Date.now();
-  }
-}
-
-// v7.5.0: More conservative rate limits with jitter to avoid bans
-const rateLimiters = {
-  chessApi: new SlidingWindowRateLimiter({ maxRequests: 20, windowMs: 60000, minSpacing: 1200, jitterMs: 300 }),
-  lichessCloudEval: new SlidingWindowRateLimiter({ maxRequests: 12, windowMs: 60000, minSpacing: 2500, jitterMs: 400 }),
-  lichessMastersExplorer: new SlidingWindowRateLimiter({ maxRequests: 12, windowMs: 60000, minSpacing: 2500, jitterMs: 400 }),
-  lichessOpeningExplorer: new SlidingWindowRateLimiter({ maxRequests: 15, windowMs: 60000, minSpacing: 2000, jitterMs: 300 }),
-  lichessTablebase: new SlidingWindowRateLimiter({ maxRequests: 25, windowMs: 60000, minSpacing: 1000, jitterMs: 200 })
-};
-
-// v8.5.0: Live settings snapshot — read on every rate-limiter acquire so
-// settings changes take effect without re-instantiating the limiters.
-let _liveSettingsSnapshot = { ...DEFAULT_SETTINGS };
-function refreshLiveSettings() {
-  chrome.storage.local.get('settings', (r) => {
-    if (r && r.settings) {
-      _liveSettingsSnapshot = { ...DEFAULT_SETTINGS, ...r.settings };
-    }
-  });
-}
-for (const rl of Object.values(rateLimiters)) {
-  rl.setSettingsProvider(() => _liveSettingsSnapshot);
-}
-refreshLiveSettings();
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes.settings) {
-    _liveSettingsSnapshot = { ...DEFAULT_SETTINGS, ...(changes.settings.newValue || {}) };
+// These limits are intentionally conservative. Lichess documents that clients
+// should make only one request at a time and stop after a 429; the coordinator
+// additionally applies endpoint-specific spacing and a global request budget.
+const PROVIDER_POLICIES = Object.freeze({
+  chessApi: {
+    maxConcurrent: 1,
+    minSpacingMs: 3000,
+    burstCapacity: 1,
+    conservativeRequestsPerMinute: 10,
+    defaultCooldownMs: 2 * 60 * 1000,
+    maxCooldownMs: 30 * 60 * 1000,
+    retry5xx: 1,
+    retryNetwork: 1
+  },
+  lichessCloud: {
+    maxConcurrent: 1,
+    minSpacingMs: 5000,
+    burstCapacity: 1,
+    conservativeRequestsPerMinute: 6,
+    defaultCooldownMs: 3 * 60 * 1000,
+    maxCooldownMs: 60 * 60 * 1000,
+    retry5xx: 0,
+    retryNetwork: 1
+  },
+  mastersExplorer: {
+    maxConcurrent: 1,
+    minSpacingMs: 5000,
+    burstCapacity: 1,
+    conservativeRequestsPerMinute: 6,
+    defaultCooldownMs: 5 * 60 * 1000,
+    maxCooldownMs: 60 * 60 * 1000,
+    retry5xx: 0,
+    retryNetwork: 1
+  },
+  openingExplorer: {
+    maxConcurrent: 1,
+    minSpacingMs: 5000,
+    burstCapacity: 1,
+    conservativeRequestsPerMinute: 6,
+    defaultCooldownMs: 5 * 60 * 1000,
+    maxCooldownMs: 60 * 60 * 1000,
+    retry5xx: 0,
+    retryNetwork: 1
+  },
+  tablebase: {
+    maxConcurrent: 1,
+    minSpacingMs: 2500,
+    burstCapacity: 1,
+    conservativeRequestsPerMinute: 12,
+    defaultCooldownMs: 2 * 60 * 1000,
+    maxCooldownMs: 30 * 60 * 1000,
+    retry5xx: 0,
+    retryNetwork: 1
   }
 });
 
-// ═══════════════════════════════════════════════════════════════════════
-// ─── API Rotation Engine v7.5.0 ──────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════
-// Distributes API calls across 3 sources using health-weighted round-robin.
-// Prevents the repetitive patterns that trigger anti-abuse systems.
-class ApiRotationEngine {
-  constructor() {
-    this.sources = ['chess-api', 'lichess-cloud', 'masters-explorer'];
-    this.usageCounts = { 'chess-api': 0, 'lichess-cloud': 0, 'masters-explorer': 0 };
-    this.lastUsed = { 'chess-api': 0, 'lichess-cloud': 0, 'masters-explorer': 0 };
-    this.rotationIndex = 0;
+const API_CACHE_POLICIES = Object.freeze({
+  chessApi: {
+    freshTtlMs: 60 * 60 * 1000,
+    staleTtlMs: 2 * 60 * 60 * 1000,
+    negativeTtlMs: 5 * 60 * 1000,
+    networkFailureTtlMs: 20 * 1000,
+    minRefreshAgeMs: 2 * 60 * 1000,
+    persistent: true
+  },
+  lichessCloud: {
+    freshTtlMs: 6 * 60 * 60 * 1000,
+    staleTtlMs: 24 * 60 * 60 * 1000,
+    negativeTtlMs: 20 * 60 * 1000,
+    notFoundTtlMs: 20 * 60 * 1000,
+    networkFailureTtlMs: 20 * 1000,
+    minRefreshAgeMs: 10 * 60 * 1000,
+    persistent: true
+  },
+  mastersExplorer: {
+    freshTtlMs: 7 * 24 * 60 * 60 * 1000,
+    staleTtlMs: 30 * 24 * 60 * 60 * 1000,
+    negativeTtlMs: 24 * 60 * 60 * 1000,
+    notFoundTtlMs: 24 * 60 * 60 * 1000,
+    emptyTtlMs: 24 * 60 * 60 * 1000,
+    minRefreshAgeMs: 24 * 60 * 60 * 1000,
+    persistent: true
+  },
+  openingExplorer: {
+    freshTtlMs: 72 * 60 * 60 * 1000,
+    staleTtlMs: 14 * 24 * 60 * 60 * 1000,
+    negativeTtlMs: 12 * 60 * 60 * 1000,
+    emptyTtlMs: 12 * 60 * 60 * 1000,
+    minRefreshAgeMs: 12 * 60 * 60 * 1000,
+    persistent: true
+  },
+  tablebase: {
+    freshTtlMs: 30 * 24 * 60 * 60 * 1000,
+    staleTtlMs: 365 * 24 * 60 * 60 * 1000,
+    negativeTtlMs: 24 * 60 * 60 * 1000,
+    minRefreshAgeMs: 7 * 24 * 60 * 60 * 1000,
+    persistent: true
   }
+});
 
-  /**
-   * Get the ordered list of sources to try, based on health scores and rotation.
-   * v7.5.0: Phase-aware — openings prefer masters, midgame/endgame prefer engines.
-   */
-  getSourceOrder(fen) {
-    const moveNumber = parseInt(fen.split(' ')[5]) || 1;
-    const totalPieces = this._countPieces(fen);
-    const isInOpening = moveNumber <= 10 && totalPieces >= 24;
-
-    // Get health scores for each source
-    const scores = {};
-    for (const source of this.sources) {
-      const breaker = this._getBreaker(source);
-      scores[source] = breaker ? breaker.getHealthScore() : 50;
-      // Penalize sources that were used recently (spread the load)
-      const timeSinceLastUse = Date.now() - (this.lastUsed[source] || 0);
-      if (timeSinceLastUse < 5000) {
-        scores[source] -= 20;
-      }
-      // Small bonus for sources used less (fair distribution)
-      const minUsage = Math.min(...Object.values(this.usageCounts));
-      if (this.usageCounts[source] === minUsage) {
-        scores[source] += 10;
-      }
-    }
-
-    // Phase-aware adjustments
-    if (isInOpening) {
-      scores['masters-explorer'] += 25; // Prefer human master moves in openings
-    } else {
-      scores['chess-api'] += 10; // Prefer engine in midgame/endgame
-      scores['lichess-cloud'] += 5;
-    }
-
-    // Sort by score descending, but skip sources whose breakers are open
-    const sorted = [...this.sources].sort((a, b) => scores[b] - scores[a]);
-
-    // Filter out sources with open circuit breakers
-    const available = sorted.filter(source => {
-      const breaker = this._getBreaker(source);
-      return breaker && breaker.canTry();
-    });
-
-    // If all circuit breakers are open, return all sources anyway (we'll try them)
-    return available.length > 0 ? available : sorted;
+const coordinatorStorage = {
+  async get(key) {
+    const values = await chrome.storage.local.get(key);
+    return values?.[key];
+  },
+  async set(key, value) {
+    await chrome.storage.local.set({ [key]: value });
+  },
+  async remove(keys) {
+    await chrome.storage.local.remove(keys);
   }
+};
 
-  recordUsage(source) {
-    this.usageCounts[source] = (this.usageCounts[source] || 0) + 1;
-    this.lastUsed[source] = Date.now();
+const apiCoordinator = new ApiReliability.ApiRequestCoordinator({
+  policies: PROVIDER_POLICIES,
+  storage: coordinatorStorage,
+  fetchFn: (url, options) => fetch(url, options),
+  isOnline: () => typeof navigator === 'undefined' || navigator.onLine !== false,
+  globalPolicy: {
+    maxRemoteCallsPerMinute: 12,
+    maxRemoteCallsPerGame: 80,
+    maxEnrichmentCallsPerMinute: 2,
+    maxRequestsPerPosition: 3,
+    maxEnrichmentCallsPerPosition: 1,
+    maxQueueLengthPerProvider: 20,
+    maxTotalQueueLength: 50,
+    maxRetriesPerWorkflow: 1
   }
+});
 
-  _getBreaker(source) {
-    const mapping = {
-      'chess-api': breakers.chessApi,
-      'lichess-cloud': breakers.lichessCloudEval,
-      'masters-explorer': breakers.lichessMastersExplorer
-    };
-    return mapping[source] || null;
-  }
-
-  _countPieces(fen) {
-    if (!fen) return 0;
-    const placement = fen.split(' ')[0];
-    let count = 0;
-    for (const ch of placement) {
-      if (/[prnbqkPRNBQK]/.test(ch)) count++;
-    }
-    return count;
-  }
+const positionGenerations = new Map();
+function registerPosition(fen, tabId = 'active') {
+  const canonicalFen = ApiReliability.canonicalAnalysisFen(fen);
+  if (!canonicalFen) return null;
+  const key = String(tabId ?? 'active');
+  const previous = positionGenerations.get(key);
+  const startPlacement = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
+  const isNewGame = canonicalFen.split(' ')[0] === startPlacement && previous && previous.canonicalFen !== canonicalFen;
+  const token = previous && previous.canonicalFen === canonicalFen
+    ? previous
+    : {
+        tabId: key,
+        gameId: isNewGame || !previous ? Date.now() : previous.gameId,
+        sequence: (previous?.sequence || 0) + 1,
+        canonicalFen
+      };
+  positionGenerations.set(key, token);
+  apiCoordinator.updatePosition(token);
+  return token;
 }
 
-const rotationEngine = new ApiRotationEngine();
+function countFenPieces(fen) {
+  return ApiReliability.countFenPieces(fen);
+}
+
+function isPlausibleOpening(fen) {
+  return ApiReliability.isPlausibleOpeningFen(fen);
+}
+
+function analysisCacheKey(source, fen, multiPv, depth = 0) {
+  const canonicalFen = ApiReliability.canonicalAnalysisFen(fen);
+  if (source === 'chess-api') return `analysis:${canonicalFen}:provider=chess-api:multipv=${multiPv}:depth=${depth}`;
+  if (source === 'lichess-cloud') return `analysis:${canonicalFen}:provider=lichess-cloud:multipv=${multiPv}`;
+  return `masters:${canonicalFen}:multipv=${multiPv}`;
+}
+
+function openingCacheKey(fen) {
+  return `opening:${ApiReliability.canonicalAnalysisFen(fen)}:ratings=1600,1800,2000,2200,2500`;
+}
+
+function tablebaseCacheKey(fen) {
+  return `tablebase:${ApiReliability.canonicalAnalysisFen(fen)}`;
+}
+
+function semanticSourceOrder(fen) {
+  return ApiReliability.planPositionWorkflow(fen, { showOpeningExplorer: true }).analysisSources;
+}
+
 
 // ─── Coach Mode & Hint Tracking ──────────────────────────────────────
 let hintUsageTracker = { gameId: null, l5Count: 0, l4Count: 0, lastWarnLevel: 0 };
@@ -547,66 +389,20 @@ function resetCorrelationTracker() {
   correlationTotal = 0;
 }
 
-// ─── Request Coalescing (Singleflight) ────────────────────────────────
-const inFlightRequests = new Map();
+// ─── Analysis workflow coalescing and panel lifecycle ─────────────────
+const analysisWorkflows = new Map();
+const panelActivityByTab = new Map();
+const PANEL_RECENT_ACTIVITY_MS = 2 * 60 * 1000;
 
-// ─── In-Memory Cache ─────────────────────────────────────────────────
-// v8.5.0: LRU-ish eviction — when over cap, evict oldest by timestamp
-//         (not just TTL-expired) so a flood of fresh entries can't grow unbounded.
-const memoryCache = new Map();
-const MEMORY_CACHE_CAP = 1000;
-const CACHE_TTL = 30 * 60 * 1000;
-const CACHE_TTL_TB = 60 * 60 * 1000;
-
-function getMemoryCache(key, ttl) {
-  const entry = memoryCache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.timestamp > (ttl || CACHE_TTL)) {
-    memoryCache.delete(key);
-    return null;
-  }
-  // v8.5.0: refresh insertion order for LRU behaviour
-  memoryCache.delete(key);
-  memoryCache.set(key, entry);
-  return entry.data;
+function notePanelActivity(tabId = 'active', open = true) {
+  const key = String(tabId ?? 'active');
+  if (open) panelActivityByTab.set(key, Date.now());
+  else panelActivityByTab.delete(key);
 }
 
-function setMemoryCache(key, data) {
-  memoryCache.set(key, { data, timestamp: Date.now() });
-  if (memoryCache.size > MEMORY_CACHE_CAP) {
-    // v8.5.0: evict oldest 25% by insertion order (Map preserves it)
-    const toRemove = Math.ceil(memoryCache.size * 0.25);
-    let removed = 0;
-    for (const k of memoryCache.keys()) {
-      if (removed >= toRemove) break;
-      memoryCache.delete(k);
-      removed++;
-    }
-  }
-}
-
-function clearMemoryCache(prefix) {
-  if (!prefix) { memoryCache.clear(); return; }
-  for (const [k] of memoryCache) {
-    if (k.startsWith(prefix)) memoryCache.delete(k);
-  }
-}
-
-// ─── Storage Cache Helper ────────────────────────────────────────────
-async function getStorageCache(key, ttl) {
-  try {
-    const cached = await chrome.storage.local.get(key);
-    if (cached[key] && Date.now() - cached[key].timestamp < ttl) {
-      return cached[key].data;
-    }
-  } catch (e) {}
-  return null;
-}
-
-async function setStorageCache(key, data) {
-  try {
-    await chrome.storage.local.set({ [key]: { data, timestamp: Date.now() } });
-  } catch (e) {}
+function hasRecentPanelActivity(tabId = 'active') {
+  const at = panelActivityByTab.get(String(tabId ?? 'active')) || 0;
+  return Date.now() - at <= PANEL_RECENT_ACTIVITY_MS;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -631,175 +427,47 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
-// v8.5.0: per-fetch in-flight counter — used to know when to NOT let the
-// SW go idle. We no longer need explicit start/stop; the alarm runs
-// continuously while the SW is alive, and the SW is kept alive by the
-// presence of in-flight fetches + the alarm.
-let inFlightFetchCount = 0;
-function startApiKeepAlive() { inFlightFetchCount++; }
-function stopApiKeepAlive() { inFlightFetchCount = Math.max(0, inFlightFetchCount - 1); }
-
-// ═══════════════════════════════════════════════════════════════════════
-// ─── Fetch with Adaptive Retry ───────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════
-async function fetchWithRetry(url, options = {}, breaker = null, maxRetries = 1, baseDelay = 1500) {
-  let lastError = null;
-  let lastErrorType = 'unknown';
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    if (breaker && !breaker.canTry()) {
-      console.log(`[Background] Circuit breaker ${breaker.name} is OPEN, skipping`);
-      return { _failed: true, _errorType: 'circuit_open' };
-    }
-    if (breaker && breaker.state === 'half-open') {
-      breaker.incrementHalfOpen();
-    }
-
-    startApiKeepAlive();
-
-    try {
-      const controller = new AbortController();
-      const timeoutMs = options.timeout || 15000;
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-      const fetchOptions = { ...options, signal: controller.signal };
-      if (!fetchOptions.headers) fetchOptions.headers = {};
-      if (!fetchOptions.headers['Accept']) fetchOptions.headers['Accept'] = 'application/json';
-
-      const response = await fetch(url, fetchOptions);
-      clearTimeout(timeoutId);
-
-      // ── 429 Rate Limit ──
-      if (response.status === 429) {
-        lastErrorType = 'rate_limit';
-        const retryAfter = response.headers.get('Retry-After');
-        let waitMs = retryAfter ? parseInt(retryAfter) * 1000 : 0;
-
-        if (url.includes('lichess.org') || url.includes('lichess.ovh')) {
-          waitMs = Math.max(waitMs, 60000);
-        } else {
-          const jitter = Math.random() * baseDelay;
-          waitMs = Math.max(waitMs, baseDelay * Math.pow(2, attempt) + jitter);
-        }
-
-        console.warn(`[Background] Rate limited (429) by ${url}, waiting ${Math.round(waitMs / 1000)}s...`);
-
-        // v7.5.0: On rate limit, don't retry — just fail fast and try next source
-        if (breaker) breaker.recordFailure('rate_limit');
-        return { _failed: true, _errorType: 'rate_limit' };
-      }
-
-      // ── 404 Not Found ──
-      if (response.status === 404) {
-        if (url.includes('lichess.org/api/cloud-eval')) {
-          return { status: 404, _lichessNotCached: true };
-        }
-        if (url.includes('explorer.lichess.ovh/master')) {
-          return { status: 404, _mastersNotCached: true }; // v7.5.0: Masters 404 is normal
-        }
-        if (breaker) breaker.recordFailure('not_found');
-        return { _failed: true, _errorType: 'not_found' };
-      }
-
-      // ── 5xx Server Errors ──
-      if (response.status >= 500) {
-        lastErrorType = 'server_error';
-        if (attempt < maxRetries) {
-          const jitter = Math.random() * 500;
-          const delay = baseDelay * Math.pow(2, attempt) + jitter;
-          console.warn(`[Background] Server error ${response.status} from ${url}, retrying in ${Math.round(delay)}ms...`);
-          await new Promise(r => setTimeout(r, delay));
-          continue;
-        }
-        if (breaker) breaker.recordFailure('server_error');
-        return { _failed: true, _errorType: 'server_error' };
-      }
-
-      // ── Other HTTP errors ──
-      if (!response.ok) {
-        if (breaker) breaker.recordFailure('unknown');
-        return { _failed: true, _errorType: 'http_' + response.status };
-      }
-
-      // ── Success ──
-      if (breaker) breaker.recordSuccess();
-      return response;
-
-    } catch (e) {
-      lastError = e;
-      if (e.name === 'AbortError') {
-        lastErrorType = 'timeout';
-        console.warn(`[Background] Request timeout for ${url}, attempt ${attempt + 1}/${maxRetries + 1}`);
-      } else {
-        lastErrorType = 'network';
-        console.warn(`[Background] Fetch error for ${url}: ${e.message}, attempt ${attempt + 1}/${maxRetries + 1}`);
-      }
-
-      if (attempt < maxRetries) {
-        const jitter = Math.random() * baseDelay;
-        const delay = baseDelay * Math.pow(2, attempt) + jitter;
-        await new Promise(r => setTimeout(r, delay));
-      }
-    } finally {
-      if (attempt >= maxRetries) {
-        stopApiKeepAlive();
-      }
-    }
-  }
-
-  if (breaker) breaker.recordFailure(lastErrorType);
-  console.error(`[Background] All retries failed for ${url}: ${lastError?.message}`);
-  return { _failed: true, _errorType: lastErrorType };
-}
-
 // ═══════════════════════════════════════════════════════════════════════
 // ─── Cloud API #1: Chess-API.com ─────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
-async function chessApiEval(fen, multiPv = 3, depth = 12) {
-  const cacheKey = `chessapi_${fen}_${multiPv}_${depth}`;
-  const cached = getMemoryCache(cacheKey, CACHE_TTL);
-  if (cached) return { ...cached, cached: true };
-
-  await rateLimiters.chessApi.acquire();
-
-  try {
-    const response = await fetchWithRetry('https://chess-api.com/v1', {
+async function chessApiEval(fen, multiPv = 3, depth = 12, context = {}) {
+  const cacheKey = analysisCacheKey('chess-api', fen, multiPv, depth);
+  const outcome = await apiCoordinator.request({
+    provider: 'chessApi',
+    endpointClass: 'analysis',
+    cacheKey,
+    requestKey: `variants=${Math.min(5, multiPv)}:depth=${depth}`,
+    priority: context.priority || 'current-player-turn',
+    positionToken: context.positionToken,
+    refresh: Boolean(context.refresh),
+    allowStale: true,
+    cachePolicy: API_CACHE_POLICIES.chessApi,
+    request: {
+      url: 'https://chess-api.com/v1',
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        fen: fen,
-        depth: depth,
+        fen,
+        variants: Math.max(1, Math.min(5, multiPv)),
+        depth,
         maxThinkingTime: 100
       }),
-      timeout: 18000
-    }, breakers.chessApi, 1, 1500);
-
-    if (response && response._failed) {
-      console.warn(`[Background] Chess-API failed: ${response._errorType}`);
-      return null;
+      timeoutMs: 18000
+    },
+    parse: async response => {
+      const data = await response.json();
+      if (data.type === 'error' || data.error || !data.move) return null;
+      return normalizeChessApi(data, fen);
     }
-    if (!response) return null;
-    if (response._lichessNotCached || response._mastersNotCached) return null;
-
-    const data = await response.json();
-
-    if (data.type === 'error' || data.error) {
-      console.warn('[Background] Chess-API returned error:', data.error || data.text);
-      return null;
-    }
-
-    if (!data.move) return null;
-
-    const result = normalizeChessApi(data, fen);
-    setMemoryCache(cacheKey, result);
-    return { ...result, source: 'chess-api', cached: false };
-  } catch (e) {
-    console.error('[Background] Chess-API error:', e.message);
-    return null;
-  }
+  });
+  if (!outcome.ok) return null;
+  return {
+    ...outcome.data,
+    fen,
+    source: 'chess-api',
+    cached: Boolean(outcome.cached),
+    stale: Boolean(outcome.stale)
+  };
 }
 
 function normalizeChessApi(data, fen) {
@@ -876,59 +544,38 @@ function normalizeChessApi(data, fen) {
 // ═══════════════════════════════════════════════════════════════════════
 // ─── Cloud API #2: Lichess Cloud Eval ────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
-async function lichessCloudEval(fen, multiPv = 5) {
-  const cacheKey = `cloud_eval_${fen}_${multiPv}`;
-  const cached = getMemoryCache(cacheKey, CACHE_TTL);
-  if (cached) return { ...cached, cached: true };
-
-  const storageCached = await getStorageCache(cacheKey, CACHE_TTL);
-  if (storageCached) {
-    setMemoryCache(cacheKey, storageCached);
-    return { ...storageCached, cached: true };
-  }
-
-  await rateLimiters.lichessCloudEval.acquire();
-
-  const url = `https://lichess.org/api/cloud-eval?fen=${encodeURIComponent(fen)}&multiPv=${multiPv}`;
-  const response = await fetchWithRetry(url, { timeout: 14000 }, breakers.lichessCloudEval, 1, 2000);
-
-  if (response && response._failed) {
-    console.warn(`[Background] Lichess cloud eval failed: ${response._errorType}`);
-    return null;
-  }
-  if (!response) return null;
-
-  if (response._lichessNotCached) {
-    console.log('[Background] Lichess cloud eval: position not cached, skipping');
-    return null;
-  }
-
-  try {
-    const contentType = response.headers.get('content-type') || '';
-    if (!contentType.includes('json')) {
-      const text = await response.text();
-      console.warn('[Background] Lichess returned non-JSON:', text.substring(0, 100));
-      breakers.lichessCloudEval.recordFailure('rate_limit');
-      return null;
+async function lichessCloudEval(fen, multiPv = 5, context = {}) {
+  const cacheKey = analysisCacheKey('lichess-cloud', fen, multiPv);
+  const outcome = await apiCoordinator.request({
+    provider: 'lichessCloud',
+    endpointClass: 'analysis',
+    cacheKey,
+    requestKey: `multipv=${multiPv}`,
+    priority: context.priority || 'current-player-turn',
+    positionToken: context.positionToken,
+    refresh: Boolean(context.refresh),
+    allowStale: true,
+    cachePolicy: API_CACHE_POLICIES.lichessCloud,
+    request: {
+      url: `https://lichess.org/api/cloud-eval?fen=${encodeURIComponent(fen)}&multiPv=${multiPv}`,
+      timeoutMs: 14000
+    },
+    parse: async response => {
+      const contentType = response.headers?.get?.('content-type') || '';
+      if (contentType && !contentType.includes('json')) throw new Error('Expected JSON response');
+      const data = await response.json();
+      if (data.error || !Array.isArray(data.pvs) || data.pvs.length === 0) return null;
+      return normalizeLichessCloudEval(data, fen);
     }
-
-    const data = await response.json();
-
-    if (data.error) {
-      console.log('[Background] Lichess cloud eval error:', data.error);
-      return null;
-    }
-
-    if (!data.pvs || data.pvs.length === 0) return null;
-
-    const result = normalizeLichessCloudEval(data, fen);
-    setMemoryCache(cacheKey, result);
-    setStorageCache(cacheKey, result);
-    return { ...result, source: 'lichess-cloud', cached: false };
-  } catch (e) {
-    console.error('[Background] Lichess cloud eval parse error:', e.message);
-    return null;
-  }
+  });
+  if (!outcome.ok) return null;
+  return {
+    ...outcome.data,
+    fen,
+    source: 'lichess-cloud',
+    cached: Boolean(outcome.cached),
+    stale: Boolean(outcome.stale)
+  };
 }
 
 function normalizeLichessCloudEval(data, fen) {
@@ -962,45 +609,35 @@ function normalizeLichessCloudEval(data, fen) {
 // Provides moves based on what human GRANDMASTERS actually played.
 // More "natural and human" than engine evaluation — reflects real
 // human decision-making at the highest level of play.
-async function lichessMastersEval(fen, multiPv = 5) {
-  const cacheKey = `masters_eval_${fen}_${multiPv}`;
-  const cached = getMemoryCache(cacheKey, CACHE_TTL * 2);
-  if (cached) return { ...cached, cached: true };
-
-  const storageCached = await getStorageCache(cacheKey, CACHE_TTL * 2);
-  if (storageCached) {
-    setMemoryCache(cacheKey, storageCached);
-    return { ...storageCached, cached: true };
-  }
-
-  await rateLimiters.lichessMastersExplorer.acquire();
-
-  const url = `https://explorer.lichess.ovh/master?fen=${encodeURIComponent(fen)}&moves=${multiPv}&topGames=3`;
-  const response = await fetchWithRetry(url, { timeout: 12000 }, breakers.lichessMastersExplorer, 1, 2000);
-
-  if (response && response._failed) {
-    console.warn(`[Background] Masters explorer failed: ${response._errorType}`);
-    return null;
-  }
-  if (!response) return null;
-  if (response._mastersNotCached || response._lichessNotCached) {
-    console.log('[Background] Masters explorer: position not in database (normal for non-opening positions)');
-    return null;
-  }
-
-  try {
-    const data = await response.json();
-    const result = normalizeMastersEval(data, fen);
-
-    if (!result || result.pvs.length === 0) return null;
-
-    setMemoryCache(cacheKey, result);
-    setStorageCache(cacheKey, result);
-    return { ...result, source: 'masters-explorer', cached: false };
-  } catch (e) {
-    console.error('[Background] Masters explorer parse error:', e.message);
-    return null;
-  }
+async function lichessMastersEval(fen, multiPv = 5, context = {}) {
+  const cacheKey = analysisCacheKey('masters-explorer', fen, multiPv);
+  const outcome = await apiCoordinator.request({
+    provider: 'mastersExplorer',
+    endpointClass: 'analysis',
+    cacheKey,
+    requestKey: `moves=${multiPv}`,
+    priority: context.priority || 'current-player-turn',
+    positionToken: context.positionToken,
+    refresh: Boolean(context.refresh),
+    allowStale: true,
+    cachePolicy: API_CACHE_POLICIES.mastersExplorer,
+    request: {
+      url: `https://explorer.lichess.ovh/master?fen=${encodeURIComponent(fen)}&moves=${multiPv}&topGames=3`,
+      timeoutMs: 12000
+    },
+    parse: async response => {
+      const data = await response.json();
+      return normalizeMastersEval(data, fen);
+    }
+  });
+  if (!outcome.ok) return null;
+  return {
+    ...outcome.data,
+    fen,
+    source: 'masters-explorer',
+    cached: Boolean(outcome.cached),
+    stale: Boolean(outcome.stale)
+  };
 }
 
 function normalizeMastersEval(data, fen) {
@@ -1065,29 +702,32 @@ function normalizeMastersEval(data, fen) {
 }
 
 // ─── Lichess Opening Explorer (player games) ────────────────────────
-async function lichessOpeningExplorer(fen) {
-  const cacheKey = `opening_${fen}`;
-  const cached = getMemoryCache(cacheKey, CACHE_TTL * 2);
-  if (cached) return { ...cached, cached: true };
-
-  await rateLimiters.lichessOpeningExplorer.acquire();
-
-  const url = `https://explorer.lichess.ovh/lichess?fen=${encodeURIComponent(fen)}&moves=8&topGames=3&ratings=1600,1800,2000,2200,2500`;
-  const response = await fetchWithRetry(url, { timeout: 10000 }, breakers.lichessOpeningExplorer, 1, 1200);
-
-  if (response && response._failed) return null;
-  if (!response) return null;
-  if (response._lichessNotCached || response._mastersNotCached) return null;
-
-  try {
-    const data = await response.json();
-    const result = normalizeOpeningExplorer(data);
-    setMemoryCache(cacheKey, result);
-    return { ...result, cached: false };
-  } catch (e) {
-    console.error('[Background] Opening explorer parse error:', e.message);
-    return null;
-  }
+async function lichessOpeningExplorer(fen, context = {}) {
+  if (!isPlausibleOpening(fen)) return null;
+  const cacheKey = openingCacheKey(fen);
+  const outcome = await apiCoordinator.request({
+    provider: 'openingExplorer',
+    endpointClass: 'enrichment',
+    cacheKey,
+    requestKey: 'moves=8:topGames=3:ratings=1600,1800,2000,2200,2500',
+    priority: context.priority || 'opening-enrichment',
+    positionToken: context.positionToken,
+    refresh: Boolean(context.refresh),
+    allowStale: true,
+    cachePolicy: API_CACHE_POLICIES.openingExplorer,
+    request: {
+      url: `https://explorer.lichess.ovh/lichess?fen=${encodeURIComponent(fen)}&moves=8&topGames=3&ratings=1600,1800,2000,2200,2500`,
+      timeoutMs: 10000
+    },
+    parse: async response => normalizeOpeningExplorer(await response.json()),
+    isEmpty: result => !result || result.totalGames <= 0 || !result.moves?.length
+  });
+  if (!outcome.ok) return null;
+  return {
+    ...outcome.data,
+    cached: Boolean(outcome.cached),
+    stale: Boolean(outcome.stale)
+  };
 }
 
 function normalizeOpeningExplorer(data) {
@@ -1116,35 +756,31 @@ function normalizeOpeningExplorer(data) {
 }
 
 // ─── Lichess Tablebase ───────────────────────────────────────────────
-async function lichessTablebase(fen) {
-  if (!fen) return null;
-  const placement = fen.split(' ')[0];
-  let pieceCount = 0;
-  for (const ch of placement) { if (/[prnbqkPRNBQK]/.test(ch)) pieceCount++; }
-  if (pieceCount > 7) return null;
-
-  const cacheKey = `tablebase_${fen}`;
-  const cached = getMemoryCache(cacheKey, CACHE_TTL_TB);
-  if (cached) return { ...cached, cached: true };
-
-  await rateLimiters.lichessTablebase.acquire();
-
-  const url = `https://tablebase.lichess.ovh/standard?fen=${encodeURIComponent(fen)}`;
-  const response = await fetchWithRetry(url, { timeout: 10000 }, breakers.lichessTablebase, 1, 1000);
-
-  if (response && response._failed) return null;
-  if (!response) return null;
-  if (response._lichessNotCached || response._mastersNotCached) return null;
-
-  try {
-    const data = await response.json();
-    const result = normalizeTablebase(data);
-    setMemoryCache(cacheKey, result);
-    return { ...result, cached: false };
-  } catch (e) {
-    console.error('[Background] Tablebase parse error:', e.message);
-    return null;
-  }
+async function lichessTablebase(fen, context = {}) {
+  if (!fen || countFenPieces(fen) > 7) return null;
+  const cacheKey = tablebaseCacheKey(fen);
+  const outcome = await apiCoordinator.request({
+    provider: 'tablebase',
+    endpointClass: 'tablebase',
+    cacheKey,
+    requestKey: 'standard',
+    priority: context.priority || 'current-position-tablebase',
+    positionToken: context.positionToken,
+    refresh: Boolean(context.refresh),
+    allowStale: true,
+    cachePolicy: API_CACHE_POLICIES.tablebase,
+    request: {
+      url: `https://tablebase.lichess.ovh/standard?fen=${encodeURIComponent(fen)}`,
+      timeoutMs: 10000
+    },
+    parse: async response => normalizeTablebase(await response.json())
+  });
+  if (!outcome.ok) return null;
+  return {
+    ...outcome.data,
+    cached: Boolean(outcome.cached),
+    stale: Boolean(outcome.stale)
+  };
 }
 
 function normalizeTablebase(data) {
@@ -1202,374 +838,297 @@ function buildTablebaseResult(tbData, fen) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// ─── Main Cloud Analysis — 3-API Rotation Engine v7.5.0 ──────────────
+// ─── Main Cloud Analysis — Semantic Routing and Bounded Fallback ─────
 // ═══════════════════════════════════════════════════════════════════════
+async function getCachedAnalysisSource(source, fen, multiPv) {
+  const depth = source === 'chess-api' ? 12 : 0;
+  const cacheKey = analysisCacheKey(source, fen, multiPv, depth);
+  const provider = source === 'chess-api' ? 'chessApi'
+    : source === 'lichess-cloud' ? 'lichessCloud'
+    : 'mastersExplorer';
+  const cached = await apiCoordinator.getCached(cacheKey, provider);
+  if (!cached?.ok) return null;
+  return {
+    ...cached.data,
+    fen,
+    source,
+    cached: true,
+    stale: Boolean(cached.stale)
+  };
+}
+
+async function callAnalysisSource(source, fen, multiPv, context) {
+  if (source === 'chess-api') return chessApiEval(fen, multiPv, 12, context);
+  if (source === 'lichess-cloud') return lichessCloudEval(fen, multiPv, context);
+  if (source === 'masters-explorer') return lichessMastersEval(fen, multiPv, context);
+  return null;
+}
+
+function providerForAnalysisSource(source) {
+  if (source === 'chess-api') return 'chessApi';
+  if (source === 'lichess-cloud') return 'lichessCloud';
+  return 'mastersExplorer';
+}
+
+function analysisFromOpeningData(openingData, fen, multiPv) {
+  if (!openingData?.moves?.length) return null;
+  const pvs = openingData.moves.slice(0, multiPv).map((move, index) => {
+    const total = Number(move.total || 0);
+    const white = Number(move.white || 0);
+    const draws = Number(move.draws || 0);
+    const score = total > 0 ? Math.round(((white * 2 + draws) / total - 1) * 300) : 0;
+    return {
+      multipv: index + 1,
+      scoreType: 'cp',
+      score,
+      depth: 0,
+      seldepth: 0,
+      pv: [move.uci],
+      nodes: 0,
+      nps: 0,
+      time: 0,
+      _masterData: {
+        san: move.san,
+        uci: move.uci,
+        totalGames: total,
+        averageRating: move.averageRating || 0
+      }
+    };
+  }).filter(pv => pv.pv[0]);
+  if (!pvs.length) return null;
+  return {
+    fen,
+    pvs,
+    bestMove: pvs[0].pv[0],
+    depth: 0,
+    opening: openingData.opening || null,
+    openingData,
+    isHumanSource: true,
+    cached: true,
+    stale: Boolean(openingData.stale),
+    scorePerspective: 'white'
+  };
+}
+
+function openingDataFromMastersResult(result) {
+  if (!result?.pvs?.length) return null;
+  const moves = result.pvs.map(pv => ({
+    uci: pv.pv?.[0] || '',
+    san: pv._masterData?.san || pv.pv?.[0] || '',
+    total: Number(pv._masterData?.totalGames || 0),
+    winRate: pv._masterData?.whiteWinPct || '0',
+    drawRate: pv._masterData?.drawPct || '0',
+    lossRate: pv._masterData?.blackWinPct || '0',
+    averageRating: pv._masterData?.averageRating || 0
+  })).filter(move => move.uci);
+  return moves.length ? {
+    opening: result.opening || null,
+    moves,
+    topGames: result.masterTopGames || [],
+    totalGames: result.totalMasterGames || moves.reduce((max, move) => Math.max(max, move.total), 0)
+  } : null;
+}
+
 async function performCloudAnalysis(fen, playerColor, options = {}) {
   const multiPv = options.multiPv || 3;
+  const canonicalFen = ApiReliability.canonicalAnalysisFen(fen);
+  const dedupeKey = `workflow:${canonicalFen}:multipv=${multiPv}`;
+  if (analysisWorkflows.has(dedupeKey)) return analysisWorkflows.get(dedupeKey);
 
-  // Request coalescing
-  const dedupeKey = `${fen}_${multiPv}`;
-  if (inFlightRequests.has(dedupeKey)) {
-    console.log('[Background] Coalescing request for:', fen.substring(0, 20));
-    return inFlightRequests.get(dedupeKey);
-  }
-
-  // v8.5.0: Wrap in a top-level catch so an unexpected throw inside
-  // _performCloudAnalysisInternal can never orphan the dedupe entry.
-  const analysisPromise = (async () => {
-    try {
-      return await _performCloudAnalysisInternal(fen, playerColor, options);
-    } catch (e) {
-      console.error('[Background] Cloud analysis unexpected error:', e?.message || e);
-      return {
-        error: true,
-        fen,
-        playerColor,
-        errorDetail: { type: 'transient', message: 'Analysis failed unexpectedly', suggestion: 'retry' },
-        moveHistory: options.moveHistory || []
-      };
-    }
-  })();
-
-  inFlightRequests.set(dedupeKey, analysisPromise);
+  const workflow = _performCloudAnalysisInternal(fen, playerColor, options).catch(error => ({
+    error: true,
+    fen,
+    playerColor,
+    errorDetail: { type: 'transient', message: error?.message || 'Analysis failed unexpectedly', suggestion: 'retry' },
+    moveHistory: options.moveHistory || []
+  }));
+  analysisWorkflows.set(dedupeKey, workflow);
   try {
-    return await analysisPromise;
+    return await workflow;
   } finally {
-    inFlightRequests.delete(dedupeKey);
+    if (analysisWorkflows.get(dedupeKey) === workflow) analysisWorkflows.delete(dedupeKey);
   }
 }
 
 async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
   const multiPv = options.multiPv || 3;
+  const positionToken = options.positionToken || registerPosition(fen, options.tabId || 'active');
+  await apiCoordinator.ready;
+  if (!hasRecentPanelActivity(options.tabId || positionToken?.tabId || 'active')) {
+    return {
+      error: true,
+      fen,
+      playerColor,
+      errorDetail: { type: 'inactive_panel', message: 'Analysis paused because the panel is not active.', suggestion: 'none' }
+    };
+  }
   const settings = await new Promise(resolve =>
-    chrome.storage.local.get('settings', r => resolve(r.settings || DEFAULT_SETTINGS))
+    chrome.storage.local.get('settings', result => resolve({ ...DEFAULT_SETTINGS, ...(result.settings || {}) }))
   );
+  const priority = options.refresh ? 'manual-current-position' : 'current-player-turn';
+  const context = { positionToken, refresh: Boolean(options.refresh), priority };
 
-  console.log(`[Background] v7.5.0 Starting rotation analysis for: ${fen.substring(0, 30)}... (multiPv=${multiPv})`);
-
-  // 1. Check tablebase first (instant perfect play for endgames)
-  const tbResult = await lichessTablebase(fen);
-  if (tbResult && tbResult.category && tbResult.category !== 'unknown') {
-    const result = buildTablebaseResult(tbResult, fen);
-    result.tablebaseData = tbResult;
-    if (options.moveHistory) result.moveHistory = options.moveHistory;
-    result.playerColor = playerColor;
-    console.log('[Background] Tablebase result found');
-    // v7.5.0: Non-blocking opening data fetch — don't block the return
-    lichessOpeningExplorer(fen).then(openingData => {
-      if (openingData) {
-        result.openingData = openingData;
-        chrome.runtime.sendMessage({
-          type: 'opening_data_update',
-          data: { fen, openingData }
-        }).catch(() => {});
-      }
-    }).catch(() => {});
-    return result;
+  // Deterministic tablebases are the sole remote workflow for eligible
+  // endgames. A successful tablebase lookup always stops engine routing.
+  if (settings.showTablebase !== false && countFenPieces(fen) <= 7) {
+    const tbResult = await lichessTablebase(fen, {
+      ...context,
+      priority: options.refresh ? 'manual-current-position' : 'current-position-tablebase'
+    });
+    if (!apiCoordinator.isPositionCurrent(positionToken)) {
+      return { error: true, stalePosition: true, fen, errorDetail: { type: 'stale_position', message: 'Position changed', suggestion: 'none' } };
+    }
+    if (tbResult && tbResult.category && tbResult.category !== 'unknown') {
+      const result = buildTablebaseResult(tbResult, fen);
+      result.tablebaseData = tbResult;
+      result.moveHistory = options.moveHistory || [];
+      result.playerColor = playerColor;
+      result.cached = Boolean(tbResult.cached);
+      result.stale = Boolean(tbResult.stale);
+      return result;
+    }
   }
 
-  // ── v7.5.0: 3-API Rotation with Health-Based Priority ──
-  const sourceOrder = rotationEngine.getSourceOrder(fen);
-  console.log(`[Background] Rotation order: ${sourceOrder.join(' → ')}`);
-
+  const sourceOrder = semanticSourceOrder(fen);
   let bestResult = null;
   let usedSource = null;
-  const allResults = {}; // Store all results for cache-only enrichment
 
-  // If cache-first mode is enabled, try cache before any API calls
-  if (settings.cacheFirstMode) {
-    const cacheChecks = [
-      { source: 'chess-api', key: `chessapi_${fen}_${multiPv}_12` },
-      { source: 'lichess-cloud', key: `cloud_eval_${fen}_${multiPv}` },
-      { source: 'masters-explorer', key: `masters_eval_${fen}_${multiPv}` }
-    ];
-
-    for (const { source, key } of cacheChecks) {
-      let cached = getMemoryCache(key, CACHE_TTL);
-      if (!cached && source === 'lichess-cloud') {
-        cached = await getStorageCache(key, CACHE_TTL);
-      }
-      if (!cached && source === 'masters-explorer') {
-        cached = await getStorageCache(key, CACHE_TTL * 2);
-      }
-      if (cached) {
-        allResults[source] = { ...cached, cached: true };
-        if (!bestResult) {
-          bestResult = allResults[source];
-          usedSource = source;
+  // Cache lookup spans all semantically relevant sources before any remote
+  // request, so a fresh secondary cache beats an unnecessary primary call.
+  if (!options.refresh) {
+    for (const source of sourceOrder) {
+      // In openings, a cached player-explorer result is useful human move data
+      // and is checked after Masters but before any engine cache or remote call.
+      if (source === 'lichess-cloud' && isPlausibleOpening(fen)) {
+        const cachedOpening = await apiCoordinator.getCached(openingCacheKey(fen), 'openingExplorer');
+        if (cachedOpening?.ok) {
+          bestResult = analysisFromOpeningData(cachedOpening.data, fen, multiPv);
+          if (bestResult) {
+            bestResult.openingData = cachedOpening.data;
+            bestResult.stale = Boolean(cachedOpening.stale);
+            usedSource = 'opening-explorer';
+            break;
+          }
         }
       }
-    }
-
-    if (bestResult) {
-      console.log(`[Background] Cache-first: using cached ${usedSource} result`);
+      const cached = await getCachedAnalysisSource(source, fen, multiPv);
+      if (cached) {
+        bestResult = cached;
+        usedSource = source;
+        break;
+      }
     }
   }
 
-  // If no cached result, try sources in rotation order
   if (!bestResult) {
-    // v8.5.0: Track which sources returned null (failed non-fatally, e.g.
-    // Masters 404). Prevents the fallback loop from re-calling them.
-    const failedSources = new Set();
-    for (const source of sourceOrder) {
-      // Skip if circuit breaker is open
-      const breaker = rotationEngine._getBreaker(source);
-      if (breaker && !breaker.canTry()) {
-        console.log(`[Background] Skipping ${source} — circuit breaker open`);
-        failedSources.add(source);
-        continue;
+    const eligibleSources = sourceOrder.filter(source =>
+      apiCoordinator.canSchedule(providerForAnalysisSource(source), priority)
+    );
+    // One primary plus at most one genuine fallback. Permanent 4xx responses,
+    // cooldowns and disabled providers never trigger repeated calls.
+    for (const source of eligibleSources.slice(0, 2)) {
+      const result = await callAnalysisSource(source, fen, multiPv, context);
+      if (!apiCoordinator.isPositionCurrent(positionToken)) {
+        return { error: true, stalePosition: true, fen, errorDetail: { type: 'stale_position', message: 'Position changed', suggestion: 'none' } };
       }
-
-      const startTime = Date.now();
-      let result = null;
-
-      switch (source) {
-        case 'chess-api':
-          result = await chessApiEval(fen, multiPv, 12);
-          break;
-        case 'lichess-cloud':
-          result = await lichessCloudEval(fen, multiPv);
-          break;
-        case 'masters-explorer':
-          result = await lichessMastersEval(fen, multiPv);
-          break;
-      }
-
-      const elapsed = Date.now() - startTime;
-
       if (result) {
-        console.log(`[Background] ${source} succeeded in ${elapsed}ms`);
-        allResults[source] = result;
         bestResult = result;
         usedSource = source;
-        rotationEngine.recordUsage(source);
-        break; // Got a result, stop trying other sources
-      } else {
-        console.log(`[Background] ${source} failed (${elapsed}ms)`);
-        failedSources.add(source);
-      }
-    }
-
-    // v7.5.0: If primary rotation failed, try remaining sources as fallback.
-    // v8.5.0: Track failed sources explicitly so we don't re-call sources
-    //         that already failed non-fatally (e.g. Masters 404 on non-opening
-    //         position) — those breakers didn't open but the call was wasted.
-    if (!bestResult) {
-      const fallbackSources = sourceOrder.filter(s => !allResults[s] && !failedSources.has(s));
-      for (const source of fallbackSources) {
-        const breaker = rotationEngine._getBreaker(source);
-        if (breaker && !breaker.canTry()) continue;
-
-        console.log(`[Background] Fallback: trying ${source}...`);
-        let result = null;
-
-        switch (source) {
-          case 'chess-api':
-            result = await chessApiEval(fen, 1, 10); // Lower depth for fallback
-            break;
-          case 'lichess-cloud':
-            result = await lichessCloudEval(fen, 1);
-            break;
-          case 'masters-explorer':
-            result = await lichessMastersEval(fen, 3);
-            break;
-        }
-
-        if (result) {
-          allResults[source] = result;
-          bestResult = result;
-          usedSource = source;
-          rotationEngine.recordUsage(source);
-          break;
-        } else {
-          // v8.5.0: mark as failed so a subsequent fallback pass won't retry it.
-          failedSources.add(source);
-        }
+        break;
       }
     }
   }
 
-  // ── v7.5.0: Cache-Only Enrichment ──
-  // Only enrich from ALREADY CACHED data — never make new API calls for enrichment.
-  // This eliminates the double-call problem that caused rate limiting in v7.3.0.
-  if (bestResult) {
-    const existingMoves = new Map();
-    bestResult.pvs.forEach(pv => {
-      if (pv.pv[0]) existingMoves.set(pv.pv[0], pv);
-    });
-
-    for (const [source, srcResult] of Object.entries(allResults)) {
-      if (source === usedSource || !srcResult || !srcResult.pvs) continue;
-      for (const pv of srcResult.pvs) {
-        if (!pv.pv[0]) continue;
-        if (existingMoves.has(pv.pv[0])) {
-          const existing = existingMoves.get(pv.pv[0]);
-          // Only replace if the other source has significantly deeper analysis
-          if ((pv.depth || 0) > (existing.depth || 0) + 10 && pv.depth > 20) {
-            const origIdx = existing.multipv;
-            Object.assign(existing, { ...pv, multipv: origIdx });
-          }
-        } else if (bestResult.pvs.length < multiPv) {
-          pv.multipv = bestResult.pvs.length + 1;
-          bestResult.pvs.push(pv);
-          existingMoves.set(pv.pv[0], pv);
-        }
-      }
-    }
-
-    // Enrich depth from cached Lichess Cloud data
-    if (allResults['lichess-cloud'] && usedSource !== 'lichess-cloud') {
-      const lichessResult = allResults['lichess-cloud'];
-      if (lichessResult.depth > bestResult.depth) {
-        bestResult.depth = lichessResult.depth;
-        bestResult.knodes = lichessResult.knodes || bestResult.knodes;
-      }
-    }
+  if (!bestResult) {
+    return {
+      error: true,
+      fen,
+      playerColor,
+      errorDetail: classifyError(),
+      moveHistory: options.moveHistory || []
+    };
   }
 
-  if (bestResult) {
-    bestResult.source = usedSource;
-    bestResult.playerColor = playerColor;
-    if (options.moveHistory) bestResult.moveHistory = options.moveHistory;
+  bestResult.source = usedSource;
+  bestResult.fen = fen;
+  bestResult.playerColor = playerColor;
+  bestResult.moveHistory = options.moveHistory || [];
 
-    // Non-blocking opening data fetch
-    lichessOpeningExplorer(fen).then(openingData => {
-      if (openingData) {
-        bestResult.openingData = openingData;
+  // Use cached opening data immediately. A remote enrichment is allowed only
+  // for a current, plausible opening while the panel feature is enabled and
+  // the low-priority budget still has capacity.
+  if (settings.showOpeningExplorer === true && isPlausibleOpening(fen)) {
+    if (usedSource === 'masters-explorer') bestResult.openingData = openingDataFromMastersResult(bestResult);
+    const cachedOpening = bestResult.openingData ? null : await apiCoordinator.getCached(openingCacheKey(fen), 'openingExplorer');
+    if (cachedOpening?.ok) bestResult.openingData = cachedOpening.data;
+
+    const shouldEnrich = !bestResult.openingData && usedSource !== 'masters-explorer' &&
+      apiCoordinator.isPositionCurrent(positionToken) &&
+      apiCoordinator.canSchedule('openingExplorer', 'opening-enrichment');
+    if (shouldEnrich) {
+      lichessOpeningExplorer(fen, { positionToken, priority: 'opening-enrichment' }).then(openingData => {
+        if (!openingData || !apiCoordinator.isPositionCurrent(positionToken)) return;
         chrome.runtime.sendMessage({
           type: 'opening_data_update',
           data: { fen, openingData }
         }).catch(() => {});
-      }
-    }).catch(() => {});
-
-    if (tbResult) bestResult.tablebaseData = tbResult;
-
-    console.log(`[Background] Analysis complete: source=${usedSource}, depth=${bestResult.depth}, pvs=${bestResult.pvs.length}`);
-    return bestResult;
+      }).catch(() => {});
+    }
   }
 
-  // All sources failed
-  console.error('[Background] All cloud analysis sources failed for FEN:', fen.substring(0, 30));
-
-  const breakerStates = {};
-  for (const [name, breaker] of Object.entries(breakers)) {
-    breakerStates[name] = breaker.getStatus();
-  }
-
-  const errorDetail = classifyError(breakerStates);
-
-  return {
-    error: true,
-    fen,
-    playerColor,
-    breakerStates,
-    errorDetail,
-    moveHistory: options.moveHistory || []
-  };
+  return bestResult;
 }
 
 // ─── Error Classification for User-Friendly Messages ─────────────────
-function classifyError(breakerStates) {
-  const states = Object.entries(breakerStates);
-  const openBreakers = states.filter(([_, s]) => s.state === 'open');
-  const allHealthy = states.every(([_, s]) => s.state === 'closed');
-
-  if (allHealthy) {
-    return {
-      type: 'transient',
-      message: 'Analysis temporarily unavailable. This usually resolves within seconds.',
-      suggestion: 'retry'
-    };
-  }
-
-  const rateLimited = openBreakers.filter(([name, s]) =>
-    s.currentRecoveryTime >= 50000 && (name.includes('lichess') || name.includes('masters'))
-  );
-
-  if (rateLimited.length > 0) {
+function classifyError() {
+  const diagnostics = apiCoordinator.getDiagnostics();
+  const statuses = Object.values(diagnostics.providers || {});
+  if (statuses.some(status => status.state === 'rate-limited' || status.state === 'cooldown')) {
     return {
       type: 'rate_limited',
-      message: 'Rate limited by cloud API. Waiting before retrying.',
+      message: 'Cloud providers are cooling down. Cached results remain available.',
       suggestion: 'wait'
     };
   }
-
-  if (openBreakers.length === states.length) {
+  if (statuses.length && statuses.every(status => status.state === 'disabled' || status.state === 'degraded')) {
     return {
       type: 'all_down',
-      message: 'All cloud APIs are currently unavailable.',
+      message: 'Cloud analysis providers are currently unavailable.',
       suggestion: 'wait_long'
     };
   }
-
   return {
-    type: 'partial',
-    message: 'Some cloud APIs are unavailable. Retrying with available sources.',
+    type: 'transient',
+    message: 'No eligible cloud result is available within the current request budget.',
     suggestion: 'retry'
   };
 }
 
 // ─── Connection Health Check ─────────────────────────────────────────
 async function checkConnectionHealth() {
-  const results = {};
-  const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-
-  function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-    return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timeoutId));
-  }
-
-  // Check Chess-API
-  try {
-    const start = Date.now();
-    const response = await fetchWithTimeout('https://chess-api.com/v1', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({ fen: startFen, depth: 10, maxThinkingTime: 50 })
-    }, 12000);
-    const latency = Date.now() - start;
-    if (!response.ok) {
-      results['chess-api'] = { ok: false, latency, status: response.status, error: `HTTP ${response.status}` };
-    } else {
-      const data = await response.json();
-      const isOk = !!data.move && data.type !== 'error' && !data.error;
-      results['chess-api'] = { ok: isOk, latency, status: response.status };
-    }
-  } catch (e) {
-    results['chess-api'] = { ok: false, latency: -1, error: e.message };
-  }
-
-  // Check Lichess Cloud Eval
-  try {
-    const start = Date.now();
-    const response = await fetchWithTimeout(
-      `https://lichess.org/api/cloud-eval?fen=${encodeURIComponent(startFen)}&multiPv=1`,
-      { headers: { 'Accept': 'application/json' } },
-      10000
-    );
-    const latency = Date.now() - start;
-    results['lichess'] = { ok: response.ok || response.status === 404, latency, status: response.status };
-  } catch (e) {
-    results['lichess'] = { ok: false, latency: -1, error: e.message };
-  }
-
-  // v7.5.0: Check Masters Explorer
-  try {
-    const start = Date.now();
-    const response = await fetchWithTimeout(
-      `https://explorer.lichess.ovh/master?fen=${encodeURIComponent(startFen)}&moves=3`,
-      { headers: { 'Accept': 'application/json' } },
-      10000
-    );
-    const latency = Date.now() - start;
-    results['masters'] = { ok: response.ok || response.status === 404, latency, status: response.status };
-  } catch (e) {
-    results['masters'] = { ok: false, latency: -1, error: e.message };
-  }
-
-  return results;
+  await apiCoordinator.ready;
+  const diagnostics = apiCoordinator.getDiagnostics();
+  const convert = provider => {
+    const data = diagnostics.providers[provider];
+    if (!data) return { ok: false, passive: true, label: 'No recent data', latency: -1 };
+    return {
+      ok: data.state === 'healthy' || data.state === 'slow' || data.state === 'unknown',
+      passive: true,
+      label: data.label,
+      state: data.state,
+      latency: data.recentLatency || -1,
+      status: data.lastStatus || 0,
+      cooldownRemainingMs: data.cooldownRemainingMs || 0
+    };
+  };
+  return {
+    'chess-api': convert('chessApi'),
+    lichess: convert('lichessCloud'),
+    masters: convert('mastersExplorer'),
+    opening: convert('openingExplorer'),
+    tablebase: convert('tablebase'),
+    diagnostics
+  };
 }
 
 // ─── Read Board from Active Tab ──────────────────────────────────────
@@ -1581,6 +1140,10 @@ async function readBoardFromActiveTab() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || !tab.url) return null;
+    if (coordinatorActiveTabId !== null && coordinatorActiveTabId !== tab.id) {
+      apiCoordinator.cancelTab(coordinatorActiveTabId);
+    }
+    coordinatorActiveTabId = tab.id;
     const url = new URL(tab.url);
     const host = url.hostname.toLowerCase();
     const isChessSite = host === 'chess.com' || host.endsWith('.chess.com') ||
@@ -1592,6 +1155,7 @@ async function readBoardFromActiveTab() {
     });
     const result = results?.[0]?.result;
     if (!result || !ChessCore.parseFen(result.fen)) return null;
+    result.tabId = tab.id;
 
     const previousFen = lastObservedFenByTab.get(tab.id) || null;
     if (previousFen && previousFen.split(' ')[0] === result.fen.split(' ')[0]) {
@@ -1607,7 +1171,19 @@ async function readBoardFromActiveTab() {
   }
 }
 
-chrome.tabs.onRemoved.addListener(tabId => lastObservedFenByTab.delete(tabId));
+let coordinatorActiveTabId = null;
+chrome.tabs.onRemoved.addListener(tabId => {
+  lastObservedFenByTab.delete(tabId);
+  positionGenerations.delete(String(tabId));
+  apiCoordinator.cancelTab(tabId);
+  if (coordinatorActiveTabId === tabId) coordinatorActiveTabId = null;
+});
+chrome.tabs.onActivated.addListener(activeInfo => {
+  if (coordinatorActiveTabId !== null && coordinatorActiveTabId !== activeInfo.tabId) {
+    apiCoordinator.cancelTab(coordinatorActiveTabId);
+  }
+  coordinatorActiveTabId = activeInfo.tabId;
+});
 
 // ─── Side Panel Management ──────────────────────────────────────────
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
@@ -1644,19 +1220,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
     chrome.storage.local.get(['settings', 'assistedPlayerColor'], (result) => {
-      const settings = result.settings || DEFAULT_SETTINGS;
+      const settings = { ...DEFAULT_SETTINGS, ...(result.settings || {}) };
       const assistedPlayerColor = message.playerColor || result.assistedPlayerColor || 'w';
+      const tabId = message.tabId ?? sender.tab?.id ?? 'active';
+      notePanelActivity(tabId, true);
+      const positionToken = registerPosition(message.fen, tabId);
 
-      if (message.fen) {
-        const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-        const startPlacement = startFen.split(' ')[0];
-        const fenPlacement = message.fen.split(' ')[0];
-        if (fenPlacement === startPlacement) {
-          hintUsageTracker = { gameId: Date.now(), l5Count: 0, l4Count: 0, lastWarnLevel: 0 };
-          resetAnalysisState();
-          // v8.5.0: also reset correlation tracker on new game
-          resetCorrelationTracker();
-        }
+      if (positionToken && hintUsageTracker.gameId !== positionToken.gameId) {
+        hintUsageTracker = { gameId: positionToken.gameId, l5Count: 0, l4Count: 0, lastWarnLevel: 0 };
+        resetAnalysisState();
+        resetCorrelationTracker();
       }
 
       let effectiveHintLevel = message.hintLevel || settings.hintLevel || 3;
@@ -1677,34 +1250,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         hintUsageTracker.l4Count++;
       }
 
-      if (message.refresh) {
-        for (const breaker of Object.values(breakers)) breaker.reset();
-        resetAnalysisState();
-        if (message.fen) {
-          clearMemoryCache('cloud_eval_' + message.fen);
-          clearMemoryCache('chessapi_' + message.fen);
-          clearMemoryCache('opening_' + message.fen);
-          clearMemoryCache('tablebase_' + message.fen);
-          clearMemoryCache('masters_eval_' + message.fen); // v7.5.0
-          const prefixes = [
-            'cloud_eval_' + message.fen + '_',
-            'chessapi_' + message.fen + '_',
-            'opening_' + message.fen,
-            'tablebase_' + message.fen,
-            'masters_eval_' + message.fen + '_'
-          ];
-          // storage.remove does not support wildcard keys; enumerate so every
-          // multi-PV/depth variant for this position is actually invalidated.
-          chrome.storage.local.get(null).then(items => {
-            const keys = Object.keys(items).filter(key => prefixes.some(prefix => key.startsWith(prefix)));
-            if (keys.length) return chrome.storage.local.remove(keys);
-          }).catch(() => {});
-        }
-      }
+      // Refresh is deliberately non-destructive: caches, cooldowns, quotas and
+      // passive health remain intact. The coordinator decides whether the
+      // current cached result is old enough to revalidate.
 
       const turnCheck = shouldAnalyzePosition(message.fen, assistedPlayerColor);
 
-      if (!turnCheck.shouldAnalyze && !message.refresh) {
+      const refreshCurrentPosition = Boolean(message.refresh && turnCheck.reason === 'same_position' && turnCheck.isPlayerTurn);
+      if (!turnCheck.shouldAnalyze && !refreshCurrentPosition) {
         chrome.runtime.sendMessage({
           type: 'turn_status_update',
           data: {
@@ -1730,9 +1283,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       performCloudAnalysis(message.fen, assistedPlayerColor, {
         multiPv: message.multiPv || settings.cloudDepth || 3,
-        moveHistory: message.gameInfo?.moveHistory || []
+        moveHistory: message.gameInfo?.moveHistory || [],
+        refresh: Boolean(message.refresh),
+        positionToken,
+        tabId
       }).then(cloudResult => {
         turnState.analysisInProgress = false;
+        if (!apiCoordinator.isPositionCurrent(positionToken) || cloudResult?.stalePosition) return;
 
         if (cloudResult && !cloudResult.error) {
           markPositionAnalyzed(message.fen, cloudResult.source);
@@ -1785,7 +1342,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           chrome.runtime.sendMessage({ type: 'analysis_update', data: cloudResult }).catch(() => {});
         } else {
           turnState.consecutiveFailures++;
-          const detail = cloudResult?.errorDetail || classifyError(cloudResult?.breakerStates || {});
+          const detail = cloudResult?.errorDetail || classifyError();
           let errorMsg = detail.message || 'Cloud analysis unavailable';
           if (detail.suggestion === 'retry') errorMsg += ' Try Refresh.';
           else if (detail.suggestion === 'wait') errorMsg += ' Will retry on your next turn.';
@@ -1803,27 +1360,49 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (msgType === 'request_cloud_analysis') {
+    if (!ChessCore.parseFen(message.fen)) { sendResponse(null); return false; }
+    const tabId = message.tabId ?? sender.tab?.id ?? 'active';
+    const positionToken = registerPosition(message.fen, tabId);
+    notePanelActivity(tabId, true);
     performCloudAnalysis(message.fen, message.playerColor, {
       multiPv: message.multiPv || 3,
-      moveHistory: message.moveHistory || []
+      moveHistory: message.moveHistory || [],
+      refresh: Boolean(message.refresh),
+      positionToken,
+      tabId
     }).then(result => sendResponse(result)).catch(() => sendResponse(null));
     return true;
   }
 
   if (msgType === 'request_opening_data') {
-    lichessOpeningExplorer(message.fen).then(data => sendResponse(data)).catch(() => sendResponse(null));
+    if (!ChessCore.parseFen(message.fen) || !isPlausibleOpening(message.fen)) {
+      sendResponse(null);
+      return false;
+    }
+    const tabId = message.tabId ?? sender.tab?.id ?? 'active';
+    const positionToken = registerPosition(message.fen, tabId);
+    chrome.storage.local.get('settings').then(result => {
+      const settings = { ...DEFAULT_SETTINGS, ...(result.settings || {}) };
+      if (!settings.showOpeningExplorer) return null;
+      return lichessOpeningExplorer(message.fen, { positionToken, priority: 'opening-enrichment' });
+    }).then(data => sendResponse(data)).catch(() => sendResponse(null));
     return true;
   }
 
   if (msgType === 'request_tablebase_data') {
-    lichessTablebase(message.fen).then(data => sendResponse(data)).catch(() => sendResponse(null));
+    if (!ChessCore.parseFen(message.fen) || countFenPieces(message.fen) > 7) {
+      sendResponse(null);
+      return false;
+    }
+    const tabId = message.tabId ?? sender.tab?.id ?? 'active';
+    const positionToken = registerPosition(message.fen, tabId);
+    lichessTablebase(message.fen, { positionToken, priority: 'current-position-tablebase' })
+      .then(data => sendResponse(data)).catch(() => sendResponse(null));
     return true;
   }
 
   if (msgType === 'get_circuit_states') {
-    const states = {};
-    for (const [name, breaker] of Object.entries(breakers)) states[name] = breaker.getStatus();
-    sendResponse(states);
+    sendResponse(apiCoordinator.getDiagnostics().providers);
     return false;
   }
 
@@ -1832,20 +1411,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (msgType === 'clear_caches') {
-    memoryCache.clear();
-    for (const breaker of Object.values(breakers)) breaker.reset();
-    resetAnalysisState();
-    chrome.storage.local.get(null, (items) => {
-      const keysToRemove = Object.keys(items).filter(k =>
-        k.startsWith('cloud_eval_') || k.startsWith('chessapi_') ||
-        k.startsWith('opening_') || k.startsWith('tablebase_') ||
-        k.startsWith('eval_') || k.startsWith('masters_eval_') // v7.5.0
-      );
-      chrome.storage.local.remove(keysToRemove).catch(() => {});
-    });
+  if (msgType === 'get_api_diagnostics') {
+    apiCoordinator.ready.then(() => sendResponse(apiCoordinator.getDiagnostics())).catch(() => sendResponse(null));
+    return true;
+  }
+
+  if (msgType === 'panel_state') {
+    const tabId = message.tabId ?? sender.tab?.id ?? 'active';
+    notePanelActivity(tabId, message.open !== false);
+    if (message.open === false) apiCoordinator.cancelTab(tabId);
     sendResponse({ ok: true });
     return false;
+  }
+
+  if (msgType === 'clear_caches') {
+    // Clearing result data never clears quota, cooldown or provider-health state.
+    apiCoordinator.clearCaches().then(async () => {
+      const items = await chrome.storage.local.get(null);
+      const legacyKeys = Object.keys(items).filter(key =>
+        key.startsWith('cloud_eval_') || key.startsWith('chessapi_') ||
+        key.startsWith('opening_') || key.startsWith('tablebase_') ||
+        key.startsWith('eval_') || key.startsWith('masters_eval_')
+      );
+      if (legacyKeys.length) await chrome.storage.local.remove(legacyKeys);
+      resetAnalysisState();
+      sendResponse({ ok: true });
+    }).catch(() => sendResponse({ ok: false }));
+    return true;
   }
 
   if (msgType === 'player_color_changed') {
@@ -1901,20 +1493,11 @@ chrome.runtime.onInstalled.addListener(() => {
       let updated = false;
       const s = result.settings;
 
-      if (s.stealthMode !== undefined && s.minimalFootprint === undefined) {
-        s.minimalFootprint = s.stealthMode;
-        delete s.stealthMode;
-        updated = true;
-      }
-      if (s.stealthRequestDelay !== undefined && s.smartThrottling === undefined) {
-        s.smartThrottling = s.stealthRequestDelay;
-        delete s.stealthRequestDelay;
-        updated = true;
-      }
-      if (s.stealthCacheOnly !== undefined && s.cacheFirstMode === undefined) {
-        s.cacheFirstMode = s.stealthCacheOnly;
-        delete s.stealthCacheOnly;
-        updated = true;
+      // Request reliability is now mandatory and centrally enforced. Remove
+      // legacy toggles that implied quota or cache protection was optional.
+      for (const obsolete of ['stealthMode', 'stealthRequestDelay', 'stealthCacheOnly',
+        'minimalFootprint', 'smartThrottling', 'cacheFirstMode']) {
+        if (s[obsolete] !== undefined) { delete s[obsolete]; updated = true; }
       }
       // Consolidate legacy playing styles into the rebuilt three-mode system.
       if (['super_aggressive', 'ultra_aggressive_stealth', 'kamikaze', 'berserker'].includes(s.style)) {

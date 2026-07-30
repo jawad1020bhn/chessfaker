@@ -732,6 +732,22 @@ button:focus-visible, select:focus-visible {
 .hint-tag.tag-depth-standard { background: rgba(0, 212, 255, 0.1); color: var(--accent-cyan); }
 .hint-tag.tag-depth-basic { background: rgba(74, 90, 115, 0.12); color: var(--text-secondary); }
 
+
+.api-usage-diagnostics {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 212, 255, 0.025);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.api-usage-diagnostics > div:not(.api-provider-calls) { display: flex; justify-content: space-between; gap: 12px; }
+.api-usage-diagnostics strong { color: var(--text-primary); }
+.api-provider-calls { padding-top: 4px; border-top: 1px solid var(--border-color); line-height: 1.5; }
+
 /* ─── Fair Play Warning ─── */
 .fair-play-warning {
   display: flex;
