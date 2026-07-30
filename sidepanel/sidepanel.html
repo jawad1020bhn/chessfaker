@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chess Hint Assistant v8.5.0</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <!-- Toast Container -->
+  <div id="toast-container" class="toast-container" role="alert" aria-live="polite" aria-atomic="true"></div>
+
+  <!-- Keyboard Shortcut Help -->
+  <div id="shortcut-help" class="shortcut-help" style="display:none" role="dialog" aria-label="Keyboard shortcuts">
+    <div class="shortcut-help-header">
+      <h4>Keyboard Shortcuts</h4>
+      <button class="shortcut-close" onclick="document.getElementById('shortcut-help').style.display='none'" aria-label="Close">&times;</button>
+    </div>
+    <div class="shortcut-grid">
+      <div class="shortcut-row"><span>Refresh analysis</span><kbd>R</kbd></div>
+      <div class="shortcut-row"><span>Toggle settings</span><kbd>S</kbd></div>
+      <div class="shortcut-row"><span>Hint level 1-5</span><kbd>1</kbd>-<kbd>5</kbd></div>
+      <div class="shortcut-row"><span>Switch tabs</span><kbd>Q</kbd>/<kbd>W</kbd>/<kbd>E</kbd></div>
+      <div class="shortcut-row"><span>Close / Dismiss</span><kbd>Esc</kbd></div>
+      <div class="shortcut-row"><span>Show shortcuts</span><kbd>?</kbd></div>
+    </div>
+  </div>
+
+  <div id="app">
+    <!-- ═══ Top Bar ═══ -->
+    <header class="topbar" role="banner">
+      <div class="topbar-left">
+        <div class="logo-icon" aria-hidden="true">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <path d="M12 2L9 5H6L4 8L6 11L4 14L6 17H9L12 22L15 17H18L20 14L18 11L20 8L18 5H15L12 2Z" fill="url(#logoGrad)" stroke="rgba(0,212,255,0.3)" stroke-width="0.5"/>
+            <circle cx="12" cy="11" r="3" fill="#0a0e17" stroke="rgba(0,212,255,0.5)" stroke-width="0.5"/>
+            <defs><linearGradient id="logoGrad" x1="4" y1="2" x2="20" y2="22"><stop offset="0%" stop-color="#00d4ff"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient></defs>
+          </svg>
+        </div>
+        <h1 class="topbar-title">Chess Coach</h1>
+      </div>
+      <div class="topbar-right">
+        <div id="player-selector" class="player-selector" role="radiogroup" aria-label="Which player to assist">
+          <button class="player-btn active" data-color="w" role="radio" aria-checked="true" title="Assist White">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C10.9 2 10 2.9 10 4C10 4.7 10.4 5.4 11 5.7V7H7V9H8V20H6V22H18V20H16V9H17V7H13V5.7C13.6 5.4 14 4.7 14 4C14 2.9 13.1 2 12 2Z"/></svg>
+            W
+          </button>
+          <button class="player-btn" data-color="b" role="radio" aria-checked="false" title="Assist Black">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C10.9 2 10 2.9 10 4C10 4.7 10.4 5.4 11 5.7V7H7V9H8V20H6V22H18V20H16V9H17V7H13V5.7C13.6 5.4 14 4.7 14 4C14 2.9 13.1 2 12 2Z"/></svg>
+            B
+          </button>
+        </div>
+
+        <button id="btn-lichess-analysis" class="icon-btn" title="Open this position on Lichess analysis board" aria-label="Open on Lichess">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        </button>
+
+        <button id="btn-settings" class="icon-btn" title="Settings (S)" aria-label="Open settings">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Engine Status -->
+    <div id="engine-status" class="engine-status" role="status" aria-live="polite">
+      <span class="status-dot offline" aria-hidden="true"></span>
+      <span class="status-text">Connecting to cloud...</span>
+    </div>
+
+    <!-- ═══ Tab Navigation ═══ -->
+    <nav class="tab-nav" role="tablist" aria-label="Main sections">
+      <button id="tabbtn-coach" class="tab-btn active" data-tab="coach" role="tab" aria-selected="true" aria-controls="tab-coach">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+        <span>Coach</span>
+      </button>
+      <button id="tabbtn-analysis" class="tab-btn" data-tab="analysis" role="tab" aria-selected="false" aria-controls="tab-analysis">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        <span>Analysis</span>
+      </button>
+      <button id="tabbtn-explore" class="tab-btn" data-tab="explore" role="tab" aria-selected="false" aria-controls="tab-explore">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <span>Explore</span>
+      </button>
+    </nav>
+
+    <!-- ═══ Tab Content ═══ -->
+    <div class="tab-content">
+
+      <!-- ─── Coach Tab ─── -->
+      <div id="tab-coach" class="tab-pane active" role="tabpanel" aria-labelledby="tabbtn-coach">
+
+        <!-- Eval Bar -->
+        <div id="eval-section" class="eval-section card" aria-label="Position evaluation">
+          <div class="eval-bar-container">
+            <div class="eval-bar" role="meter" aria-label="Evaluation bar" aria-valuemin="-10" aria-valuemax="10" aria-valuenow="0">
+              <div id="eval-bar-black" class="eval-bar-black" style="height: 50%"></div>
+              <div id="eval-bar-white" class="eval-bar-white" style="height: 50%"></div>
+            </div>
+            <div class="eval-labels">
+              <span id="eval-white-label" class="eval-label white">0.0</span>
+              <span id="eval-black-label" class="eval-label black">0.0</span>
+            </div>
+          </div>
+          <div id="eval-description" class="eval-description">Position is equal</div>
+        </div>
+
+        <!-- Hint Section (Primary) -->
+        <div id="hint-section" class="hint-section card" aria-label="Chess hint">
+          <div class="hint-header">
+            <div class="hint-title-row">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+              <h2>Hint</h2>
+            </div>
+          </div>
+          <div id="hint-card" class="hint-card level-3" aria-live="polite">
+            <p id="hint-text" class="hint-text">Waiting for board position...</p>
+            <div id="hint-fromto" class="hint-fromto" style="display:none" aria-label="Move squares"></div>
+            <div id="hint-tags" class="hint-tags" aria-label="Hint tags"></div>
+            <div id="fair-play-warning" class="fair-play-warning" style="display:none" role="alert">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              <span id="fair-play-warning-text" class="warning-text"></span>
+            </div>
+            <div id="coach-mode-info" class="coach-mode-info" style="display:none">
+              <span class="coach-badge">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                Coach Mode
+              </span>
+              <span id="hint-usage-counter" class="hint-usage-counter">0/3 L5 hints used</span>
+            </div>
+          </div>
+          <div id="winning-plan" class="winning-plan" style="display:none">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent-purple)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            <span class="plan-label">Plan:</span>
+            <span id="plan-text" class="plan-text"></span>
+          </div>
+        </div>
+
+        <!-- Critical Moment Alert -->
+        <div id="critical-moment-section" class="critical-moment-section card" style="display:none" role="alert" aria-label="Critical moment alert">
+          <div class="critical-moment-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-purple)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            <span>Critical Moment</span>
+          </div>
+          <p id="critical-moment-text" class="critical-moment-text"></p>
+          <div id="critical-moment-detail" class="critical-moment-detail"></div>
+        </div>
+
+        <!-- Threat Alert -->
+        <div id="threat-section" class="threat-section card" style="display:none" role="alert" aria-label="Threat detected">
+          <div class="threat-header">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            Threat Detected
+          </div>
+          <p id="threat-text" class="threat-text"></p>
+        </div>
+
+        <!-- Move Classification -->
+        <div id="move-class-section" class="move-class-section card" style="display:none" aria-label="Last move classification">
+          <h3>Last Move</h3>
+          <div id="move-class-display" class="move-class-display"></div>
+        </div>
+
+        <!-- Position Info (compact) -->
+        <div id="position-info" class="position-info card" aria-label="Position information">
+          <div class="info-row"><span class="info-label">Source</span><span id="analysis-source" class="info-value source-indicator">&mdash;</span></div>
+          <div class="info-row"><span class="info-label">Opening</span><span id="opening-name" class="info-value">&mdash;</span></div>
+          <div class="info-row"><span class="info-label">Phase</span><span id="game-phase" class="info-value">&mdash;</span></div>
+          <div class="info-row"><span class="info-label">Depth</span><span id="analysis-depth" class="info-value">&mdash;</span></div>
+          <div class="info-row"><span class="info-label">Material</span><span id="material-balance" class="info-value">Equal</span></div>
+          <div class="info-row"><span class="info-label">Engine Match</span><span id="correlation-stat" class="info-value" title="How often your moves match the engine's first choice across this game.">0 / 0 (0%)</span></div>
+        </div>
+
+      </div><!-- /tab-coach -->
+
+      <!-- ─── Analysis Tab ─── -->
+      <div id="tab-analysis" class="tab-pane" role="tabpanel" aria-labelledby="tabbtn-analysis" style="display:none">
+
+        <!-- Candidate Move Evaluation -->
+        <div id="candidate-section" class="candidate-section card section-collapsible" aria-label="Candidate moves">
+          <div class="section-header" role="button" tabindex="0" aria-expanded="true">
+            <div class="section-title-row">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              <h3>Candidate Moves</h3>
+            </div>
+            <span class="section-chevron" aria-hidden="true">&#9660;</span>
+          </div>
+          <div class="section-content">
+            <div id="candidate-moves" class="candidate-moves">
+              <div class="pv-empty">Waiting for analysis...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Position Assessment -->
+        <div id="assessment-section" class="assessment-section card section-collapsible" style="display:none" aria-label="Position assessment">
+          <div class="section-header" role="button" tabindex="0" aria-expanded="true">
+            <div class="section-title-row">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent-yellow)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+              <h3>Position Assessment</h3>
+            </div>
+            <span class="section-chevron" aria-hidden="true">&#9660;</span>
+          </div>
+          <div class="section-content">
+            <div id="assessment-cards" class="assessment-cards"></div>
+          </div>
+        </div>
+
+        <!-- PV Lines -->
+        <div id="pv-section" class="pv-section card section-collapsible" style="display:none" aria-label="Engine lines">
+          <div class="section-header" role="button" tabindex="0" aria-expanded="true">
+            <div class="section-title-row">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent-green)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              <h3>Engine Lines</h3>
+            </div>
+            <span class="section-chevron" aria-hidden="true">&#9660;</span>
+          </div>
+          <div class="section-content">
+            <div id="pv-lines" class="pv-lines">
+              <div class="pv-empty">Engine analysis will appear here</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Continuation -->
+        <div id="continuation-section" class="continuation-section card section-collapsible" style="display:none" aria-label="Full continuation">
+          <div class="section-header" role="button" tabindex="0" aria-expanded="true">
+            <div class="section-title-row">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              <h3>Full Continuation</h3>
+            </div>
+            <span class="section-chevron" aria-hidden="true">&#9660;</span>
+          </div>
+          <div class="section-content">
+            <div id="continuation-moves" class="continuation-moves"></div>
+          </div>
+        </div>
+
+        <!-- Eval History -->
+        <div id="eval-history-section" class="eval-history-section card section-collapsible" style="display:none" aria-label="Evaluation history chart">
+          <div class="section-header" role="button" tabindex="0" aria-expanded="true">
+            <div class="section-title-row">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent-purple)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+              <h3>Evaluation History</h3>
+            </div>
+            <span class="section-chevron" aria-hidden="true">&#9660;</span>
+          </div>
+          <div class="section-content">
+            <canvas id="eval-chart" class="eval-chart" width="320" height="100" aria-label="Evaluation history chart"></canvas>
+          </div>
+        </div>
+
+      </div><!-- /tab-analysis -->
+
+      <!-- ─── Explore Tab ─── -->
+      <div id="tab-explore" class="tab-pane" role="tabpanel" aria-labelledby="tabbtn-explore" style="display:none">
+
+        <!-- Opening Explorer -->
+        <div id="opening-explorer-section" class="opening-explorer-section card section-collapsible" style="display:none" aria-label="Opening Explorer">
+          <div class="section-header" role="button" tabindex="0" aria-expanded="true">
+            <div class="section-title-row">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cloud)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <h3>Opening Explorer</h3>
+            </div>
+            <span class="section-chevron" aria-hidden="true">&#9660;</span>
+          </div>
+          <div class="section-content">
+            <div id="opening-stats" class="opening-stats">
+              <div class="win-bar-container">
+                <div id="win-bar-white" class="win-bar-segment win-white" style="width:50%"></div>
+                <div id="win-bar-draws" class="win-bar-segment win-draws" style="width:10%"></div>
+                <div id="win-bar-black" class="win-bar-segment win-black" style="width:40%"></div>
+              </div>
+              <div class="win-bar-labels">
+                <span id="win-pct-white" class="win-label white">50%</span>
+                <span id="win-pct-draws" class="win-label draws">10%</span>
+                <span id="win-pct-black" class="win-label black">40%</span>
+              </div>
+              <div id="opening-moves" class="opening-moves"></div>
+              <div id="top-games" class="top-games"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tablebase -->
+        <div id="tablebase-section" class="tablebase-section card section-collapsible" style="display:none" aria-label="Endgame Tablebase">
+          <div class="section-header" role="button" tabindex="0" aria-expanded="true">
+            <div class="section-title-row">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent-tb)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+              <h3>Endgame Tablebase</h3>
+            </div>
+            <span class="section-chevron" aria-hidden="true">&#9660;</span>
+          </div>
+          <div class="section-content">
+            <div id="tablebase-info" class="tablebase-info">
+              <div id="tb-category" class="tb-category"></div>
+              <div id="tb-dtm" class="tb-dtm"></div>
+              <div id="tb-moves" class="tb-moves"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Endgame Coach -->
+        <div id="endgame-coach-section" class="endgame-coach-section card section-collapsible" style="display:none" aria-label="Endgame Technique Coach">
+          <div class="section-header" role="button" tabindex="0" aria-expanded="true">
+            <div class="section-title-row">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent-tb)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              <h3>Endgame Technique Coach</h3>
+            </div>
+            <span class="section-chevron" aria-hidden="true">&#9660;</span>
+          </div>
+          <div class="section-content">
+            <div id="endgame-coach-info" class="endgame-coach-info">
+              <div id="eg-phase-label" class="eg-phase-label"></div>
+              <div id="eg-technique" class="eg-technique"></div>
+              <div id="eg-plan" class="eg-plan"></div>
+              <div id="eg-step-list" class="eg-step-list"></div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /tab-explore -->
+
+    </div><!-- /tab-content -->
+
+    <!-- ═══ Bottom Action Bar ═══ -->
+    <div class="bottom-bar">
+      <div class="hint-level-selector" role="radiogroup" aria-label="Hint detail level">
+        <button class="level-btn level-l1" data-level="1" role="radio" aria-checked="false" title="Position assessment only (1)">L1</button>
+        <button class="level-btn level-l2" data-level="2" role="radio" aria-checked="false" title="Area and piece type (2)">L2</button>
+        <button class="level-btn level-l3 active" data-level="3" role="radio" aria-checked="true" title="Piece and direction (3)">L3</button>
+        <button class="level-btn" data-level="4" role="radio" aria-checked="false" title="Deep line (4)">L4</button>
+        <button class="level-btn" data-level="5" role="radio" aria-checked="false" title="Exact move (5)">L5</button>
+      </div>
+      <button id="btn-refresh" class="refresh-btn" title="Refresh analysis (R)" aria-label="Refresh analysis">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+      </button>
+    </div>
+
+    <!-- ═══ Settings Panel ═══ -->
+    <div id="settings-panel" class="settings-panel" style="display:none" role="dialog" aria-label="Settings" aria-modal="true">
+      <div class="settings-header">
+        <div class="settings-header-left">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <h3>Settings</h3>
+        </div>
+        <button id="btn-close-settings" class="settings-close-btn" aria-label="Close settings">&times;</button>
+      </div>
+
+      <!-- Cloud API Settings -->
+      <div class="setting-group">
+        <label for="setting-cloud-depth">Cloud Lines (MultiPV)</label>
+        <select id="setting-cloud-depth">
+          <option value="1">1 line (fastest)</option>
+          <option value="2">2 lines</option>
+          <option value="3">3 lines</option>
+          <option value="5" selected>5 lines (recommended)</option>
+          <option value="7">7 lines</option>
+          <option value="10">10 lines (max)</option>
+        </select>
+        <div class="setting-hint">More lines = more candidate moves shown</div>
+      </div>
+
+      <div class="setting-group">
+        <label for="setting-depth-target">Minimum Depth Target</label>
+        <select id="setting-depth-target">
+          <option value="0" selected>No minimum (any depth)</option>
+          <option value="15">15 (basic)</option>
+          <option value="20">20 (standard)</option>
+          <option value="25">25 (strong)</option>
+          <option value="30">30 (deep)</option>
+          <option value="40">40 (deepest)</option>
+        </select>
+        <div class="setting-hint">Hides L4/L5 hints until engine reaches this depth. Helps filter shallow cloud-eval cache hits.</div>
+      </div>
+
+      <div class="setting-divider"></div>
+      <div class="setting-section-title">Playing Style</div>
+
+      <div class="setting-group">
+        <label for="setting-style">Playing Style</label>
+        <select id="setting-style">
+          <option value="normal" selected>Normal</option>
+          <option value="aggressive">Aggressive Attacking</option>
+          <option value="super_aggressive">Super Aggressive</option>
+          <option value="ultra_aggressive_stealth">Ultra Aggressive</option>
+          <option value="kamikaze">Kamikaze</option>
+          <option value="berserker">Berserker</option>
+        </select>
+        <div class="setting-hint">Berserker: Maximum destruction! Sacrifices for chaos, seeks mate through overwhelming attack.</div>
+      </div>
+
+      <div class="setting-group">
+        <label for="setting-repertoire">Opening Repertoire</label>
+        <select id="setting-repertoire">
+          <option value="none" selected>No Preference</option>
+          <option value="e4_player">1.e4 Player</option>
+          <option value="d4_player">1.d4 Player</option>
+          <option value="c4_player">1.c4 / English</option>
+        </select>
+      </div>
+
+      <div class="setting-divider"></div>
+      <div class="setting-section-title">Cloud API Status</div>
+
+      <div class="setting-group">
+        <div id="api-health-status" class="api-health-status">
+          <div class="api-health-row">
+            <span class="api-name">Chess-API.com</span>
+            <span id="health-chessapi" class="api-status unknown">Checking...</span>
+          </div>
+          <div class="api-health-row">
+            <span class="api-name">Lichess Cloud</span>
+            <span id="health-lichess" class="api-status unknown">Checking...</span>
+          </div>
+          <div class="api-health-row">
+            <span class="api-name">Masters DB</span>
+            <span id="health-masters" class="api-status unknown">Checking...</span>
+          </div>
+        </div>
+        <div class="setting-hint" style="margin-top:4px">3-API rotation distributes load evenly. Masters DB provides human grandmaster moves.</div>
+        <div class="btn-row">
+          <button id="btn-health-check" class="btn-secondary">Run Health Check</button>
+          <button id="btn-clear-caches" class="btn-secondary">Clear Caches</button>
+        </div>
+      </div>
+
+      <div class="setting-divider"></div>
+      <div class="setting-section-title">Display Settings</div>
+
+      <div class="setting-group">
+        <label class="toggle-label">
+          <input type="checkbox" id="setting-auto-analyze" checked>
+          <span>Auto-analyze positions</span>
+        </label>
+        <div class="setting-hint">Analyzes only on your turn. No API calls during opponent's turn.</div>
+      </div>
+
+      <div class="setting-group">
+        <label class="toggle-label">
+          <input type="checkbox" id="setting-show-threats" checked>
+          <span>Show threat alerts</span>
+        </label>
+      </div>
+
+      <div class="setting-group">
+        <label class="toggle-label">
+          <input type="checkbox" id="setting-show-critical-moments" checked>
+          <span>Show critical moment alerts</span>
+        </label>
+      </div>
+
+      <div class="setting-group">
+        <label class="toggle-label">
+          <input type="checkbox" id="setting-show-candidate-moves" checked>
+          <span>Show candidate move evaluation</span>
+        </label>
+      </div>
+
+      <div class="setting-group">
+        <label class="toggle-label">
+          <input type="checkbox" id="setting-show-opening-explorer" checked>
+          <span>Show Opening Explorer</span>
+        </label>
+      </div>
+
+      <div class="setting-group">
+        <label class="toggle-label">
+          <input type="checkbox" id="setting-show-tablebase" checked>
+          <span>Show Endgame Tablebase</span>
+        </label>
+      </div>
+
+      <div class="setting-group">
+        <label class="toggle-label">
+          <input type="checkbox" id="setting-show-endgame-coach" checked>
+          <span>Show Endgame Technique Coach</span>
+        </label>
+      </div>
+
+      <div class="setting-group">
+        <label class="toggle-label">
+          <input type="checkbox" id="setting-show-assessment" checked>
+          <span>Show position assessment</span>
+        </label>
+      </div>
+
+      <div class="setting-group">
+        <label class="toggle-label">
+          <input type="checkbox" id="setting-show-continuation" checked>
+          <span>Show full continuation</span>
+        </label>
+      </div>
+
+      <div class="setting-group">
+        <label class="toggle-label">
+          <input type="checkbox" id="setting-show-eval-history" checked>
+          <span>Show eval history chart</span>
+        </label>
+      </div>
+
+      <div class="setting-divider"></div>
+      <div class="setting-section-title">Coach Mode</div>
+
+      <div class="setting-group">
+        <label class="toggle-label">
+          <input type="checkbox" id="setting-coach-mode" checked>
+          <span>Coach Mode</span>
+        </label>
+        <div class="setting-hint">Limits exact move (L5) hints per game to prevent engine correlation</div>
+      </div>
+
+      <div class="setting-group">
+        <label for="setting-coach-max-hints">Max L5 hints per game</label>
+        <select id="setting-coach-max-hints">
+          <option value="1">1 hint</option>
+          <option value="2">2 hints</option>
+          <option value="3" selected>3 hints</option>
+          <option value="5">5 hints</option>
+          <option value="10">10 hints</option>
+        </select>
+      </div>
+
+      <div class="setting-group">
+        <label for="setting-correlation-threshold">Engine-Match Cap (%)</label>
+        <select id="setting-correlation-threshold">
+          <option value="100" selected>Off (no cap)</option>
+          <option value="80">80% — strict</option>
+          <option value="70">70% — moderate</option>
+          <option value="60">60% — relaxed</option>
+          <option value="50">50% — very relaxed</option>
+        </select>
+        <div class="setting-hint">Downgrades L5 → L3 when your engine-match rate over the last 8 moves crosses this threshold. Real correlation guard, not just a counter.</div>
+      </div>
+
+      <div class="setting-divider"></div>
+      <div class="setting-section-title">Performance & Reliability</div>
+
+      <div class="setting-group">
+        <label class="toggle-label">
+          <input type="checkbox" id="setting-minimal-footprint">
+          <span>Minimal Footprint Mode</span>
+        </label>
+        <div class="setting-hint">Reduces browser footprint. Does NOT guarantee undetectability.</div>
+      </div>
+
+      <div class="setting-group">
+        <label class="toggle-label">
+          <input type="checkbox" id="setting-smart-throttling" checked>
+          <span>Smart Request Throttling</span>
+        </label>
+        <div class="setting-hint">Intelligent delays with anti-ban jitter. Round-robin rotation prevents repetitive patterns.</div>
+      </div>
+
+      <div class="setting-group">
+        <label class="toggle-label">
+          <input type="checkbox" id="setting-cache-first-mode">
+          <span>Cache-First Mode</span>
+        </label>
+        <div class="setting-hint">Uses cached analysis when available. Reduces API usage significantly.</div>
+      </div>
+
+      <div class="setting-disclaimer">
+        <strong>Note:</strong> These settings reduce API usage and minimize browser footprint. They do NOT make the extension undetectable.
+      </div>
+    </div><!-- /settings-panel -->
+
+  </div><!-- /app -->
+
+  <script src="../engine/cloud-engine.js"></script>
+  <script src="../engine/hint-engine.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

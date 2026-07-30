@@ -1,0 +1,58 @@
+{
+  "manifest_version": 3,
+  "name": "Chess Hint Assistant",
+  "version": "8.5.0",
+  "minimum_chrome_version": "114",
+  "description": "Chess hint assistant with Coach Mode, turn-based analysis, and multi-level hints (L1-L5). v8.5.0: Bug-fix release — restored source badge / version tag UI, wired Berserker style into UI, removed dead code, fixed Masters Explorer score perspective, SAN +/# suffixes, real engine-correlation guard, depth-target setting, player-perspective eval display, Lichess analysis link, ECO database externalised, chrome.alarms keep-alive. Preserves v7.5.0: 3-API rotation engine with health-based round-robin, cache-only enrichment, anti-ban jitter, and human-like master game recommendations.",
+  "permissions": [
+    "sidePanel",
+    "activeTab",
+    "storage",
+    "scripting",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://www.chess.com/*",
+    "https://chess.com/*",
+    "https://lichess.org/*",
+    "https://lichess.org/api/*",
+    "https://explorer.lichess.ovh/*",
+    "https://tablebase.lichess.ovh/*",
+    "https://chess-api.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel/sidepanel.html"
+  },
+  "action": {
+    "default_title": "Open Chess Hint Assistant",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "sidepanel/*",
+        "icons/*",
+        "engine/eco.json"
+      ],
+      "matches": [
+        "https://*.chess.com/*",
+        "https://*.lichess.org/*"
+      ]
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src https://lichess.org https://explorer.lichess.ovh https://tablebase.lichess.ovh https://chess-api.com;"
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}
