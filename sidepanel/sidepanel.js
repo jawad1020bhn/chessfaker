@@ -64,6 +64,7 @@
   let isRefreshing = false;
   let coachModeHintCount = 0;
   let coachModeGameId = null;
+  let humanPlanState = null;
 
   const normalizeStyle = (style) => {
     if (style === 'normal' || style === 'aggressive' || style === 'super_ultra_aggressive') return style;
@@ -75,6 +76,7 @@
   let settings = {
     cloudDepth: 5,
     style: 'normal',
+    humanLikeMode: false,
     repertoire: 'none',
     autoAnalyze: true,
     showThreats: true,
@@ -442,6 +444,7 @@
         settings = { ...settings, ...result.settings, style: normalizeStyle(result.settings.style) };
         applySettingsToUI();
         if (settings.style !== result.settings.style) chrome.storage.local.set({ settings });
+        if (lastAnalysis) renderAnalysis(lastAnalysis);
       }
     });
     chrome.storage.local.get('assistedPlayerColor', (result) => {
@@ -462,6 +465,7 @@
       'setting-cloud-depth': settings.cloudDepth,
       'setting-depth-target': settings.depthTarget,         // v8.5.0
       'setting-style': settings.style,
+      'setting-human-like-mode': settings.humanLikeMode,
       'setting-repertoire': settings.repertoire,
       'setting-auto-analyze': settings.autoAnalyze,
       'setting-show-threats': settings.showThreats,
@@ -600,6 +604,7 @@
       'setting-cloud-depth': (v) => { settings.cloudDepth = parseInt(v); },
       'setting-depth-target': (v) => { settings.depthTarget = parseInt(v); },          // v8.5.0
       'setting-style': (v) => { settings.style = v; },
+      'setting-human-like-mode': (v) => { settings.humanLikeMode = v; },
       'setting-repertoire': (v) => { settings.repertoire = v; },
       'setting-auto-analyze': (v) => { settings.autoAnalyze = v; },
       'setting-show-threats': (v) => { settings.showThreats = v; },
@@ -627,7 +632,8 @@
         handler(val);
         saveSettings();
         applySettingsToUI();
-        if (id === 'setting-style' && lastAnalysis) {
+        if ((id === 'setting-style' || id === 'setting-human-like-mode') && lastAnalysis) {
+          humanPlanState = null;
           renderAnalysis(lastAnalysis);
         }
       });
@@ -752,6 +758,7 @@
       // v8.5.0 (Enhancement I): Clear local engine-recommendation tracking too.
       lastEngineRecommendationFen = null;
       lastEngineRecommendationUci = null;
+      humanPlanState = null;
     }
 
     // v7.1.0: Turn-based analysis — check whose turn it is before analyzing
@@ -1007,8 +1014,15 @@
   function renderAnalysis(data) {
     const effectiveColor = assistedPlayerColor || playerColor || 'w';
     const objectivePvs = data.pvs || [];
-    const styledPvs = objectivePvs.length > 1 && data.source !== 'tablebase'
-      ? window.ChessHintEngine.selectPVForStyle(objectivePvs, data.fen, settings.style, effectiveColor)
+    const styledPvs = objectivePvs.length > 0 && data.source !== 'tablebase' && (objectivePvs.length > 1 || settings.humanLikeMode)
+      ? window.ChessHintEngine.selectPVForStyle(
+          objectivePvs,
+          data.fen,
+          settings.style,
+          effectiveColor,
+          settings.humanLikeMode,
+          { activePlan: humanPlanState?.activePlan || null, openingData: data.openingData }
+        )
       : objectivePvs;
     const viewData = { ...data, pvs: styledPvs };
 
@@ -1411,8 +1425,13 @@
       effectiveHintLevel,
       assistedPlayerColor,
       settings.style,
-      settings.repertoire
+      settings.repertoire,
+      settings.humanLikeMode,
+      { activePlan: humanPlanState?.activePlan || null }
     );
+    if (settings.humanLikeMode && hints.styleAnalysis?.plan) {
+      humanPlanState = { activePlan: hints.styleAnalysis.plan, startedAtFen: data.fen };
+    }
 
     if (dom.hintText) {
       dom.hintText.textContent = hints.main;
@@ -1473,11 +1492,17 @@
       }
       if (settings.style === 'aggressive') tags.push('Aggressive');
       if (settings.style === 'super_ultra_aggressive') tags.push('Super Ultra');
+      if (settings.humanLikeMode) {
+        tags.push('Human-like');
+        if (hints.styleAnalysis?.planContinuity) tags.push('Plan continuity');
+        if (hints.styleAnalysis?.masterGames > 0) tags.push('Master choice');
+      }
 
       dom.hintTags.innerHTML = tags.map(t => {
         let tagClass = 'hint-tag';
         if (t === 'Aggressive') tagClass += ' tag-aggressive';
         if (t === 'Super Ultra') tagClass += ' tag-super-ultra';
+        if (t === 'Human-like' || t === 'Plan continuity' || t === 'Master choice') tagClass += ' tag-human-like';
         if (t === 'queen sac') tagClass += ' tag-queen-sac';
         if (t === 'mate attack') tagClass += ' tag-mate-attack';
         if (t === 'Cloud' || t === 'API') tagClass += ' tag-cloud';

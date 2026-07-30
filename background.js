@@ -52,6 +52,7 @@ const KEEPALIVE_ALARM_INTERVAL_MIN = 1;
 const DEFAULT_SETTINGS = {
   cloudDepth: 5,
   style: 'normal',
+  humanLikeMode: false,
   repertoire: 'none',
   hintLevel: 3,
   autoAnalyze: true,
@@ -1920,6 +1921,8 @@ chrome.runtime.onInstalled.addListener(() => {
         s.style = 'normal';
         updated = true;
       }
+
+      if (s.humanLikeMode === undefined) { s.humanLikeMode = false; updated = true; }
 
       // v8.5.0: ensure new fields exist on migrated settings
       if (s.depthTarget === undefined) { s.depthTarget = 0; updated = true; }

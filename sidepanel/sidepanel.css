@@ -724,6 +724,8 @@ button:focus-visible, select:focus-visible {
 .hint-tag.tag-human { background: rgba(168, 85, 247, 0.1); color: var(--accent-purple); }  /* v8.5.0: masters-explorer */
 .hint-tag.tag-aggressive { background: rgba(255, 90, 54, 0.12); color: var(--accent-aggressive); }
 .hint-tag.tag-super-ultra { background: rgba(255, 20, 109, 0.16); color: var(--accent-super-ultra); text-shadow: 0 0 10px rgba(255, 20, 109, 0.65); font-weight: 800; letter-spacing: 1px; }
+.hint-tag.tag-human-like { background: rgba(0, 230, 138, 0.12); color: var(--accent-green); border-color: rgba(0, 230, 138, 0.18); }
+.human-mode-setting { background: rgba(0, 230, 138, 0.035); border: 1px solid rgba(0, 230, 138, 0.1); border-radius: var(--radius-sm); padding: 10px; }
 .hint-tag.tag-queen-sac { background: rgba(255, 215, 0, 0.12); color: #ffd700; text-shadow: 0 0 8px rgba(255, 215, 0, 0.5); }
 .hint-tag.tag-mate-attack { background: rgba(255, 69, 0, 0.15); color: #ff4500; text-shadow: 0 0 8px rgba(255, 69, 0, 0.6); font-weight: 700; }
 .hint-tag.tag-depth-deep { background: rgba(0, 230, 138, 0.1); color: var(--accent-green); }
