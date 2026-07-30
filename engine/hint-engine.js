@@ -909,6 +909,21 @@
       simplification: piecesBefore - countPieces(boardAfterReply),
       complexity: Math.max(0, forcingPly - 1) + Math.max(0, pressureAfter.attackers - 1),
       unsupportedAttack: closeToKing && !defended && !givesCheck,
+      castling: piece.toLowerCase() === 'k' && Math.abs(squareToCoords(from).col - destination.col) === 2,
+      centralMove: destination.row >= 2 && destination.row <= 5 && destination.col >= 2 && destination.col <= 5,
+      earlyQueenMove: piece.toLowerCase() === 'q' && detectGamePhase(fen) === 'opening',
+      edgePawnMove: piece.toLowerCase() === 'p' && (destination.col === 0 || destination.col === 7),
+      supportedDestination: defended,
+      calculationBurden: Math.max(0, line.length * 1.2 + (sacrifice ? 3 : 0) + Math.max(0, ownDangerAfter.pressure - ownDangerBefore.pressure) - forcingPly * 0.65),
+      followUpUci: line[2] || null,
+      masterGames: 0,
+      plan: givesCheck || pressureAfter.pressure > pressureBefore.pressure
+        ? (opponentKingAfter?.col >= 4 ? 'kingside attack' : 'queenside attack')
+        : isDevelopingMove(piece, from) ? 'complete development'
+        : piecesBefore - countPieces(boardAfterReply) > 1 ? 'force a favorable simplification'
+        : captured ? 'win material with tempo'
+        : 'improve piece activity',
+      humanReasons: [], humanRisks: [],
       reasons: [], risks: []
     };
     return features;
@@ -954,6 +969,58 @@
     return rawScore + candidateStyleBonus(candidate, profile);
   }
 
+  function humanNaturalness(candidate, profile, context = {}, bestScore = 0) {
+    let score = 0;
+    const reward = (condition, amount, reason) => {
+      if (!condition) return;
+      score += amount;
+      if (reason) candidate.humanReasons.push(reason);
+    };
+    const penalize = (condition, amount, reason) => {
+      if (!condition) return;
+      score -= amount;
+      if (reason) candidate.humanRisks.push(reason);
+    };
+
+    reward(candidate.castling, 38, 'gets the king safe with a familiar plan');
+    reward(candidate.development, 30, 'develops a new piece naturally');
+    reward(candidate.centralMove, 10, 'improves central influence');
+    reward(candidate.tempo, 24, 'creates an easy-to-follow tempo threat');
+    reward(candidate.supportedDestination, 12, 'places the piece on a supported square');
+    reward(candidate.givesCheck && candidate.forcingPly >= 2, 18, 'starts a clear forcing sequence');
+    reward(candidate.sustainedAttack, 24, 'keeps a coherent attack going');
+    reward(context.activePlan && candidate.plan === context.activePlan, 28, `continues the ${candidate.plan} plan`);
+    if (candidate.masterGames > 0) {
+      const popularity = Math.min(28, Math.log10(candidate.masterGames + 1) * 8);
+      reward(true, popularity, `has practical master-game experience (${candidate.masterGames} games)`);
+    }
+
+    penalize(candidate.earlyQueenMove && !candidate.givesCheck && !candidate.tempo, 28, 'moves the queen early without a forcing gain');
+    penalize(candidate.edgePawnMove && candidate.kingPressureDelta <= 0, 16, 'pushes an edge pawn without immediate purpose');
+    penalize(candidate.unsupportedAttack, 30, 'leaves the attacking piece hard to support');
+    penalize(candidate.ownKingDangerDelta > 1.5, Math.min(30, candidate.ownKingDangerDelta * 5), 'makes your own king harder to handle');
+    penalize(candidate.calculationBurden > 7, Math.min(24, (candidate.calculationBurden - 7) * 3), 'requires a long precise continuation');
+
+    if (profile.id === 'normal') {
+      reward(bestScore > 180 && candidate.simplification > 1, 18, 'converts the advantage with a simpler position');
+      penalize(candidate.sacrifice, 26, 'introduces unnecessary material risk');
+    } else if (profile.id === 'aggressive') {
+      reward(candidate.playerForcingMoves >= 2, 25, 'renews the threat on consecutive moves');
+      reward(candidate.development && candidate.kingPressureDelta > 0, 20, 'develops directly into the attack');
+      penalize(candidate.sacrificeSoundness === 'speculative', 35, 'the fastest-looking attack is not fully forced');
+    } else {
+      reward(candidate.sacrifice, candidate.sacrificeSoundness === 'sound' ? 42 : 22,
+        candidate.sacrificeSoundness === 'sound' ? 'uses a thematic sacrifice with concrete compensation' : 'creates a dangerous speculative sacrifice');
+      reward(candidate.complexity >= 3, 20, 'creates difficult practical choices');
+      reward(candidate.opensKingFile, 24, 'opens a recognizable attacking route to the king');
+    }
+
+    candidate.naturalnessScore = Math.round(score);
+    candidate.planContinuity = Boolean(context.activePlan && candidate.plan === context.activePlan);
+    candidate.humanSummary = candidate.humanReasons.slice(0, 3).join(', ');
+    return score;
+  }
+
   function playerScore(pv, playerColor) {
     const score = Number(pv?.score) || 0;
     return playerColor === 'w' ? score : -score;
@@ -985,14 +1052,30 @@
 
   // Returns PVs in style order. Each PV receives non-invasive _styleAnalysis
   // metadata used to keep hints, candidates, and explanations synchronized.
-  function selectPVForStyle(pvs, fen, style, playerColor) {
-    if (!Array.isArray(pvs) || pvs.length <= 1) return pvs || [];
+  function selectPVForStyle(pvs, fen, style, playerColor, humanLikeMode = false, context = {}) {
+    if (!Array.isArray(pvs) || pvs.length === 0) return [];
     const profile = PLAYING_STYLES[style] || PLAYING_STYLES.normal;
+    if (pvs.length === 1) {
+      if (!humanLikeMode) return pvs;
+      const only = pvs[0];
+      const score = playerScore(only, playerColor);
+      const meta = analyzeCandidate(fen, only.pv || [], playerColor, score, only.scoreType, only.depth || 0);
+      meta.evalLoss = 0;
+      meta.objectiveRank = 1;
+      meta.styleRank = 1;
+      meta.mode = profile.id;
+      meta.humanLikeMode = true;
+      meta.limitedCandidates = true;
+      meta.masterGames = Number(only._masterData?.totalGames || context.openingData?.moves?.find(move => move.uci === only.pv?.[0])?.total || 0);
+      candidateStyleBonus(meta, profile);
+      humanNaturalness(meta, profile, context, score);
+      return [{ ...only, _styleAnalysis: meta }];
+    }
     const objective = pvs.map((pv, index) => ({ pv, index, utility: objectiveUtility(pv, playerColor), score: playerScore(pv, playerColor) }))
       .sort((a, b) => b.utility - a.utility);
     const objectiveBest = objective[0];
 
-    if (profile.id === 'normal') {
+    if (profile.id === 'normal' && !humanLikeMode) {
       return objective.map((entry, rank) => ({
         ...entry.pv,
         _styleAnalysis: { objectiveRank: rank + 1, styleRank: rank + 1, evalLoss: 0, reasons: ['objective best play'], risks: [], mode: profile.id }
@@ -1013,6 +1096,9 @@
         evalLoss = Math.max(0, objectiveBest.score - entry.score);
       }
       const analysis = analyzeCandidate(fen, entry.pv.pv || [], playerColor, entry.score, entry.pv.scoreType, entry.pv.depth || 0);
+      const firstMove = entry.pv.pv?.[0];
+      const openingMove = context.openingData?.moves?.find(move => move.uci === firstMove);
+      analysis.masterGames = Number(entry.pv._masterData?.totalGames || openingMove?.total || 0);
       analysis.evalLoss = evalLoss;
       analysis.objectiveRank = rank + 1;
       analysis.mode = profile.id;
@@ -1020,7 +1106,7 @@
       const bonus = eligible ? candidateStyleBonus(analysis, profile) : -Infinity;
       // Aggressive is especially focused on converting quickly: objective cost
       // remains expensive, while checks and sustained forcing play can overcome it.
-      const lossWeight = profile.id === 'aggressive' ? 1.25 : 0.62;
+      const lossWeight = profile.id === 'normal' ? 1.5 : (profile.id === 'aggressive' ? 1.25 : 0.62);
       const styleScore = eligible ? bonus - evalLoss * lossWeight : -Infinity;
       return { ...entry, analysis, eligible, bonus, styleScore };
     });
@@ -1028,10 +1114,24 @@
     let eligible = candidates.filter(candidate => candidate.eligible);
     if (!eligible.length) eligible = [candidates.find(candidate => candidate.index === objectiveBest.index) || candidates[0]];
     eligible.sort((a, b) => b.styleScore - a.styleScore || b.utility - a.utility);
+    if (humanLikeMode && eligible.length > 0 && !bestIsWinningMate) {
+      const standardBest = eligible[0].styleScore;
+      const shortlistMargin = profile.id === 'normal' ? 32 : (profile.id === 'aggressive' ? 70 : 130);
+      const shortlist = eligible.filter(candidate => standardBest - candidate.styleScore <= shortlistMargin);
+      for (const candidate of shortlist) {
+        const naturalness = humanNaturalness(candidate.analysis, profile, context, objectiveBest.score);
+        const humanWeight = profile.id === 'normal' ? 0.8 : (profile.id === 'aggressive' ? 0.65 : 0.52);
+        candidate.humanScore = candidate.styleScore + naturalness * humanWeight;
+      }
+      shortlist.sort((a, b) => b.humanScore - a.humanScore || b.styleScore - a.styleScore || b.utility - a.utility);
+      const shortlisted = new Set(shortlist);
+      eligible = [...shortlist, ...eligible.filter(candidate => !shortlisted.has(candidate))];
+    }
+
 
     // Stable, tightly controlled variety for Super Ultra only. It never applies
     // to mate lines and only considers a near-tied second attacking candidate.
-    if (profile.diversity > 0 && !bestIsWinningMate && eligible.length > 1 &&
+    if (!humanLikeMode && profile.diversity > 0 && !bestIsWinningMate && eligible.length > 1 &&
         eligible[0].styleScore - eligible[1].styleScore <= 18 &&
         stableFenFraction(fen, profile.id) < profile.diversity) {
       [eligible[0], eligible[1]] = [eligible[1], eligible[0]];
@@ -1045,7 +1145,9 @@
         styleRank: styleRank + 1,
         styleBonus: Number.isFinite(candidate.bonus) ? Math.round(candidate.bonus) : 0,
         riskBudget: budget,
-        eligible: candidate.eligible
+        eligible: candidate.eligible,
+        humanLikeMode,
+        humanScore: Number.isFinite(candidate.humanScore) ? Math.round(candidate.humanScore) : null
       }
     }));
   }
@@ -1071,7 +1173,7 @@
   }
 
   // ─── Generate Hints (Main Entry) ───────────────────────────────────
-  function generateHints(analysisData, hintLevel, playerColor, style, openingRepertoire) {
+  function generateHints(analysisData, hintLevel, playerColor, style, openingRepertoire, humanLikeMode = false, humanContext = {}) {
     const { fen, pvs, bestMove, source, tablebaseData, openingData } = analysisData;
     const position = assessPosition(fen);
     const isWhite = playerColor === 'w';
@@ -1080,9 +1182,23 @@
 
     // Apply the rebuilt, mate-safe style ranking. Normal also receives objective
     // metadata, while one-PV sources remain unchanged and are explained honestly.
-    const rankedPVs = pvs?.[0]?._styleAnalysis
+    let rankedPVs = pvs?.[0]?._styleAnalysis
       ? pvs
-      : (pvs && pvs.length > 1 ? selectPVForStyle(pvs, fen, style, playerColor) : (pvs || []));
+      : (pvs && pvs.length > 1 ? selectPVForStyle(pvs, fen, style, playerColor, humanLikeMode, { ...humanContext, openingData }) : (pvs || []));
+    if (humanLikeMode && rankedPVs.length === 1 && !rankedPVs[0]._styleAnalysis) {
+      const only = rankedPVs[0];
+      const score = playerScore(only, playerColor);
+      const meta = analyzeCandidate(fen, only.pv || [], playerColor, score, only.scoreType, only.depth || 0);
+      meta.evalLoss = 0;
+      meta.objectiveRank = 1;
+      meta.styleRank = 1;
+      meta.mode = currentStyle.id;
+      meta.humanLikeMode = true;
+      meta.limitedCandidates = true;
+      candidateStyleBonus(meta, currentStyle);
+      humanNaturalness(meta, currentStyle, { ...humanContext, openingData }, score);
+      rankedPVs = [{ ...only, _styleAnalysis: meta }];
+    }
     const bestPV = rankedPVs.length > 0 ? rankedPVs[0] : null;
     // All scores are normalized to White's perspective.
     const evalScore = bestPV ? (isWhite ? bestPV.score : -bestPV.score) : 0;
@@ -1107,6 +1223,8 @@
       winningPlan: '',
       styleAnnotation: '',
       styleName: currentStyle.name,
+      humanLikeMode,
+      selectionMode: humanLikeMode ? 'human-like' : 'standard',
       source: source || 'unknown',
       // Expose turn info for UI rendering
       isAssistedPlayerTurn,
@@ -1136,6 +1254,14 @@
         hints.bestMoveFromTo = `${sideLabel}: ${pieceName}: ${from} \u2192 ${to}`;
       }
       hints.winningPlan = generateTablebasePlan(tablebaseData, playerColor);
+      if (humanLikeMode) {
+        const category = tablebaseData.category || 'unknown';
+        hints.main += category === 'draw'
+          ? ' Human plan: keep the position active and preserve the drawing setup; avoid unnecessary pawn moves.'
+          : category === 'win' || category === 'syzygy-win'
+            ? ' Human plan: improve the king, restrict counterplay, and convert one clear step at a time.'
+            : ' Human plan: make the opponent prove the win and keep creating practical obstacles.';
+      }
       return hints;
     }
 
@@ -1165,7 +1291,24 @@
     if (bestPV?._styleAnalysis) {
       const meta = bestPV._styleAnalysis;
       hints.styleAnalysis = meta;
-      if (currentStyle.id !== 'normal') {
+      if (humanLikeMode) {
+        if (hintLevel >= 5) {
+          hints.main = hints.main.replace(/^Best:/, 'Human choice:')
+            .replace(/^Aggressive choice:/, 'Human Aggressive choice:')
+            .replace(/^Super Ultra Aggressive choice:/, 'Human Super Ultra choice:');
+        }
+        const humanReasons = (meta.humanReasons || []).slice(0, 3);
+        const humanRisks = [...(meta.humanRisks || []), ...(meta.risks || [])].slice(0, 2);
+        hints.main += ` Human plan: ${meta.plan || 'improve the position with a clear purpose'}.`;
+        if (humanReasons.length) hints.main += ` Why it feels natural: ${humanReasons.join(', ')}.`;
+        if (hintLevel >= 3 && meta.followUpUci && bestPV.pv?.length >= 3) {
+          let followFen = fen;
+          followFen = applyMoveToFen(followFen, bestPV.pv[0]);
+          if (bestPV.pv[1]) followFen = applyMoveToFen(followFen, bestPV.pv[1]);
+          hints.main += ` If the expected reply comes, continue with ${uciToSan(meta.followUpUci, followFen)}.`;
+        }
+        if (hintLevel >= 4 && humanRisks.length) hints.main += ` Practical risk: ${humanRisks.join(', ')}.`;
+      } else if (currentStyle.id !== 'normal') {
         const reasons = (meta.reasons || []).slice(0, 3);
         const risks = (meta.risks || []).slice(0, 2);
         if (reasons.length) {
@@ -1176,6 +1319,9 @@
           hints.main += ` Objective cost: ${(meta.evalLoss / 100).toFixed(1)} pawn${meta.evalLoss === 100 ? '' : 's'}.`;
         }
         if (hintLevel >= 4 && risks.length) hints.main += ` Risk: ${risks.join(', ')}.`;
+      }
+      if (hintLevel >= 4 && Number.isFinite(meta.evalLoss) && meta.evalLoss > 0 && humanLikeMode) {
+        hints.main += ` Objective cost: ${(meta.evalLoss / 100).toFixed(1)} pawn${meta.evalLoss === 100 ? '' : 's'}.`;
       }
     }
 
@@ -1927,8 +2073,13 @@
 
       let quality, qualityClass;
       const styleMeta = pv._styleAnalysis;
-      if (idx === 0 && styleMeta?.objectiveRank > 1) { quality = `Style Choice · objective #${styleMeta.objectiveRank}`; qualityClass = 'cm-best'; }
-      else if (idx === 0) { quality = 'Objective Best'; qualityClass = 'cm-best'; }
+      if (idx === 0 && styleMeta?.objectiveRank > 1) {
+        quality = `${styleMeta.humanLikeMode ? 'Human Choice' : 'Style Choice'} · objective #${styleMeta.objectiveRank}`;
+        qualityClass = 'cm-best';
+      } else if (idx === 0) {
+        quality = styleMeta?.humanLikeMode ? 'Human + Objective Best' : 'Objective Best';
+        qualityClass = 'cm-best';
+      }
       else if (absDelta <= 10) { quality = 'Equal Best'; qualityClass = 'cm-best'; }
       else if (absDelta <= 30) { quality = 'Great'; qualityClass = 'cm-good'; }
       else if (absDelta <= 80) { quality = 'Good'; qualityClass = 'cm-good'; }
@@ -2040,8 +2191,14 @@
         opponentMoveSan,
         candidateMoveUci,
         objectiveRank: styleMeta?.objectiveRank || idx + 1,
-        styleReason: styleMeta?.reasons?.[0] || '',
-        styleRisk: styleMeta?.risks?.[0] || ''
+        styleReason: styleMeta?.humanLikeMode
+          ? (styleMeta?.humanReasons?.[0] || styleMeta?.reasons?.[0] || '')
+          : (styleMeta?.reasons?.[0] || ''),
+        styleRisk: styleMeta?.humanLikeMode
+          ? (styleMeta?.humanRisks?.[0] || styleMeta?.risks?.[0] || '')
+          : (styleMeta?.risks?.[0] || ''),
+        naturalnessScore: styleMeta?.naturalnessScore ?? null,
+        humanLikeMode: Boolean(styleMeta?.humanLikeMode)
       };
     });
   }

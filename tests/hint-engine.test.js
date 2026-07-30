@@ -72,4 +72,39 @@ const aggressiveHint = engine.generateHints({ fen: attackFen, pvs: [quiet, forci
 assert.match(aggressiveHint.main, /Aggressive choice: Qh5\+/);
 assert.match(aggressiveHint.main, /Fast-win idea:/);
 assert.equal(aggressiveHint.pvs[0].pv[0], 'd1h5');
+
+// Human-like mode stays inside objective/style budgets but prefers natural plans.
+const naturalFen = '4k3/8/8/8/8/8/8/3QK1N1 w - - 0 1';
+const engineQueenMove = { score: 20, scoreType: 'cp', depth: 24, pv: ['d1d2'] };
+const naturalDevelopment = { score: 10, scoreType: 'cp', depth: 24, pv: ['g1f3'] };
+assert.equal(engine.selectPVForStyle([engineQueenMove, naturalDevelopment], naturalFen, 'normal', 'w', false)[0].pv[0], 'd1d2');
+const humanNormal = engine.selectPVForStyle(
+  [engineQueenMove, naturalDevelopment],
+  naturalFen,
+  'normal',
+  'w',
+  true,
+  { activePlan: 'complete development' }
+);
+assert.equal(humanNormal[0].pv[0], 'g1f3');
+assert.match(humanNormal[0]._styleAnalysis.humanSummary, /develops a new piece naturally/);
+assert.equal(humanNormal[0]._styleAnalysis.planContinuity, true);
+assert.equal(
+  engine.selectPVForStyle([quiet, forcingCheck], attackFen, 'aggressive', 'w', true)[0].pv[0],
+  'd1h5',
+  'human-like Aggressive must preserve the fastest sound forcing route'
+);
+
+for (const style of Object.keys(engine.PLAYING_STYLES)) {
+  assert.equal(
+    engine.selectPVForStyle([hugeCp, slowerMate, fastestMate], attackFen, style, 'w', true)[0].score,
+    2,
+    `human-like ${style} must preserve the fastest forced mate`
+  );
+}
+
+const onePvHumanHint = engine.generateHints({ fen: naturalFen, pvs: [naturalDevelopment], moveHistory: [] }, 5, 'w', 'normal', 'none', true);
+assert.match(onePvHumanHint.main, /^Human choice:/);
+assert.match(onePvHumanHint.main, /Human plan:/);
+assert.equal(onePvHumanHint.styleAnalysis.limitedCandidates, true);
 console.log('hint-engine tests passed');

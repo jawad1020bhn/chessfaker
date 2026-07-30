@@ -1,9 +1,10 @@
 /**
- * Chess Hint Assistant — Content Script v8.5.0
+ * Chess Hint Assistant — Content Script v9.0.0
  * One-shot board reader — injected via chrome.scripting.executeScript
  * Reads board state ONCE and returns. No persistent footprint.
  * No polling, no intervals, no observers.
  *
+ * v9.0.0: Snapshots are strictly validated and reconciled by the service worker.
  * v8.5.0: Removed dead Angular __ngContext__ branch; parseChesscomPiece now
  *         uses explicit null checks instead of falsy (robustness fix).
  * v6.1.0: Rewritten as one-shot function for reduced content script persistence.

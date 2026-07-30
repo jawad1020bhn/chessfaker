@@ -1,6 +1,9 @@
 /**
- * Chess Hint Assistant — Side Panel Controller v8.5.0
+ * Chess Hint Assistant — Side Panel Controller v9.0.0
  * Turn-Based Analysis Engine. No local Stockfish.
+ *
+ * v9.0.0 — Three playing styles with Standard/Human-like modes, synchronized
+ *            candidate views, natural plan continuity, and human coaching hints.
  *
  * v8.5.0 — Bug-fix & Enhancement Release:
  *  - FIX: Berserker style now produces border color + tag + mode class in UI
@@ -35,7 +38,7 @@
  *  - Bottom action bar with always-visible hint level selector + refresh
  *  - Q/W/E keyboard shortcuts for tab switching
  *
- * v7.5.0 — 3-API Rotation & Anti-Ban + v7.3.0 Berserker Style + v7.1.0 Turn-Based Analysis:
+ * v7.5.0 — Earlier 3-API routing + v7.3.0 Berserker Style + v7.1.0 Turn-Based Analysis:
  *  - Turn-based analysis — only analyzes on the assisted player's turn
  *  - "Waiting for opponent..." status when it's the opponent's turn
  *  - "Your turn" indicator when analysis is ready
@@ -55,6 +58,7 @@
   let currentFen = null;
   let playerColor = null;          // Auto-detected from board orientation
   let assistedPlayerColor = null;  // User-selected: which player to assist (null = not yet set)
+  let activeTabId = 'active';       // Included in position-generation tokens
   let hintLevel = 3;
   let lastAnalysis = null;
   let prevEval = null;
@@ -62,8 +66,10 @@
   let currentSource = 'unknown';  // v8.5.0: was 'cloud' (never matched real source strings)
   let lastCriticalAlert = null;
   let isRefreshing = false;
+  let refreshSafetyTimer = null;
   let coachModeHintCount = 0;
   let coachModeGameId = null;
+  let humanPlanState = null;
 
   const normalizeStyle = (style) => {
     if (style === 'normal' || style === 'aggressive' || style === 'super_ultra_aggressive') return style;
@@ -75,6 +81,7 @@
   let settings = {
     cloudDepth: 5,
     style: 'normal',
+    humanLikeMode: false,
     repertoire: 'none',
     autoAnalyze: true,
     showThreats: true,
@@ -88,10 +95,6 @@
     showCandidateMoves: true,
     coachModeEnabled: true,
     coachModeMaxHints: 3,
-    // v7.1.0: Reframed from "stealth" to honest performance labels
-    minimalFootprint: false,        // was: stealthMode
-    smartThrottling: true,          // was: stealthRequestDelay (now ON by default)
-    cacheFirstMode: false,          // was: stealthCacheOnly
     // v8.5.0 enhancements
     depthTarget: 0,                 // 0 = no minimum; otherwise min depth for L4/L5
     correlationThreshold: 100       // 100 = off; otherwise % cap that downgrades L5→L3
@@ -215,10 +218,12 @@
     try {
       const result = await chrome.runtime.sendMessage({ type: 'read_board' });
       if (result && result.fen) {
+        activeTabId = result.tabId ?? activeTabId;
+        chrome.runtime.sendMessage({ type: 'panel_state', open: true, tabId: activeTabId }).catch(() => {});
         handlePositionUpdate({
           fen: result.fen,
           playerColor: result.playerColor,
-          gameInfo: { site: result.site, url: result.url, timestamp: result.timestamp, moveHistory: [] }
+          gameInfo: { site: result.site, url: result.url, timestamp: result.timestamp, moveHistory: [], tabId: activeTabId }
         });
       }
     } catch (e) {}
@@ -385,6 +390,13 @@
     });
   }
 
+  function finishRefresh() {
+    if (refreshSafetyTimer) clearTimeout(refreshSafetyTimer);
+    refreshSafetyTimer = null;
+    if (dom.btnRefresh) dom.btnRefresh.classList.remove('spinning');
+    isRefreshing = false;
+  }
+
   // ─── Initialize ────────────────────────────────────────────────────
   function init() {
     loadSettings();
@@ -393,9 +405,14 @@
     initCollapsibleSections();
     initKeyboardShortcuts();
     initSettingsFocusTrap();   // v8.5.0
+    chrome.runtime.sendMessage({ type: 'panel_state', open: true }).catch(() => {});
+    window.addEventListener('pagehide', () => {
+      chrome.runtime.sendMessage({ type: 'panel_state', open: false, tabId: activeTabId }).catch(() => {});
+    }, { once: true });
     startBoardReading();
     updateEngineStatus('connecting', 'Connecting to cloud...');
     updateCorrelationStat();   // v8.5.0: initialise "0 / 0 (0%)" display
+    runHealthCheck();          // passive status only; does not call providers
   }
 
   // v8.5.0 (fix #39): Focus trap for the settings panel so Tab can't escape
@@ -442,6 +459,7 @@
         settings = { ...settings, ...result.settings, style: normalizeStyle(result.settings.style) };
         applySettingsToUI();
         if (settings.style !== result.settings.style) chrome.storage.local.set({ settings });
+        if (lastAnalysis) renderAnalysis(lastAnalysis);
       }
     });
     chrome.storage.local.get('assistedPlayerColor', (result) => {
@@ -462,6 +480,7 @@
       'setting-cloud-depth': settings.cloudDepth,
       'setting-depth-target': settings.depthTarget,         // v8.5.0
       'setting-style': settings.style,
+      'setting-human-like-mode': settings.humanLikeMode,
       'setting-repertoire': settings.repertoire,
       'setting-auto-analyze': settings.autoAnalyze,
       'setting-show-threats': settings.showThreats,
@@ -476,9 +495,6 @@
       'setting-coach-mode': settings.coachModeEnabled,
       'setting-coach-max-hints': settings.coachModeMaxHints,
       'setting-correlation-threshold': settings.correlationThreshold,  // v8.5.0
-      'setting-minimal-footprint': settings.minimalFootprint,
-      'setting-smart-throttling': settings.smartThrottling,
-      'setting-cache-first-mode': settings.cacheFirstMode,
     };
     Object.entries(mapping).forEach(([id, val]) => {
       const el = $(`#${id}`);
@@ -532,7 +548,7 @@
       });
     });
 
-    // Enhanced Refresh button — clears caches and circuit breakers
+    // Non-destructive refresh — coordinator keeps caches, quotas and cooldowns
     if (dom.btnRefresh) {
       dom.btnRefresh.addEventListener('click', () => {
         if (isRefreshing) return;
@@ -540,10 +556,7 @@
         dom.btnRefresh.classList.add('spinning');
         updateEngineStatus('analyzing', 'Refreshing analysis...');
         requestAnalysis(true);
-        setTimeout(() => {
-          if (dom.btnRefresh) dom.btnRefresh.classList.remove('spinning');
-          isRefreshing = false;
-        }, 1500);
+        refreshSafetyTimer = setTimeout(finishRefresh, 20000);
       });
     }
 
@@ -593,13 +606,14 @@
       if (help) help.style.display = 'none';
       shortcutHelpVisible = false;
     });
-    if (dom.btnSettings) dom.btnSettings.addEventListener('click', () => { if (dom.settingsPanel) dom.settingsPanel.style.display = 'block'; });
+    if (dom.btnSettings) dom.btnSettings.addEventListener('click', () => { if (dom.settingsPanel) dom.settingsPanel.style.display = 'block'; runHealthCheck(); });
     if (dom.btnCloseSettings) dom.btnCloseSettings.addEventListener('click', () => { if (dom.settingsPanel) dom.settingsPanel.style.display = 'none'; });
 
     const settingEls = {
       'setting-cloud-depth': (v) => { settings.cloudDepth = parseInt(v); },
       'setting-depth-target': (v) => { settings.depthTarget = parseInt(v); },          // v8.5.0
       'setting-style': (v) => { settings.style = v; },
+      'setting-human-like-mode': (v) => { settings.humanLikeMode = v; },
       'setting-repertoire': (v) => { settings.repertoire = v; },
       'setting-auto-analyze': (v) => { settings.autoAnalyze = v; },
       'setting-show-threats': (v) => { settings.showThreats = v; },
@@ -614,9 +628,6 @@
       'setting-coach-mode': (v) => { settings.coachModeEnabled = v; updateCoachModeInfo(); },
       'setting-coach-max-hints': (v) => { settings.coachModeMaxHints = parseInt(v); updateCoachModeInfo(); },
       'setting-correlation-threshold': (v) => { settings.correlationThreshold = parseInt(v); },  // v8.5.0
-      'setting-minimal-footprint': (v) => { settings.minimalFootprint = v; },
-      'setting-smart-throttling': (v) => { settings.smartThrottling = v; },
-      'setting-cache-first-mode': (v) => { settings.cacheFirstMode = v; },
     };
 
     Object.entries(settingEls).forEach(([id, handler]) => {
@@ -627,7 +638,8 @@
         handler(val);
         saveSettings();
         applySettingsToUI();
-        if (id === 'setting-style' && lastAnalysis) {
+        if ((id === 'setting-style' || id === 'setting-human-like-mode') && lastAnalysis) {
+          humanPlanState = null;
           renderAnalysis(lastAnalysis);
         }
       });
@@ -636,65 +648,74 @@
     chrome.runtime.onMessage.addListener(handleMessage);
   }
 
-  // ─── Health Check ──────────────────────────────────────────────────
-  // v8.5.0: Disable the button while a check is in flight (was clickable repeatedly).
+  // ─── Passive Provider Status and Local Usage Diagnostics ─────────────
   let healthCheckInFlight = false;
+
+  function formatCooldown(ms) {
+    const totalSeconds = Math.max(0, Math.ceil((ms || 0) / 1000));
+    if (totalSeconds < 60) return `${totalSeconds}s`;
+    return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`;
+  }
+
+  function renderPassiveProvider(element, result) {
+    if (!element) return;
+    if (!result) {
+      element.textContent = 'No recent data';
+      element.className = 'api-status unknown';
+      return;
+    }
+    const suffix = result.cooldownRemainingMs > 0 ? ` ${formatCooldown(result.cooldownRemainingMs)}` : '';
+    element.textContent = `${result.label || 'No recent data'}${suffix}`;
+    const healthy = result.state === 'healthy';
+    const slow = result.state === 'slow';
+    element.className = `api-status ${healthy ? 'online' : (slow || result.state === 'unknown' ? 'unknown' : 'error')}`;
+  }
+
+  function renderApiDiagnostics(diagnostics) {
+    if (!diagnostics) return;
+    const setText = (id, value) => { const element = document.getElementById(id); if (element) element.textContent = String(value ?? 0); };
+    setText('api-cache-avoided', diagnostics.remoteCallsAvoidedByCache);
+    setText('api-requests-coalesced', diagnostics.requestsCoalesced);
+    setText('api-stale-served', diagnostics.staleResultsServed);
+    setText('api-stale-dropped', diagnostics.staleJobsDropped);
+    const calls = document.getElementById('api-provider-calls');
+    if (calls) {
+      const labels = {
+        chessApi: 'Chess-API', lichessCloud: 'Lichess Cloud', mastersExplorer: 'Masters DB',
+        openingExplorer: 'Opening', tablebase: 'Tablebase'
+      };
+      calls.textContent = Object.entries(diagnostics.providers || {})
+        .map(([provider, data]) => `${labels[provider] || provider}: ${data.calls || 0} call${data.calls === 1 ? '' : 's'} · ${data.label || 'No recent data'}`)
+        .join(' | ') || 'No remote calls yet';
+    }
+  }
+
   function runHealthCheck() {
     if (healthCheckInFlight) return;
     healthCheckInFlight = true;
     if (dom.btnHealthCheck) {
       dom.btnHealthCheck.disabled = true;
-      dom.btnHealthCheck.textContent = 'Checking...';
+      dom.btnHealthCheck.textContent = 'Refreshing...';
     }
-
-    const lichessEl = $('#health-lichess');
-    const chessapiEl = $('#health-chessapi');
-    const mastersEl = $('#health-masters'); // v7.5.0
-
-    if (lichessEl) { lichessEl.textContent = 'Checking...'; lichessEl.className = 'api-status checking'; }
-    if (chessapiEl) { chessapiEl.textContent = 'Checking...'; chessapiEl.className = 'api-status checking'; }
-    if (mastersEl) { mastersEl.textContent = 'Checking...'; mastersEl.className = 'api-status checking'; }
-
     const restoreButton = () => {
       healthCheckInFlight = false;
       if (dom.btnHealthCheck) {
         dom.btnHealthCheck.disabled = false;
-        dom.btnHealthCheck.textContent = 'Run Health Check';
+        dom.btnHealthCheck.textContent = 'Refresh Status';
       }
     };
-
-    chrome.runtime.sendMessage({ type: 'health_check' }, (results) => {
+    const safetyTimer = setTimeout(restoreButton, 5000);
+    chrome.runtime.sendMessage({ type: 'health_check' }, results => {
+      clearTimeout(safetyTimer);
       restoreButton();
-      if (chrome.runtime.lastError || !results) {
-        if (lichessEl) { lichessEl.textContent = 'Error'; lichessEl.className = 'api-status error'; }
-        if (chessapiEl) { chessapiEl.textContent = 'Error'; chessapiEl.className = 'api-status error'; }
-        if (mastersEl) { mastersEl.textContent = 'Error'; mastersEl.className = 'api-status error'; }
-        return;
-      }
-
-      const lichess = results['lichess'];
-      const chessapi = results['chess-api'];
-      const masters = results['masters']; // v7.5.0
-
-      if (lichessEl && lichess) {
-        lichessEl.textContent = lichess.ok ? `OK (${lichess.latency}ms)` : `Down`;
-        lichessEl.className = `api-status ${lichess.ok ? 'online' : 'error'}`;
-      } else if (lichessEl) { lichessEl.textContent = 'Unknown'; lichessEl.className = 'api-status unknown'; }
-
-      if (chessapiEl && chessapi) {
-        chessapiEl.textContent = chessapi.ok ? `OK (${chessapi.latency}ms)` : `Down`;
-        chessapiEl.className = `api-status ${chessapi.ok ? 'online' : 'error'}`;
-      } else if (chessapiEl) { chessapiEl.textContent = 'Unknown'; chessapiEl.className = 'api-status unknown'; }
-
-      // v7.5.0: Masters Explorer health check
-      if (mastersEl && masters) {
-        mastersEl.textContent = masters.ok ? `OK (${masters.latency}ms)` : `Down`;
-        mastersEl.className = `api-status ${masters.ok ? 'online' : 'error'}`;
-      } else if (mastersEl) { mastersEl.textContent = 'Unknown'; mastersEl.className = 'api-status unknown'; }
+      if (chrome.runtime.lastError || !results) return;
+      renderPassiveProvider(document.getElementById('health-chessapi'), results['chess-api']);
+      renderPassiveProvider(document.getElementById('health-lichess'), results.lichess);
+      renderPassiveProvider(document.getElementById('health-masters'), results.masters);
+      renderPassiveProvider(document.getElementById('health-opening'), results.opening);
+      renderPassiveProvider(document.getElementById('health-tablebase'), results.tablebase);
+      renderApiDiagnostics(results.diagnostics);
     });
-    // v8.5.0: Safety net — if the callback never fires (SW died mid-check),
-    // restore the button after 15s so the user isn't stuck.
-    setTimeout(restoreButton, 15000);
   }
 
   // ─── Handle Messages ───────────────────────────────────────────────
@@ -723,7 +744,7 @@
   function handlePositionUpdate(message) {
     const prevFen = currentFen;
     currentFen = message.fen;
-    const positionChanged = !prevFen || prevFen.split(' ').slice(0, 2).join(' ') !== currentFen.split(' ').slice(0, 2).join(' ');
+    const positionChanged = !prevFen || prevFen.split(' ').slice(0, 4).join(' ') !== currentFen.split(' ').slice(0, 4).join(' ');
     playerColor = message.playerColor || 'w';
     if (assistedPlayerColor === null) {
       assistedPlayerColor = playerColor;
@@ -752,6 +773,7 @@
       // v8.5.0 (Enhancement I): Clear local engine-recommendation tracking too.
       lastEngineRecommendationFen = null;
       lastEngineRecommendationUci = null;
+      humanPlanState = null;
     }
 
     // v7.1.0: Turn-based analysis — check whose turn it is before analyzing
@@ -867,9 +889,10 @@
     // A slower cloud response for an earlier position must never overwrite the
     // current board. Compare placement + turn because reconstructed counters
     // may legitimately differ between the request and the next poll.
-    const resultKey = (data.fen || '').split(' ').slice(0, 2).join(' ');
-    const currentKey = currentFen.split(' ').slice(0, 2).join(' ');
+    const resultKey = (data.fen || '').split(' ').slice(0, 4).join(' ');
+    const currentKey = currentFen.split(' ').slice(0, 4).join(' ');
     if (!resultKey || resultKey !== currentKey) return;
+    const wasUserRefresh = isRefreshing;
     lastAnalysis = data;
     if (data.hintUsage && Number.isFinite(data.hintUsage.l5Count)) {
       coachModeHintCount = data.hintUsage.l5Count;
@@ -901,15 +924,16 @@
       }
     }
 
-    updateEngineStatus('online', 'Analysis complete');
+    updateEngineStatus('online', data.stale ? 'Cached analysis (stale)' : 'Analysis complete');
     renderAnalysis(data);
+    runHealthCheck();
 
     // v8.5.0 (fix #36): Toast only on user-initiated refresh, not every
     // auto-analysis. The previous code spammed a toast every 2-5s on the
     // player's turn. The `isRefreshing` flag is set when the user clicks
-    // Refresh and cleared ~1.5s later — we use it as the signal.
-    if (data.source && isRefreshing) {
-      const sourceNames = { 'chess-api': 'Chess-API', 'lichess-cloud': 'Lichess Cloud', 'masters-explorer': 'Masters DB', 'tablebase': 'Tablebase' };
+    // Refresh and cleared only when this workflow settles.
+    if (data.source && wasUserRefresh) {
+      const sourceNames = { 'chess-api': 'Chess-API', 'lichess-cloud': 'Lichess Cloud', 'masters-explorer': 'Masters DB', 'opening-explorer': 'Opening Cache', 'tablebase': 'Tablebase' };
       showToast(`Analysis ready via ${sourceNames[data.source] || data.source}`, 'success', 2000);
     }
 
@@ -923,12 +947,14 @@
 
     // v8.5.0 (Enhancement I): Refresh the correlation stat in the UI.
     updateCorrelationStat();
+    if (wasUserRefresh) finishRefresh();
   }
 
   function handleAnalysisError(data) {
     if (!data) return;
-    if (data.fen && currentFen && data.fen.split(' ').slice(0, 2).join(' ') !== currentFen.split(' ').slice(0, 2).join(' ')) return;
+    if (data.fen && currentFen && data.fen.split(' ').slice(0, 4).join(' ') !== currentFen.split(' ').slice(0, 4).join(' ')) return;
     const errorMsg = data.error || 'Cloud analysis unavailable.';
+    if (isRefreshing) finishRefresh();
     updateEngineStatus('error', errorMsg);
     // v7.9.0: Show toast for errors
     showToast(errorMsg, 'error', 4000);
@@ -962,6 +988,7 @@
       'chess-api': 'Chess-API.com',
       'lichess-cloud': 'Lichess Cloud',
       'masters-explorer': 'Masters DB', // v7.5.0: Human grandmaster moves
+      'opening-explorer': 'Opening Explorer Cache',
       'tablebase': 'Tablebase',
       'unknown': '—'
     };
@@ -970,20 +997,22 @@
   }
 
   function updateSourceIndicator(source, label, depth) {
-    // v8.5.0: source-badge now properly distinguishes all 4 sources
+    // Source badge distinguishes engine, human/opening, tablebase, and unknown sources
     //         (was missing 'masters-explorer' → 'HUMAN' branch).
     if (dom.sourceBadge) {
       const badgeClass = source === 'tablebase' ? 'tb'
-        : (source === 'masters-explorer' ? 'human' : 'cloud');
+        : (source === 'masters-explorer' || source === 'opening-explorer' ? 'human' : 'cloud');
       dom.sourceBadge.className = `source-badge source-${badgeClass}`;
       dom.sourceBadge.textContent = source === 'tablebase' ? 'TB'
         : (source === 'masters-explorer' ? 'HUMAN'
-        : (source === 'unknown' ? '—' : 'CLOUD'));
+        : (source === 'opening-explorer' ? 'OPENING'
+        : (source === 'unknown' ? '—' : 'CLOUD')));
     }
     if (dom.analysisSource) {
       const depthStr = depth ? ` (depth ${depth})` : '';
       dom.analysisSource.textContent = `${label}${depthStr}`;
-      const sourceClass = source === 'tablebase' ? 'tb' : 'cloud';
+      const sourceClass = source === 'tablebase' ? 'tb'
+        : (source === 'masters-explorer' || source === 'opening-explorer' ? 'human' : 'cloud');
       dom.analysisSource.className = `info-value source-indicator source-${sourceClass}`;
     }
   }
@@ -999,7 +1028,8 @@
       playerColor: colorToSend,
       multiPv: settings.cloudDepth || 3,
       hintLevel,
-      refresh: refresh
+      refresh: refresh,
+      tabId: activeTabId
     }).catch(() => {});
   }
 
@@ -1007,8 +1037,15 @@
   function renderAnalysis(data) {
     const effectiveColor = assistedPlayerColor || playerColor || 'w';
     const objectivePvs = data.pvs || [];
-    const styledPvs = objectivePvs.length > 1 && data.source !== 'tablebase'
-      ? window.ChessHintEngine.selectPVForStyle(objectivePvs, data.fen, settings.style, effectiveColor)
+    const styledPvs = objectivePvs.length > 0 && data.source !== 'tablebase' && (objectivePvs.length > 1 || settings.humanLikeMode)
+      ? window.ChessHintEngine.selectPVForStyle(
+          objectivePvs,
+          data.fen,
+          settings.style,
+          effectiveColor,
+          settings.humanLikeMode,
+          { activePlan: humanPlanState?.activePlan || null, openingData: data.openingData }
+        )
       : objectivePvs;
     const viewData = { ...data, pvs: styledPvs };
 
@@ -1411,8 +1448,13 @@
       effectiveHintLevel,
       assistedPlayerColor,
       settings.style,
-      settings.repertoire
+      settings.repertoire,
+      settings.humanLikeMode,
+      { activePlan: humanPlanState?.activePlan || null }
     );
+    if (settings.humanLikeMode && hints.styleAnalysis?.plan) {
+      humanPlanState = { activePlan: hints.styleAnalysis.plan, startedAtFen: data.fen };
+    }
 
     if (dom.hintText) {
       dom.hintText.textContent = hints.main;
@@ -1456,7 +1498,8 @@
       const sourceTag = currentSource === 'chess-api' ? 'API'
         : (currentSource === 'lichess-cloud' ? 'Cloud'
         : (currentSource === 'masters-explorer' ? 'Human'
-        : (currentSource === 'tablebase' ? 'Tablebase' : 'Cloud')));
+        : (currentSource === 'opening-explorer' ? 'Human'
+        : (currentSource === 'tablebase' ? 'Tablebase' : 'Cloud'))));
       tags.push(sourceTag);
 
       // v6.0.0: Depth quality indicator
@@ -1473,11 +1516,17 @@
       }
       if (settings.style === 'aggressive') tags.push('Aggressive');
       if (settings.style === 'super_ultra_aggressive') tags.push('Super Ultra');
+      if (settings.humanLikeMode) {
+        tags.push('Human-like');
+        if (hints.styleAnalysis?.planContinuity) tags.push('Plan continuity');
+        if (hints.styleAnalysis?.masterGames > 0) tags.push('Master choice');
+      }
 
       dom.hintTags.innerHTML = tags.map(t => {
         let tagClass = 'hint-tag';
         if (t === 'Aggressive') tagClass += ' tag-aggressive';
         if (t === 'Super Ultra') tagClass += ' tag-super-ultra';
+        if (t === 'Human-like' || t === 'Plan continuity' || t === 'Master choice') tagClass += ' tag-human-like';
         if (t === 'queen sac') tagClass += ' tag-queen-sac';
         if (t === 'mate attack') tagClass += ' tag-mate-attack';
         if (t === 'Cloud' || t === 'API') tagClass += ' tag-cloud';

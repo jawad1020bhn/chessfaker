@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Chess Hint Assistant v8.5.0</title>
+  <title>Chess Hint Assistant v9.0.0</title>
   <link rel="stylesheet" href="sidepanel.css">
 </head>
 <body>
@@ -38,6 +38,7 @@
           </svg>
         </div>
         <h1 class="topbar-title">Chess Coach</h1>
+        <span class="version-tag" aria-label="Version 9.0.0">v9.0</span>
       </div>
       <div class="topbar-right">
         <div id="player-selector" class="player-selector" role="radiogroup" aria-label="Which player to assist">
@@ -386,6 +387,14 @@
         <div class="setting-hint">Aggressive seeks the fastest sound win. Super Ultra accepts greater calculated risk for forcing attacks and validated sacrifices.</div>
       </div>
 
+      <div class="setting-group human-mode-setting">
+        <label class="toggle-label" for="setting-human-like-mode">
+          <input type="checkbox" id="setting-human-like-mode">
+          <span>Human-like moves and hints</span>
+        </label>
+        <div class="setting-hint">Prefer natural plans, thematic moves, and understandable continuations without relaxing mate safety or the selected style's strength limits.</div>
+      </div>
+
       <div class="setting-group">
         <label for="setting-repertoire">Opening Repertoire</label>
         <select id="setting-repertoire">
@@ -403,20 +412,36 @@
         <div id="api-health-status" class="api-health-status">
           <div class="api-health-row">
             <span class="api-name">Chess-API.com</span>
-            <span id="health-chessapi" class="api-status unknown">Checking...</span>
+            <span id="health-chessapi" class="api-status unknown">No recent data</span>
           </div>
           <div class="api-health-row">
             <span class="api-name">Lichess Cloud</span>
-            <span id="health-lichess" class="api-status unknown">Checking...</span>
+            <span id="health-lichess" class="api-status unknown">No recent data</span>
           </div>
           <div class="api-health-row">
             <span class="api-name">Masters DB</span>
-            <span id="health-masters" class="api-status unknown">Checking...</span>
+            <span id="health-masters" class="api-status unknown">No recent data</span>
+          </div>
+          <div class="api-health-row">
+            <span class="api-name">Opening Explorer</span>
+            <span id="health-opening" class="api-status unknown">No recent data</span>
+          </div>
+          <div class="api-health-row">
+            <span class="api-name">Tablebase</span>
+            <span id="health-tablebase" class="api-status unknown">No recent data</span>
           </div>
         </div>
-        <div class="setting-hint" style="margin-top:4px">3-API rotation distributes load evenly. Masters DB provides human grandmaster moves.</div>
+        <div class="setting-hint" style="margin-top:4px">Status is derived from real requests. Refreshing this display does not contact providers.</div>
+        <div class="api-usage-diagnostics" aria-live="polite">
+          <strong>API Usage — Last 10 Minutes</strong>
+          <div><span>Calls avoided by cache</span><span id="api-cache-avoided">0</span></div>
+          <div><span>Requests coalesced</span><span id="api-requests-coalesced">0</span></div>
+          <div><span>Stale results served</span><span id="api-stale-served">0</span></div>
+          <div><span>Stale jobs cancelled</span><span id="api-stale-dropped">0</span></div>
+          <div id="api-provider-calls" class="api-provider-calls">No remote calls yet</div>
+        </div>
         <div class="btn-row">
-          <button id="btn-health-check" class="btn-secondary">Run Health Check</button>
+          <button id="btn-health-check" class="btn-secondary">Refresh Status</button>
           <button id="btn-clear-caches" class="btn-secondary">Clear Caches</button>
         </div>
       </div>
@@ -532,32 +557,8 @@
       <div class="setting-divider"></div>
       <div class="setting-section-title">Performance & Reliability</div>
 
-      <div class="setting-group">
-        <label class="toggle-label">
-          <input type="checkbox" id="setting-minimal-footprint">
-          <span>Minimal Footprint Mode</span>
-        </label>
-        <div class="setting-hint">Reduces browser footprint. Does NOT guarantee undetectability.</div>
-      </div>
-
-      <div class="setting-group">
-        <label class="toggle-label">
-          <input type="checkbox" id="setting-smart-throttling" checked>
-          <span>Smart Request Throttling</span>
-        </label>
-        <div class="setting-hint">Intelligent delays with anti-ban jitter. Round-robin rotation prevents repetitive patterns.</div>
-      </div>
-
-      <div class="setting-group">
-        <label class="toggle-label">
-          <input type="checkbox" id="setting-cache-first-mode">
-          <span>Cache-First Mode</span>
-        </label>
-        <div class="setting-hint">Uses cached analysis when available. Reduces API usage significantly.</div>
-      </div>
-
       <div class="setting-disclaimer">
-        <strong>Note:</strong> These settings reduce API usage and minimize browser footprint. They do NOT make the extension undetectable.
+        <strong>Request protection is always on:</strong> analysis uses canonical caching, serialized provider queues, persistent quotas, strict cooldowns, stale-result fallback, and bounded retries. These safeguards cannot be disabled by refresh or cache controls.
       </div>
     </div><!-- /settings-panel -->
 
