@@ -1,3 +1,5 @@
+importScripts('engine/core-utils.js');
+
 /**
  * Chess Hint Assistant — Background Service Worker v8.5.0
  * 3-API Rotation Engine with Anti-Ban Protection
@@ -42,7 +44,9 @@
 
 // ─── Constants ───────────────────────────────────────────────────────
 const KEEPALIVE_ALARM = 'chess-hint-keepalive';
-const KEEPALIVE_ALARM_INTERVAL_MIN = 0.42; // ~25s, below MV3 30s SW termination
+// Chrome 114 enforces a one-minute minimum for repeating extension alarms.
+// The worker remains suspension-safe; this alarm is only a periodic maintenance wake-up.
+const KEEPALIVE_ALARM_INTERVAL_MIN = 1;
 
 // ─── Default Settings ────────────────────────────────────────────────
 const DEFAULT_SETTINGS = {
@@ -512,97 +516,12 @@ function recordPlayerMove(prevFen, payload) {
 
 // v8.5.0: Apply the engine's UCI to prevFen and compare placement + side-to-move
 // with actualFen. If equal, the player played the recommended move.
-// We don't have a full applyMoveToFen here in background.js, so we do a
-// lightweight placement comparison: extract the from/to squares, mutate a
-// shallow board copy, and compare resulting placements.
+// The shared helper applies the move to piece placement and compares it with
+// the newly observed position, while deliberately ignoring volatile counters.
 function didPlayerPlayEngineMove(prevFen, engineUci, actualFen) {
-  try {
-    if (!engineUci || engineUci.length < 4) return false;
-    const prevParts = prevFen.split(' ');
-    const actualParts = actualFen.split(' ');
-    if (prevParts[1] !== actualParts[1]) return false; // side-to-move must flip — actually it should flip; if it didn't, definitely not the engine move
-    // Build board from prevFen placement
-    const board = parseFENPlacementBG(prevParts[0]);
-    const from = engineUci.substring(0, 2);
-    const to = engineUci.substring(2, 4);
-    const promo = engineUci.length > 4 ? engineUci[4] : null;
-    const fromCoords = squareToCoordsBG(from);
-    const toCoords = squareToCoordsBG(to);
-    const piece = board[fromCoords.row][fromCoords.col];
-    if (!piece) return false;
-    // Apply move
-    board[toCoords.row][toCoords.col] = piece;
-    board[fromCoords.row][fromCoords.col] = null;
-    if (promo) {
-      const isWhite = piece === piece.toUpperCase();
-      board[toCoords.row][toCoords.col] = isWhite ? promo.toUpperCase() : promo.toLowerCase();
-    }
-    // Handle castling — if king moved 2 squares, also move the rook
-    if (piece.toLowerCase() === 'k' && Math.abs(fromCoords.col - toCoords.col) === 2) {
-      if (toCoords.col === 6) { // kingside
-        board[fromCoords.row][5] = board[fromCoords.row][7];
-        board[fromCoords.row][7] = null;
-      } else if (toCoords.col === 2) { // queenside
-        board[fromCoords.row][3] = board[fromCoords.row][0];
-        board[fromCoords.row][0] = null;
-      }
-    }
-    // Handle en passant — pawn moved diagonally to empty square
-    if (piece.toLowerCase() === 'p' && from[0] !== to[0]) {
-      // If destination was empty before, this is en passant
-      // (we don't have the original board state for the destination square now,
-      // but we already moved the pawn — to detect EP we check if the move was
-      // diagonal and the destination square's row matches the from row's pawn rank)
-      const epRow = piece === 'P' ? toCoords.row + 1 : toCoords.row - 1;
-      if (epRow >= 0 && epRow < 8) {
-        // Remove the captured pawn (if any pawn was there)
-        if (board[epRow][toCoords.col] && board[epRow][toCoords.col].toLowerCase() === 'p') {
-          board[epRow][toCoords.col] = null;
-        }
-      }
-    }
-    // Rebuild placement string from board
-    const expectedPlacement = boardToFENPlacement(board);
-    return expectedPlacement === actualParts[0];
-  } catch (_) {
-    return false;
-  }
-}
-
-// Lightweight FEN helpers for background.js (the full versions live in hint-engine.js
-// which is loaded only in the side panel context).
-function parseFENPlacementBG(placement) {
-  const board = Array.from({ length: 8 }, () => Array(8).fill(null));
-  const rows = placement.split('/');
-  for (let r = 0; r < 8; r++) {
-    let c = 0;
-    const row = rows[r] || '';
-    for (const ch of row) {
-      if (ch >= '1' && ch <= '8') { c += parseInt(ch); }
-      else { if (c < 8) board[r][c] = ch; c++; }
-    }
-  }
-  return board;
-}
-function squareToCoordsBG(sq) {
-  return { row: 8 - parseInt(sq[1]), col: sq.charCodeAt(0) - 97 };
-}
-function boardToFENPlacement(board) {
-  let out = '';
-  for (let r = 0; r < 8; r++) {
-    let empty = 0;
-    for (let c = 0; c < 8; c++) {
-      if (board[r][c]) {
-        if (empty > 0) { out += empty; empty = 0; }
-        out += board[r][c];
-      } else {
-        empty++;
-      }
-    }
-    if (empty > 0) out += empty;
-    if (r < 7) out += '/';
-  }
-  return out;
+  // Compare the resulting placement and require the side to move to flip.
+  // ChessCore also handles castling, promotion and en-passant captures.
+  return ChessCore.didUciProduceFen(prevFen, engineUci, actualFen);
 }
 
 function getCorrelationStats() {
@@ -1169,15 +1088,18 @@ async function lichessOpeningExplorer(fen) {
 
 function normalizeOpeningExplorer(data) {
   const total = (data.white || 0) + (data.draws || 0) + (data.black || 0);
-  const moves = (data.moves || []).map(m => ({
-    uci: m.uci, san: m.san,
-    white: m.white || 0, draws: m.draws || 0, black: m.black || 0,
-    total: (m.white || 0) + (m.draws || 0) + (m.black || 0),
-    winRate: total > 0 ? ((m.white || 0) / total * 100).toFixed(1) : '0',
-    drawRate: total > 0 ? ((m.draws || 0) / total * 100).toFixed(1) : '0',
-    lossRate: total > 0 ? ((m.black || 0) / total * 100).toFixed(1) : '0',
-    averageRating: m.averageRating || 0
-  }));
+  const moves = (data.moves || []).map(m => {
+    const moveTotal = (m.white || 0) + (m.draws || 0) + (m.black || 0);
+    return {
+      uci: m.uci, san: m.san,
+      white: m.white || 0, draws: m.draws || 0, black: m.black || 0,
+      total: moveTotal,
+      winRate: moveTotal > 0 ? ((m.white || 0) / moveTotal * 100).toFixed(1) : '0',
+      drawRate: moveTotal > 0 ? ((m.draws || 0) / moveTotal * 100).toFixed(1) : '0',
+      lossRate: moveTotal > 0 ? ((m.black || 0) / moveTotal * 100).toFixed(1) : '0',
+      averageRating: m.averageRating || 0
+    };
+  });
   const topGames = (data.topGames || []).map(g => ({
     id: g.id, winner: g.winner,
     white: g.white || {}, black: g.black || {},
@@ -1647,24 +1569,41 @@ async function checkConnectionHealth() {
 }
 
 // ─── Read Board from Active Tab ──────────────────────────────────────
+// DOM readers can observe placement reliably, but castling, en-passant and
+// counters require move history. Keep reconciled metadata separately per tab.
+const lastObservedFenByTab = new Map();
+
 async function readBoardFromActiveTab() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || !tab.url) return null;
     const url = new URL(tab.url);
-    const isChessSite = url.hostname.includes('chess.com') || url.hostname.includes('lichess.org');
+    const host = url.hostname.toLowerCase();
+    const isChessSite = host === 'chess.com' || host.endsWith('.chess.com') ||
+      host === 'lichess.org' || host.endsWith('.lichess.org');
     if (!isChessSite) return null;
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       files: ['content.js']
     });
-    if (results && results[0] && results[0].result) return results[0].result;
-    return null;
+    const result = results?.[0]?.result;
+    if (!result || !ChessCore.parseFen(result.fen)) return null;
+
+    const previousFen = lastObservedFenByTab.get(tab.id) || null;
+    if (previousFen && previousFen.split(' ')[0] === result.fen.split(' ')[0]) {
+      result.fen = previousFen;
+    } else {
+      result.fen = ChessCore.reconcileFen(previousFen, result.fen) || result.fen;
+      lastObservedFenByTab.set(tab.id, result.fen);
+    }
+    return result;
   } catch (e) {
     console.error('[Background] Board read error:', e.message);
     return null;
   }
 }
+
+chrome.tabs.onRemoved.addListener(tabId => lastObservedFenByTab.delete(tabId));
 
 // ─── Side Panel Management ──────────────────────────────────────────
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
@@ -1696,9 +1635,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   //         handlers — side panel only communicates via 'request_analysis'.
 
   if (msgType === 'request_analysis') {
+    if (!ChessCore.parseFen(message.fen)) {
+      sendResponse({ ok: false, error: 'Invalid board position' });
+      return false;
+    }
     chrome.storage.local.get(['settings', 'assistedPlayerColor'], (result) => {
       const settings = result.settings || DEFAULT_SETTINGS;
-      const assistedPlayerColor = result.assistedPlayerColor || message.playerColor || 'w';
+      const assistedPlayerColor = message.playerColor || result.assistedPlayerColor || 'w';
 
       if (message.fen) {
         const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
@@ -1739,14 +1682,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           clearMemoryCache('opening_' + message.fen);
           clearMemoryCache('tablebase_' + message.fen);
           clearMemoryCache('masters_eval_' + message.fen); // v7.5.0
-          const keys = [
+          const prefixes = [
             'cloud_eval_' + message.fen + '_',
             'chessapi_' + message.fen + '_',
             'opening_' + message.fen,
             'tablebase_' + message.fen,
-            'masters_eval_' + message.fen + '_' // v7.5.0
+            'masters_eval_' + message.fen + '_'
           ];
-          chrome.storage.local.remove(keys).catch(() => {});
+          // storage.remove does not support wildcard keys; enumerate so every
+          // multi-PV/depth variant for this position is actually invalidated.
+          chrome.storage.local.get(null).then(items => {
+            const keys = Object.keys(items).filter(key => prefixes.some(prefix => key.startsWith(prefix)));
+            if (keys.length) return chrome.storage.local.remove(keys);
+          }).catch(() => {});
         }
       }
 
@@ -1788,6 +1736,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
           cloudResult.hintLevel = effectiveHintLevel;
           cloudResult.coachModeDowngrade = coachModeDowngrade;
+          cloudResult.hintUsage = {
+            l5Count: hintUsageTracker.l5Count,
+            l4Count: hintUsageTracker.l4Count,
+            maxL5: settings.coachModeMaxHints || 3
+          };
 
           // v8.5.0: Apply depth-target gating (Enhancement C) — if the engine's
           // depth is below the user's configured minimum AND hint level is L4/L5,
@@ -1959,6 +1912,15 @@ chrome.runtime.onInstalled.addListener(() => {
         delete s.stealthCacheOnly;
         updated = true;
       }
+      // Consolidate legacy playing styles into the rebuilt three-mode system.
+      if (['super_aggressive', 'ultra_aggressive_stealth', 'kamikaze', 'berserker'].includes(s.style)) {
+        s.style = 'super_ultra_aggressive';
+        updated = true;
+      } else if (!['normal', 'aggressive', 'super_ultra_aggressive'].includes(s.style)) {
+        s.style = 'normal';
+        updated = true;
+      }
+
       // v8.5.0: ensure new fields exist on migrated settings
       if (s.depthTarget === undefined) { s.depthTarget = 0; updated = true; }
       if (s.correlationThreshold === undefined) { s.correlationThreshold = 100; updated = true; }

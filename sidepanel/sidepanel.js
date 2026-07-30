@@ -65,6 +65,13 @@
   let coachModeHintCount = 0;
   let coachModeGameId = null;
 
+  const normalizeStyle = (style) => {
+    if (style === 'normal' || style === 'aggressive' || style === 'super_ultra_aggressive') return style;
+    return ['super_aggressive', 'ultra_aggressive_stealth', 'kamikaze', 'berserker'].includes(style)
+      ? 'super_ultra_aggressive'
+      : 'normal';
+  };
+
   let settings = {
     cloudDepth: 5,
     style: 'normal',
@@ -93,6 +100,8 @@
   // ─── DOM References ─────────────────────────────────────────────────
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
+  const h = (value) => ChessCore.escapeHtml(value);
+  const clamp = (value, min, max, fallback = min) => ChessCore.clampNumber(value, min, max, fallback);
 
   const dom = {
     engineStatus: $('#engine-status'),
@@ -233,12 +242,16 @@
     }
 
     const icons = { success: '\u2713', error: '\u2717', warning: '\u26A0', info: '\u2139' };
+    const safeType = Object.hasOwn(icons, type) ? type : 'info';
     const toast = document.createElement('div');
-    toast.className = `toast toast-${type}`;
-    toast.innerHTML = `
-      <span class="toast-icon">${icons[type] || icons.info}</span>
-      <span class="toast-message">${message}</span>
-    `;
+    toast.className = `toast toast-${safeType}`;
+    const icon = document.createElement('span');
+    icon.className = 'toast-icon';
+    icon.textContent = icons[safeType];
+    const messageElement = document.createElement('span');
+    messageElement.className = 'toast-message';
+    messageElement.textContent = String(message ?? '');
+    toast.append(icon, messageElement);
     container.appendChild(toast);
 
     setTimeout(() => {
@@ -426,8 +439,9 @@
   function loadSettings() {
     chrome.storage.local.get('settings', (result) => {
       if (result.settings) {
-        settings = { ...settings, ...result.settings };
+        settings = { ...settings, ...result.settings, style: normalizeStyle(result.settings.style) };
         applySettingsToUI();
+        if (settings.style !== result.settings.style) chrome.storage.local.set({ settings });
       }
     });
     chrome.storage.local.get('assistedPlayerColor', (result) => {
@@ -506,6 +520,9 @@
         // v7.9.0: Update ARIA
         $$('.player-btn').forEach(b => b.setAttribute('aria-checked', b.dataset.color === assistedPlayerColor ? 'true' : 'false'));
         saveSettings();
+        lastEngineRecommendationFen = null;
+        lastEngineRecommendationUci = null;
+        chrome.runtime.sendMessage({ type: 'player_color_changed' }).catch(() => {});
         if (lastAnalysis) {
           renderAnalysis(lastAnalysis);
         }
@@ -569,7 +586,13 @@
 
     // v8.0.0: Theme toggle removed — dark only
 
-    // Settings
+    // Settings and CSP-safe shortcut-help close button
+    const closeShortcutHelp = document.getElementById('btn-close-shortcut-help');
+    if (closeShortcutHelp) closeShortcutHelp.addEventListener('click', () => {
+      const help = document.getElementById('shortcut-help');
+      if (help) help.style.display = 'none';
+      shortcutHelpVisible = false;
+    });
     if (dom.btnSettings) dom.btnSettings.addEventListener('click', () => { if (dom.settingsPanel) dom.settingsPanel.style.display = 'block'; });
     if (dom.btnCloseSettings) dom.btnCloseSettings.addEventListener('click', () => { if (dom.settingsPanel) dom.settingsPanel.style.display = 'none'; });
 
@@ -605,7 +628,7 @@
         saveSettings();
         applySettingsToUI();
         if (id === 'setting-style' && lastAnalysis) {
-          renderHints(lastAnalysis);
+          renderAnalysis(lastAnalysis);
         }
       });
     });
@@ -700,6 +723,7 @@
   function handlePositionUpdate(message) {
     const prevFen = currentFen;
     currentFen = message.fen;
+    const positionChanged = !prevFen || prevFen.split(' ').slice(0, 2).join(' ') !== currentFen.split(' ').slice(0, 2).join(' ');
     playerColor = message.playerColor || 'w';
     if (assistedPlayerColor === null) {
       assistedPlayerColor = playerColor;
@@ -752,7 +776,7 @@
 
     if (isPlayerTurn) {
       // It's the player's turn — request analysis
-      if (settings.autoAnalyze || turnJustChanged) {
+      if (positionChanged && (settings.autoAnalyze || turnJustChanged)) {
         requestAnalysis();
       }
       updateEngineStatus(wasPlayerTurn ? 'online' : 'analyzing', turnJustChanged ? 'Your turn — analyzing...' : 'Your turn');
@@ -773,42 +797,16 @@
   // report that. Falls back gracefully if anything is unclear.
   function tryReportPlayerMove(engineFen, engineUci, actualFen) {
     if (!engineFen || !engineUci || !actualFen) return;
-    // Quick check: did the player play the exact recommended move?
-    // Apply the engine's UCI to the previous FEN and see if the resulting
-    // placement + side-to-move matches the actual FEN.
-    let playerUci = null;
-    let matched = false;
-    try {
-      const enginePlacement = engineFen.split(' ')[0];
-      const actualPlacement = actualFen.split(' ')[0];
-      const actualColor = actualFen.split(' ')[1] || 'w';
-      // If the engine's recommendation, applied to engineFen, produces
-      // a placement equal to actualPlacement, the player matched.
-      // We don't have applyMoveToFen here in the sidepanel (it lives in
-      // the hint engine), so just report both fields and let background
-      // do the comparison.
-      playerUci = null; // unknown — let background decide based on stored recommendation
-      matched = false;
-    } catch (_) { /* ignore */ }
-    // Send the previous FEN to background; it has the stored engine UCI for
-    // that FEN and can compare against the actual resulting FEN. Background's
-    // recordPlayerMove() will mark a match only if playerUci === expected.
-    // Since we don't know playerUci here without a FEN-diff routine, we
-    // instead send the actual resulting FEN and let background infer.
-    // For simplicity, we just trigger a stats refresh — background's
-    // recordEngineRecommendation already stored the engine move keyed by FEN,
-    // and we extend recordPlayerMove to accept a "resultingFen" instead of UCI.
+    // Background has the stored engine UCI for this FEN and applies it before
+    // comparing the observed resulting placement, including special moves.
     chrome.runtime.sendMessage({
       type: 'record_player_move',
       prevFen: engineFen,
       actualFen: actualFen
     }).then((result) => {
       // result may be null if no stored engine recommendation for that FEN.
-      if (result && typeof result.matched === 'boolean') {
-        updateCorrelationStat();
-      }
+      if (result && typeof result.matched === 'boolean') updateCorrelationStat();
     }).catch(() => {});
-    updateCorrelationStat();
   }
 
   // v8.5.0 (Enhancement I): Pull current correlation stats from background
@@ -865,8 +863,17 @@
   }
 
   function handleAnalysisResult(data) {
-    if (!data) return;
+    if (!data || !currentFen) return;
+    // A slower cloud response for an earlier position must never overwrite the
+    // current board. Compare placement + turn because reconstructed counters
+    // may legitimately differ between the request and the next poll.
+    const resultKey = (data.fen || '').split(' ').slice(0, 2).join(' ');
+    const currentKey = currentFen.split(' ').slice(0, 2).join(' ');
+    if (!resultKey || resultKey !== currentKey) return;
     lastAnalysis = data;
+    if (data.hintUsage && Number.isFinite(data.hintUsage.l5Count)) {
+      coachModeHintCount = data.hintUsage.l5Count;
+    }
 
     const source = data.source || 'unknown';
     currentSource = source;
@@ -920,6 +927,7 @@
 
   function handleAnalysisError(data) {
     if (!data) return;
+    if (data.fen && currentFen && data.fen.split(' ').slice(0, 2).join(' ') !== currentFen.split(' ').slice(0, 2).join(' ')) return;
     const errorMsg = data.error || 'Cloud analysis unavailable.';
     updateEngineStatus('error', errorMsg);
     // v7.9.0: Show toast for errors
@@ -990,6 +998,7 @@
       fen: currentFen,
       playerColor: colorToSend,
       multiPv: settings.cloudDepth || 3,
+      hintLevel,
       refresh: refresh
     }).catch(() => {});
   }
@@ -997,29 +1006,36 @@
   // ─── Render Analysis ───────────────────────────────────────────────
   function renderAnalysis(data) {
     const effectiveColor = assistedPlayerColor || playerColor || 'w';
+    const objectivePvs = data.pvs || [];
+    const styledPvs = objectivePvs.length > 1 && data.source !== 'tablebase'
+      ? window.ChessHintEngine.selectPVForStyle(objectivePvs, data.fen, settings.style, effectiveColor)
+      : objectivePvs;
+    const viewData = { ...data, pvs: styledPvs };
 
-    if (data.pvs && data.pvs.length > 0) {
-      const bestPV = data.pvs[0];
+    // The evaluation bar remains objective; every move-oriented section below
+    // uses the same style-selected ordering.
+    if (objectivePvs.length > 0) {
+      const bestPV = objectivePvs[0];
       updateEvalBar(bestPV.score, bestPV.scoreType, effectiveColor);
       updateEvalDescription(bestPV.score, bestPV.scoreType, effectiveColor);
     }
-    renderPositionInfo(data);
-    renderHints(data);
+    renderPositionInfo(viewData);
+    renderHints(viewData);
 
-    if (settings.showCandidateMoves && data.pvs) {
-      renderCandidateMoves(data.pvs, effectiveColor, data.fen);
+    if (settings.showCandidateMoves && styledPvs) {
+      renderCandidateMoves(styledPvs, effectiveColor, data.fen);
     } else if (dom.candidateSection) {
       dom.candidateSection.style.display = 'none';
     }
 
     if (!settings.showCandidateMoves) {
       if (dom.pvLines) dom.pvLines.parentElement.style.display = 'block';
-      renderPVLines(data.pvs, effectiveColor);
+      renderPVLines(styledPvs, effectiveColor);
     } else {
       if (dom.pvLines) dom.pvLines.parentElement.style.display = 'none';
     }
 
-    if (settings.showContinuation) renderContinuation(data.pvs, effectiveColor);
+    if (settings.showContinuation) renderContinuation(styledPvs, effectiveColor);
     if (settings.showAssessment && data.fen) renderAssessment(data.fen);
 
     if (settings.showCriticalMoments) {
@@ -1041,7 +1057,7 @@
     }
 
     if (settings.showEndgameCoach && data.fen) {
-      renderEndgameCoach(data.fen, effectiveColor, data.tablebaseData, data);
+      renderEndgameCoach(data.fen, effectiveColor, data.tablebaseData, viewData);
     } else if (dom.endgameCoachSection) {
       dom.endgameCoachSection.style.display = 'none';
     }
@@ -1128,37 +1144,38 @@
       const oppMove = candidates[0]?.opponentMoveSan;
       const playerLabel = effectiveColor === 'w' ? 'White' : 'Black';
       // v5.4.0: Player-first — header focuses on the player's best responses
-      headerHtml = `<div class="cm-opp-turn-header">${playerLabel}'s best responses: ${oppMove ? `If opponent plays <strong>${oppMove}</strong>` : "Waiting for opponent's move"}</div>`;
+      headerHtml = `<div class="cm-opp-turn-header">${h(playerLabel)}'s best responses: ${oppMove ? `If opponent plays <strong>${h(oppMove)}</strong>` : "Waiting for opponent's move"}</div>`;
     }
 
     dom.candidateMoves.innerHTML = headerHtml + candidates.map(c => {
       const evalClass = c.evalScore > 30 ? 'cm-eval-positive' : (c.evalScore < -30 ? 'cm-eval-negative' : 'cm-eval-neutral');
-      const barPct = maxWinPct > 0 ? (c.winPct / maxWinPct * 100) : 50;
-      const barClass = c.qualityClass === 'cm-best' ? 'bar-green' : (c.qualityClass === 'cm-good' ? 'bar-blue' : (c.qualityClass === 'cm-ok' ? 'bar-yellow' : 'bar-red'));
+      const barPct = clamp(maxWinPct > 0 ? (c.winPct / maxWinPct * 100) : 50, 0, 100, 50);
+      const qualityClass = ['cm-best', 'cm-good', 'cm-ok', 'cm-risky'].includes(c.qualityClass) ? c.qualityClass : 'cm-risky';
+      const barClass = qualityClass === 'cm-best' ? 'bar-green' : (qualityClass === 'cm-good' ? 'bar-blue' : (qualityClass === 'cm-ok' ? 'bar-yellow' : 'bar-red'));
 
       let deltaHtml = '';
       if (c.deltaDisplay) {
         const deltaClass = c.delta < 0 ? 'delta-neg' : 'delta-pos';
-        deltaHtml = `<span class="cm-delta"><span class="${deltaClass}">${c.deltaDisplay}</span></span>`;
+        deltaHtml = `<span class="cm-delta"><span class="${deltaClass}">${h(c.deltaDisplay)}</span></span>`;
       }
 
       let oppMoveContext = '';
       if (isOpponentTurn && c.opponentMoveSan && c.opponentMoveSan !== candidates[0]?.opponentMoveSan) {
-        oppMoveContext = `<span class="cm-opp-move" style="font-size:9px;color:var(--text-dim);display:block">if ${c.opponentMoveSan}</span>`;
+        oppMoveContext = `<span class="cm-opp-move" style="font-size:9px;color:var(--text-dim);display:block">if ${h(c.opponentMoveSan)}</span>`;
       }
 
       return `
-        <div class="candidate-move ${c.qualityClass}">
-          <span class="cm-rank">${c.rank}</span>
-          <span class="cm-move">${c.san}</span>
+        <div class="candidate-move ${qualityClass}">
+          <span class="cm-rank">${h(c.rank)}</span>
+          <span class="cm-move">${h(c.san)}</span>
           ${oppMoveContext}
-          <span class="cm-fromto">${c.fromTo}</span>
-          <span class="cm-eval ${evalClass}">${c.evalDisplay}</span>
+          <span class="cm-fromto">${h(c.fromTo)}</span>
+          <span class="cm-eval ${evalClass}">${h(c.evalDisplay)}</span>
           ${deltaHtml}
           <div class="cm-bar">
             <div class="cm-bar-fill ${barClass}" style="width:${barPct}%"></div>
           </div>
-          <span style="font-size:10px;color:var(--text-dim)">${c.quality}</span>
+          <span style="font-size:10px;color:var(--text-dim)">${h(c.quality)}${c.styleReason ? ` · ${h(c.styleReason)}` : ''}</span>
         </div>
       `;
     }).join('');
@@ -1222,8 +1239,8 @@
       } else {
         dom.egTechnique.innerHTML = coach.techniques.slice(0, 5).map(t => `
           <div class="eg-technique-item">
-            <span class="eg-technique-icon">${t.icon}</span>
-            <span class="eg-technique-text">${t.text}</span>
+            <span class="eg-technique-icon">${h(t.icon)}</span>
+            <span class="eg-technique-text">${h(t.text)}</span>
           </div>
         `).join('');
       }
@@ -1234,7 +1251,7 @@
         dom.egPlan.style.display = 'block';
         dom.egPlan.innerHTML = `
           <div class="eg-plan-title">Your Plan</div>
-          <div class="eg-plan-text">${coach.plan}</div>
+          <div class="eg-plan-text">${h(coach.plan)}</div>
         `;
       } else {
         dom.egPlan.style.display = 'none';
@@ -1247,9 +1264,9 @@
       } else {
         dom.egStepList.innerHTML = coach.steps.slice(0, 6).map(s => `
           <div class="eg-step">
-            <span class="eg-step-num">${s.num || ''}</span>
-            <span class="eg-step-move">${s.move}</span>
-            <span class="eg-step-desc">${s.desc}</span>
+            <span class="eg-step-num">${h(s.num || '')}</span>
+            <span class="eg-step-move">${h(s.move)}</span>
+            <span class="eg-step-desc">${h(s.desc)}</span>
           </div>
         `).join('');
       }
@@ -1267,9 +1284,9 @@
     dom.openingExplorerSection.style.display = 'block';
     const total = openingData.totalGames || 1;
 
-    const whitePct = ((openingData.whiteWins || 0) / total * 100).toFixed(1);
-    const drawPct = ((openingData.draws || 0) / total * 100).toFixed(1);
-    const blackPct = ((openingData.blackWins || 0) / total * 100).toFixed(1);
+    const whitePct = clamp((openingData.whiteWins || 0) / total * 100, 0, 100, 0).toFixed(1);
+    const drawPct = clamp((openingData.draws || 0) / total * 100, 0, 100, 0).toFixed(1);
+    const blackPct = clamp((openingData.blackWins || 0) / total * 100, 0, 100, 0).toFixed(1);
 
     if (dom.winBarWhite) dom.winBarWhite.style.width = `${whitePct}%`;
     if (dom.winBarDraws) dom.winBarDraws.style.width = `${drawPct}%`;
@@ -1281,12 +1298,12 @@
     if (dom.openingMoves) {
       dom.openingMoves.innerHTML = openingData.moves.slice(0, 6).map(m => {
         const moveTotal = m.total || 1;
-        const wPct = (m.white / moveTotal * 100).toFixed(0);
-        const dPct = (m.draws / moveTotal * 100).toFixed(0);
-        const bPct = (m.black / moveTotal * 100).toFixed(0);
+        const wPct = clamp(m.white / moveTotal * 100, 0, 100, 0).toFixed(0);
+        const dPct = clamp(m.draws / moveTotal * 100, 0, 100, 0).toFixed(0);
+        const bPct = clamp(m.black / moveTotal * 100, 0, 100, 0).toFixed(0);
         return `
           <div class="opening-move-row">
-            <span class="opening-move-san">${m.san || m.uci}</span>
+            <span class="opening-move-san">${h(m.san || m.uci)}</span>
             <div class="opening-move-bar">
               <div class="omw" style="width:${wPct}%"></div>
               <div class="omd" style="width:${dPct}%"></div>
@@ -1309,9 +1326,9 @@
           const result = g.winner === 'white' ? '1-0' : (g.winner === 'black' ? '0-1' : '\u00BD-\u00BD');
           return `
             <div class="top-game-row">
-              <span class="tg-name">${wName} (${wRating})</span>
-              <span class="tg-result">${result}</span>
-              <span class="tg-name">${bName} (${bRating})</span>
+              <span class="tg-name">${h(wName)} (${h(wRating)})</span>
+              <span class="tg-result">${h(result)}</span>
+              <span class="tg-name">${h(bName)} (${h(bRating)})</span>
             </div>
           `;
         }).join('');
@@ -1365,9 +1382,9 @@
         }
         return `
           <div class="tb-move-row" style="border-left: 3px solid ${color}">
-            <span class="tb-move-san">${m.san || m.uci}</span>
-            <span class="tb-move-cat" style="color:${color}">${catLabels[cat] || cat}</span>
-            <span class="tb-move-detail">${detail}</span>
+            <span class="tb-move-san">${h(m.san || m.uci)}</span>
+            <span class="tb-move-cat" style="color:${color}">${h(catLabels[cat] || 'Unknown')}</span>
+            <span class="tb-move-detail">${h(detail)}</span>
           </div>
         `;
       }).join('');
@@ -1388,9 +1405,10 @@
       ? (data.pvs[0]?.score || 0)
       : -(data.pvs[0]?.score || 0);
 
+    const effectiveHintLevel = Number.isInteger(data.hintLevel) ? data.hintLevel : hintLevel;
     const hints = window.ChessHintEngine.generateHints(
       { ...data, prevEval, currEval: currEvalPlayerPerspective },
-      hintLevel,
+      effectiveHintLevel,
       assistedPlayerColor,
       settings.style,
       settings.repertoire
@@ -1413,18 +1431,12 @@
 
     if (dom.hintCard) {
       const colors = { 1: 'var(--accent-green)', 2: 'var(--accent-blue)', 3: 'var(--accent-purple)', 4: 'var(--accent-purple)', 5: 'var(--accent-cyan)' };
-      let borderColor = colors[hintLevel] || 'var(--accent-cyan)';
+      let borderColor = colors[effectiveHintLevel] || 'var(--accent-cyan)';
       if (settings.style === 'aggressive') borderColor = 'var(--accent-aggressive)';
-      if (settings.style === 'super_aggressive') borderColor = 'var(--accent-super-aggressive)';
-      if (settings.style === 'ultra_aggressive_stealth') borderColor = 'var(--accent-ultra-stealth)';
-      if (settings.style === 'kamikaze') borderColor = 'var(--accent-kamikaze)';
-      // v8.5.0: Berserker style border color (was missing entirely).
-      if (settings.style === 'berserker') borderColor = 'var(--accent-berserker)';
+      if (settings.style === 'super_ultra_aggressive') borderColor = 'var(--accent-super-ultra)';
       dom.hintCard.style.borderLeftColor = borderColor;
-      // v8.5.0: Add berserker-mode class (was only kamikaze-mode).
-      const styleClass = settings.style === 'kamikaze' ? ' kamikaze-mode'
-        : settings.style === 'berserker' ? ' berserker-mode' : '';
-      dom.hintCard.className = `hint-card level-${hintLevel}` + styleClass;
+      const styleClass = settings.style === 'super_ultra_aggressive' ? ' super-ultra-mode' : '';
+      dom.hintCard.className = `hint-card level-${effectiveHintLevel}` + styleClass;
     }
 
     if (dom.hintTags) {
@@ -1460,19 +1472,12 @@
         tags.push('Waiting for Opponent');
       }
       if (settings.style === 'aggressive') tags.push('Aggressive');
-      if (settings.style === 'super_aggressive') tags.push('Super Aggressive');
-      if (settings.style === 'ultra_aggressive_stealth') tags.push('Ultra Stealth');
-      if (settings.style === 'kamikaze') tags.push('Kamikaze');
-      // v8.5.0: Berserker style now has a tag (was missing — only kamikaze had one).
-      if (settings.style === 'berserker') tags.push('Berserker');
+      if (settings.style === 'super_ultra_aggressive') tags.push('Super Ultra');
 
       dom.hintTags.innerHTML = tags.map(t => {
         let tagClass = 'hint-tag';
         if (t === 'Aggressive') tagClass += ' tag-aggressive';
-        if (t === 'Super Aggressive') tagClass += ' tag-super-aggressive';
-        if (t === 'Ultra Stealth') tagClass += ' tag-ultra-stealth';
-        if (t === 'Kamikaze') tagClass += ' tag-kamikaze';
-        if (t === 'Berserker') tagClass += ' tag-berserker';
+        if (t === 'Super Ultra') tagClass += ' tag-super-ultra';
         if (t === 'queen sac') tagClass += ' tag-queen-sac';
         if (t === 'mate attack') tagClass += ' tag-mate-attack';
         if (t === 'Cloud' || t === 'API') tagClass += ' tag-cloud';
@@ -1482,7 +1487,7 @@
         if (t === 'Deep Analysis') tagClass += ' tag-depth-deep';
         if (t === 'Standard') tagClass += ' tag-depth-standard';
         if (t === 'Basic') tagClass += ' tag-depth-basic';
-        return `<span class="${tagClass}">${t}</span>`;
+        return `<span class="${tagClass}">${h(t)}</span>`;
       }).join('');
     }
 
@@ -1507,7 +1512,7 @@
     // Fair play warning
     const warningEl = document.getElementById('fair-play-warning');
     const warningText = document.getElementById('fair-play-warning-text');
-    if (hints.fairPlayWarning && hintLevel >= 4) {
+    if (hints.fairPlayWarning && effectiveHintLevel >= 4) {
       if (warningEl) warningEl.style.display = 'flex';
       if (warningText) warningText.textContent = hints.fairPlayWarning;
     } else {
@@ -1550,22 +1555,22 @@
       const scoreClass = pv.score > 30 ? 'positive' : (pv.score < -30 ? 'negative' : 'neutral');
       const depthLabel = pv.depth >= 100 ? 'TB' : `depth ${pv.depth}`;
 
-      let movesDisplay = pv.movesDisplay;
+      let movesHtml = h(pv.movesDisplay);
       if (isOpponentTurn && pv.pv && pv.pv.length > 1) {
         const moves = pv.movesDisplay.split(' ');
         if (moves.length > 0) {
-          movesDisplay = `<span style="color:var(--text-dim);opacity:0.7">${moves[0]}</span>` +
-            (moves.length > 1 ? ' ' + moves.slice(1).join(' ') : '');
+          movesHtml = `<span class="pv-opponent-first">${h(moves[0])}</span>` +
+            (moves.length > 1 ? ' ' + h(moves.slice(1).join(' ')) : '');
         }
       }
 
       return `
-        <div class="pv-line" data-pv-index="${pv.index}">
+        <div class="pv-line" data-pv-index="${h(pv.index)}">
           <div class="pv-line-header">
-            <span class="pv-score ${scoreClass}">${pv.scoreDisplay}</span>
-            <span class="pv-depth">${depthLabel}</span>
+            <span class="pv-score ${scoreClass}">${h(pv.scoreDisplay)}</span>
+            <span class="pv-depth">${h(depthLabel)}</span>
           </div>
-          <div class="pv-moves">${movesDisplay}</div>
+          <div class="pv-moves">${movesHtml}</div>
         </div>
       `;
     }).join('');
@@ -1582,9 +1587,9 @@
     const formatted = window.ChessHintEngine.formatContinuation(pvs[0].pv, hintLevel, effectiveColor === 'w', currentFen);
 
     dom.continuationMoves.innerHTML = formatted.map(m => {
-      const moveNumStr = m.moveNumber ? `<span class="cont-move-number">${m.moveNumber}.</span>` : (m.isWhiteMove ? '' : '<span class="cont-move-number">...</span>');
+      const moveNumStr = m.moveNumber ? `<span class="cont-move-number">${h(m.moveNumber)}.</span>` : (m.isWhiteMove ? '' : '<span class="cont-move-number">...</span>');
       const colorClass = m.isWhiteMove ? 'white-move' : 'black-move';
-      return `${moveNumStr}<span class="cont-move ${colorClass}">${m.move}</span>`;
+      return `${moveNumStr}<span class="cont-move ${colorClass}">${h(m.move)}</span>`;
     }).join('');
   }
 
@@ -1593,8 +1598,8 @@
     const cls = window.ChessHintEngine.classifyMove(0, evalDiff);
     const classKey = cls.label.toLowerCase();
     dom.moveClassDisplay.innerHTML = `
-      <span class="class-badge class-${classKey}">${cls.label} ${cls.symbol}</span>
-      <span class="class-symbol">${cls.symbol}</span>
+      <span class="class-badge class-${classKey}">${h(cls.label)} ${h(cls.symbol)}</span>
+      <span class="class-symbol">${h(cls.symbol)}</span>
     `;
     dom.moveClassSection.style.display = 'block';
   }
@@ -1637,11 +1642,11 @@
 
     dom.assessmentSection.style.display = 'block';
     dom.assessmentCards.innerHTML = cards.map(c => `
-      <div class="assessment-card severity-${c.severity}">
-        <span class="assessment-icon">${c.icon}</span>
+      <div class="assessment-card severity-${['high', 'medium', 'low'].includes(c.severity) ? c.severity : 'low'}">
+        <span class="assessment-icon">${h(c.icon)}</span>
         <div class="assessment-content">
-          <strong>${c.title}</strong>
-          <div class="assessment-detail">${c.detail}</div>
+          <strong>${h(c.title)}</strong>
+          <div class="assessment-detail">${h(c.detail)}</div>
         </div>
       </div>
     `).join('');
