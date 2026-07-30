@@ -1,129 +1,13 @@
 /**
- * Chess Hint Assistant — Max-Strength Hint Engine v8.5.0
+ * Chess Hint Assistant — Three-Mode Hint Engine
  *
- * 5-level hint system: L1 (Positional Coach) through L5 (Exact Move)
- * Cloud-only analysis — no local Stockfish.
+ * Modes:
+ *  - Normal: objective best play and reliable conversion.
+ *  - Aggressive: fastest sound win through forcing play and initiative.
+ *  - Super Ultra Aggressive: validated sacrifices and maximum concrete pressure.
  *
- * v8.5.0 — Bug-fix & Enhancement Release:
- *  - FIX: uciToSan now appends '+' (check) / '#' (checkmate) suffixes
- *         per SAN standard (previously produced "Qh5" instead of "Qh5+")
- *  - FIX: Cached assessKingSafety() result inside scoreMoveForStyle()
- *         — was called 4× per scored move (hot-path cost for Berserker)
- *  - FIX: sacrificeHistory exposed via resetSacrificeHistory() so the
- *         side panel can clear it on new-game detection
- *  - ENH (D): New formatScorePlayerPerspective() helper for "+1.5 (you)"
- *             style eval displays, regardless of assisted player's colour
- *  - ENH (J): ECO database loaded asynchronously from engine/eco.json
- *             (425 entries vs the previous ~46 inline); inline fallback
- *             retained for resilience
- *  - Removed dead code: PIECE_UNICODE constant, getPieceOwnerLabel(),
- *         validateMoveSide()
- *
- * v7.3.0 — Berserker Style (preserved):
- *  - NEW STYLE: "Berserker" — Above Kamikaze! Inspired by Patricia engine
- *    (most aggressive engine ever, EAS score 750K), AlphaZero's positional
- *    sacrifice style, and CSTal's speculative evaluation. Plays NOTHING like
- *    Stockfish — pure berserker rage on the board!
- *  - Berserker-exclusive scoring mechanics (9 NEW — beyond Kamikaze's 5):
- *    - Attack Unit System: Stockfish-inspired S-curve (N/B=2, R=3, Q=5 units)
- *    - Practical Chances: Score moves creating maximum opponent difficulty
- *    - Complexity Amplifier: Boost moves increasing position complexity
- *    - Greek Gift Detection: Bxh7+/Bxh2+ sacrifice pattern detection
- *    - Draw Contempt: Penalize drawish positions, avoid draws at all costs
- *    - Sacrifice Cascade: Bonus for consecutive sacrifices (Tal-style chains)
- *    - Tempo Bonus: Reward development WITH threats, forcing sequences
- *    - Overload Exploitation: Exploit overloaded defending pieces
- *    - Phase-Aware Scaling: Different aggression profiles per game phase
- *  - Berserker-specific parameters:
- *    - sacrificeTolerance 400cp (4.0 pawns!) — can sacrifice queen+pawn
- *    - evalWeight 0.20 — almost ignore engine eval
- *    - defenseWeight 0.02 — literally zero defense
- *    - kingZonePressure 5.5x — overwhelming king danger amplification
- *    - Bonus cap 6x sacrificeTolerance = 2400cp for truly berserker moves
- *    - Synergy detection: exponential multiplier for stacked bonuses
- *    - Two-phase re-ranking: pure aggression score within eval tolerance
- *  - Berserker-specific winning plans ("ANNIHILATE!", "BERSERKER RAGE!")
- *  - New annotations: "berserker", "greek gift", "cascade sac", "overload"
- *  - Anti-simplification bias: penalizes equal trades, rewards complications
- *
- * v7.1.0 — Kamikaze Style + Turn-Based Analysis:
- *  - NEW STYLE: "Kamikaze" — ALL-IN ATTACK! Sacrifice everything for checkmate.
- *    No defense, no mercy — pure destruction. Pieces are expendable, the king must die!
- *  - Kamikaze-exclusive scoring mechanics:
- *    - Queen sacrifice detection: massive bonus for sacrificing the queen for attack
- *    - Mate seeker: bonus for moves leading toward checkmate patterns
- *    - Initiative bonus: bonus for moves that create forcing threats
- *    - Back rank threat: bonus for moves creating back rank mate patterns
- *    - Piece sacrifice near king: bonus for sacrificing ANY piece near opponent's king
- *    - Knight fork detection near king: bonus for double-attacks/forks
- *    - Smothered mate pattern detection: bonus for cornered-king knight checks
- *  - sacrificeTolerance 250cp (2.5 pawns!) — will sacrifice even the queen
- *  - kingZonePressure 3.5x — overwhelming king danger amplification
- *  - No stealth/anti-detection — this style OWNS its aggression
- *  - Higher bonus cap (4x sacrificeTolerance) for truly wild sacrifices
- *  - Kamikaze-specific winning plans ("OBLITERATE!", "ALL-IN ATTACK!")
- *  - New annotations: "queen sac", "mate attack", "kamikaze"
- *
- * v6.2.0 — Ultra Aggressive Stealth Style (backported from v7.0.0):
- *  - NEW STYLE: "Ultra Aggressive Stealth" — Tal/Kasparov-inspired attacks
- *    with anti-detection diversification to avoid engine fingerprinting
- *  - Anti-detection: weighted random selection from top 2-3 moves
- *  - Anti-detection: evaluation noise injection (+/-5-10cp) on display
- *  - Anti-detection: position-criticality aware move selection
- *    (more randomness in equal positions, less in critical ones)
- *  - Anti-detection: "humanized" move selection that avoids always
- *    playing the #1 engine move
- *  - Enhanced aggressive scoring: pawn storm detection, exchange sacrifice
- *    patterns, prophylactic moves, king zone pressure amplification
- *  - King safety amplification: opponent's king danger penalty x1.8
- *  - Piece activity bonuses: outpost knights, open-diagonal bishops,
- *    7th-rank rooks get extra weight in ultra-aggressive mode
- *  - Opening line-pushing: prefer moves that open files toward
- *    opponent's castled king
- *
- * v6.1.0 — Coach Mode & Fair Play:
- *  - Added L1 (Positional Coach), L2 (Area Hint), L3 (Direction Hint) levels
- *  - L1-L3 reduce engine correlation by not revealing specific moves
- *  - Added fairPlayWarning field for L4 and L5 hints
- *  - Coach Mode: limits L5 hints per game to prevent correlation
- *  - Default hint level changed from 5 to 3
- *  - Enhanced candidate move evaluation with up to 5 PV lines (was 3)
- *  - Depth-aware hint quality indicators in annotations
- *  - Multi-source annotations: show which sources agree on best move
- *  - v7.0.0: Removed ChessDB.cn references
- *  - Better "from-to" square descriptions with source confidence
- *
- * v5.4.0 — Player-First Hint Design:
- *  - Hints ALWAYS prioritize the assisted player's best move as the primary hint
- *  - When playing as Black, hints show Black's best moves first (not White's expectations)
- *  - Opponent's expected move shown as secondary context ("If opponent plays...")
- *  - Candidate moves redesigned: when opponent's turn, show player's best responses
- *  - bestMoveFromTo always shows the assisted player's piece move
- *  - Fixed all cases where opponent's move was shown as primary when it shouldn't be
- *
- * v5.3.0 enhancements:
- *  - Fixed Black-side score normalization: Stockfish.online and Chess-API mate scores
- *    are now correctly converted from side-to-move perspective to White's perspective
- *  - Fixed Lichess active color detection when board is flipped (playing as Black)
- *  - Fixed move classification for Black players (prevEval/currEval perspective mismatch)
- *  - Enhanced Chess.com active color fallback (checks move list when clocks aren't active)
- *  - All scores are now guaranteed to be from White's perspective (positive = White winning)
- *
- * v5.2.0 enhancements:
- *  - Cloud-only mode: no local engine dependency
- *  - Three cloud API sources: Lichess Cloud Eval, Chess-API.com, Stockfish.online
- *  - Playing styles: Normal, Aggressive Attacking, Super Aggressive Attacking
- *  - Style-aware move ranking (styles actually change which move is recommended)
- *  - Aggressive styles boost attacking moves, sacrifice detection, king hunt moves
- *  - Super Aggressive prioritizes direct attacks, sacrifices, and forcing sequences
- *  - Side-specific hints: Black player gets Black-piece hints, White gets White-piece hints
- *  - Cloud API response normalization (Lichess Cloud Eval, Chess-API, Stockfish.online, Tablebase)
- *  - Opening Explorer data integration (win rates, master games)
- *  - Tablebase perfect play integration
- *  - From-to square notation ("e2 to e4") with side-aware labels
- *  - Opening repertoire recommendations
- *  - Winning plan generation
- *  - Enhanced refresh: clears cache + circuit breakers for forced re-analysis
+ * Candidate selection is mate-safe, evaluation-budgeted, stateless, and based
+ * on before/after board features plus the supplied principal variation.
  */
 
 (function () {
@@ -146,219 +30,63 @@
   // ─── Playing Styles (v7.3 — 6 styles, incl. Berserker from v7.3) ──
   const PLAYING_STYLES = {
     normal: {
+      id: 'normal',
       name: 'Normal',
-      desc: 'Best overall move — balanced between attack and defense',
-      evalWeight: 1.0,
-      attackBonus: 0,
-      defenseWeight: 1.0,
-      sacrificeTolerance: 0,     // How much eval to sacrifice for an attack (in cp)
-      kingHuntBonus: 0,         // Bonus for moves approaching opponent's king
-      forcingBonus: 0,          // Bonus for checks and captures
-      pawnStormBonus: 0,        // Bonus for pawn pushes toward opponent king
-      exchangeSacrificeBonus: 0,// Bonus for R-for-minor sacrifices
-      prophylacticBonus: 0,     // Bonus for moves that restrict opponent
-      kingZonePressure: 0,      // Amplification of opponent king danger
-      outpostBonus: 0,          // Bonus for knight/bishop on outposts
-      // Anti-detection settings
-      antiDetect: false,        // Whether anti-detection is active
-      moveDiversity: 0,         // Probability of picking 2nd/3rd best move (0.0-1.0)
-      evalNoise: 0,             // Max evaluation noise to inject (cp)
-      sourceRotation: false,    // Whether to rotate API sources
-      // v7.1 Kamikaze-specific (zero for non-kamikaze styles)
-      queenSacrificeBonus: 0,
-      mateSeekerBonus: 0,
-      initiativeBonus: 0,
-      backRankThreatBonus: 0,
-      pieceSacNearKingBonus: 0,
-      // v7.3 Berserker-exclusive (zero for non-berserker styles)
-      attackUnitBonus: 0,
-      practicalChancesBonus: 0,
-      complexityBonus: 0,
-      greekGiftBonus: 0,
-      drawContempt: 0,
-      sacrificeCascadeBonus: 0,
-      tempoBonus: 0,
-      overloadExploitBonus: 0,
-      phaseAggressionScale: 0
+      desc: 'Objective best play with reliable conversion and resilient defense.',
+      riskBudget: { winning: 15, equal: 20, worse: 30 },
+      sacrificeTolerance: 0,
+      kingHuntBonus: 0,
+      diversity: 0,
+      weights: {}
     },
     aggressive: {
-      name: 'Aggressive Attacking',
-      desc: 'Prefers attacking moves, sacrifices, and king hunts — plays for initiative',
-      evalWeight: 0.88,
-      attackBonus: 35,
-      defenseWeight: 0.7,
-      sacrificeTolerance: 40,    // Will sacrifice up to 0.4 pawns for attack
-      kingHuntBonus: 25,        // Bonus for moves approaching opponent's king
-      forcingBonus: 15,         // Bonus for checks and captures
-      pawnStormBonus: 0,
-      exchangeSacrificeBonus: 0,
-      prophylacticBonus: 0,
-      kingZonePressure: 0,
-      outpostBonus: 0,
-      antiDetect: false,
-      moveDiversity: 0,
-      evalNoise: 0,
-      sourceRotation: false,
-      queenSacrificeBonus: 0,
-      mateSeekerBonus: 0,
-      initiativeBonus: 0,
-      backRankThreatBonus: 0,
-      pieceSacNearKingBonus: 0,
-      attackUnitBonus: 0,
-      practicalChancesBonus: 0,
-      complexityBonus: 0,
-      greekGiftBonus: 0,
-      drawContempt: 0,
-      sacrificeCascadeBonus: 0,
-      tempoBonus: 0,
-      overloadExploitBonus: 0,
-      phaseAggressionScale: 0
+      id: 'aggressive',
+      name: 'Aggressive',
+      desc: 'Win as quickly as possible through sound forcing play, initiative, and king pressure.',
+      riskBudget: { winning: 35, equal: 85, worse: 140 },
+      sacrificeTolerance: 90,
+      kingHuntBonus: 55,
+      diversity: 0,
+      weights: {
+        check: 75,
+        forcingPly: 24,
+        kingPressure: 22,
+        defenderRemoval: 28,
+        tempo: 26,
+        development: 16,
+        openKingFile: 30,
+        sustainedAttack: 38,
+        soundSacrifice: 45,
+        speculativeSacrifice: -55,
+        simplification: -12,
+        ownKingDanger: -32,
+        unsupportedAttack: -30
+      }
     },
-    super_aggressive: {
-      name: 'Super Aggressive',
-      desc: 'Maximum aggression — sacrifices, direct attacks, forcing sequences. High risk, high reward!',
-      evalWeight: 0.75,
-      attackBonus: 60,
-      defenseWeight: 0.5,
-      sacrificeTolerance: 80,    // Will sacrifice up to 0.8 pawns for attack
-      kingHuntBonus: 45,        // Big bonus for moves approaching opponent's king
-      forcingBonus: 30,         // Big bonus for checks and captures
-      pawnStormBonus: 0,
-      exchangeSacrificeBonus: 0,
-      prophylacticBonus: 0,
-      kingZonePressure: 0,
-      outpostBonus: 0,
-      antiDetect: false,
-      moveDiversity: 0,
-      evalNoise: 0,
-      sourceRotation: false,
-      queenSacrificeBonus: 0,
-      mateSeekerBonus: 0,
-      initiativeBonus: 0,
-      backRankThreatBonus: 0,
-      pieceSacNearKingBonus: 0,
-      attackUnitBonus: 0,
-      practicalChancesBonus: 0,
-      complexityBonus: 0,
-      greekGiftBonus: 0,
-      drawContempt: 0,
-      sacrificeCascadeBonus: 0,
-      tempoBonus: 0,
-      overloadExploitBonus: 0,
-      phaseAggressionScale: 0
-    },
-    ultra_aggressive_stealth: {
-      name: 'Ultra Aggressive Stealth',
-      desc: 'Fierce Tal/Kasparov-style attacks with anti-detection diversification. Different moves from standard Stockfish, still devastating!',
-      evalWeight: 0.60,         // Significantly reduce eval weight — allow bigger sacrifices
-      attackBonus: 90,          // Massive attack bonus
-      defenseWeight: 0.35,      // Almost ignore defense
-      sacrificeTolerance: 130,  // Will sacrifice up to 1.3 pawns for attack
-      kingHuntBonus: 65,        // Huge bonus for moves approaching opponent's king
-      forcingBonus: 45,         // Very big bonus for checks and captures
-      pawnStormBonus: 35,       // Strong bonus for pawn pushes toward opponent king
-      exchangeSacrificeBonus: 25,// Strong bonus for R-for-minor sacrifices (Rxc3!)
-      prophylacticBonus: 15,    // Bonus for moves that restrict opponent's plans
-      kingZonePressure: 1.8,    // Multiply opponent's king danger by 1.8x
-      outpostBonus: 20,         // Strong bonus for knight/bishop on outposts
-      // Anti-detection: makes move choices look more human and less "Stockfish"
-      antiDetect: true,
-      moveDiversity: 0.25,      // 25% chance of picking 2nd/3rd best move in non-critical positions
-      evalNoise: 8,             // Add +/-8cp noise to displayed evaluation
-      sourceRotation: true,     // Rotate between API sources for diversity
-      // Kamikaze-specific (not used by ultra aggressive)
-      queenSacrificeBonus: 0,
-      mateSeekerBonus: 0,
-      initiativeBonus: 0,
-      backRankThreatBonus: 0,
-      pieceSacNearKingBonus: 0,
-      // Berserker-specific (not used by ultra aggressive)
-      attackUnitBonus: 0,
-      practicalChancesBonus: 0,
-      complexityBonus: 0,
-      greekGiftBonus: 0,
-      drawContempt: 0,
-      sacrificeCascadeBonus: 0,
-      tempoBonus: 0,
-      overloadExploitBonus: 0,
-      phaseAggressionScale: 0
-    },
-    kamikaze: {
-      name: 'Kamikaze',
-      desc: 'ALL-IN ATTACK! Sacrifice everything for checkmate. No defense, no mercy — pure destruction. Pieces are expendable, the king must die!',
-      evalWeight: 0.38,          // Extremely low — sacrifice is always on the table
-      attackBonus: 150,          // Insane attack bonus — always attack
-      defenseWeight: 0.08,       // Defense is a four-letter word — almost zero
-      sacrificeTolerance: 250,   // Will sacrifice up to 2.5 pawns for an attack!
-      kingHuntBonus: 110,        // If the king is nearby, GO THERE
-      forcingBonus: 80,          // Checks and captures are king
-      pawnStormBonus: 65,        // Pawn storms are devastating — use them
-      exchangeSacrificeBonus: 55,// Exchange sacs near king? YES.
-      prophylacticBonus: 3,      // Almost zero — attack, don't prevent
-      kingZonePressure: 3.5,     // MASSIVE — 3.5x king zone pressure amplification
-      outpostBonus: 35,          // Strong outpost bonus for attacking pieces
-      // No stealth — this is pure, open aggression
-      antiDetect: false,         // No hiding — this style OWNS its aggression
-      moveDiversity: 0,          // Always pick the most aggressive move
-      evalNoise: 0,              // No noise — pure calculated destruction
-      sourceRotation: false,     // No rotation — focus on attack
-      // Kamikaze-exclusive parameters — these go BEYOND ultra aggressive
-      queenSacrificeBonus: 70,   // Sacrificing the queen for attack? MASSIVE BONUS
-      mateSeekerBonus: 60,       // Bonus for moves leading toward mate patterns
-      initiativeBonus: 40,       // Bonus for moves that seize initiative (checks, threats)
-      backRankThreatBonus: 35,   // Bonus for moves creating back rank mate threats
-      pieceSacNearKingBonus: 50, // Bonus for sacrificing ANY piece near opponent's king
-      // Berserker-specific (not used by kamikaze)
-      attackUnitBonus: 0,
-      practicalChancesBonus: 0,
-      complexityBonus: 0,
-      greekGiftBonus: 0,
-      drawContempt: 0,
-      sacrificeCascadeBonus: 0,
-      tempoBonus: 0,
-      overloadExploitBonus: 0,
-      phaseAggressionScale: 0
-    },
-    berserker: {
-      name: 'Berserker',
-      desc: 'Maximum destruction! Inspired by Patricia & AlphaZero — sacrifices pieces for chaos, seeks mate through overwhelming attack. Plays NOTHING like Stockfish — pure berserker rage on the board!',
-      evalWeight: 0.20,          // Almost ignore engine eval — aggression is king
-      attackBonus: 220,          // UNPRECEDENTED — always attack, no exceptions
-      defenseWeight: 0.02,       // Literally zero — defense is surrender
-      sacrificeTolerance: 400,   // Will sacrifice up to 4.0 pawns — queen+pawn is on the table
-      kingHuntBonus: 160,        // If you can see the king, CHARGE
-      forcingBonus: 120,         // Checks and captures are the only moves worth playing
-      pawnStormBonus: 95,        // Pawn storms are weapons of mass destruction
-      exchangeSacrificeBonus: 85,// Exchange sacs near king — ALWAYS YES
-      prophylacticBonus: 0,      // ZERO — prophylaxis is for cowards
-      kingZonePressure: 5.5,     // ASTRONOMICAL — 5.5x king zone pressure
-      outpostBonus: 50,          // Outposts are attack launch pads
-      // No stealth, no hiding — pure berserker rage
-      antiDetect: false,
-      moveDiversity: 0,          // Always pick the most berserker move
-      evalNoise: 0,              // No noise — pure calculated rage
-      sourceRotation: false,     // No rotation — focused destruction
-      // Kamikaze-level parameters (INCREASED from Kamikaze)
-      queenSacrificeBonus: 120,  // Queen sacrifice near king? ABSOLUTE MAXIMUM
-      mateSeekerBonus: 100,      // Mate is the only acceptable outcome
-      initiativeBonus: 75,       // Seize initiative at ALL costs
-      backRankThreatBonus: 65,   // Back rank mate threats are premium targets
-      pieceSacNearKingBonus: 90, // ANY piece sacrifice near king is rewarded
-      // ═══════════════════════════════════════════════════════════════
-      // v7.3: BERSERKER-EXCLUSIVE PARAMETERS — goes beyond Kamikaze
-      // These make Berserker play FUNDAMENTALLY differently from both
-      // Stockfish AND Kamikaze. Inspired by Patricia engine (EAS 750K),
-      // AlphaZero's positional sacrifices, and CSTal's speculative eval.
-      // ═══════════════════════════════════════════════════════════════
-      attackUnitBonus: 80,       // Stockfish-inspired S-curve attack unit system
-      practicalChancesBonus: 55, // Score moves that create max opponent difficulty
-      complexityBonus: 45,       // Boost moves increasing position complexity
-      greekGiftBonus: 100,       // Detect Bxh7+/Bxh2+ sacrifice patterns
-      drawContempt: 50,          // Penalize draws — BERSERKER NEVER DRAWS
-      sacrificeCascadeBonus: 70, // Bonus for consecutive sacrifices (Tal-style)
-      tempoBonus: 40,            // Reward development WITH threats
-      overloadExploitBonus: 60,  // Exploit overloaded defending pieces
-      phaseAggressionScale: 1.5  // Phase-aware aggression scaling multiplier
+    super_ultra_aggressive: {
+      id: 'super_ultra_aggressive',
+      name: 'Super Ultra Aggressive',
+      desc: 'Kamikaze-level pressure: validated sacrifices, mating nets, and maximum practical complications.',
+      riskBudget: { winning: 80, equal: 190, worse: 360 },
+      sacrificeTolerance: 360,
+      kingHuntBonus: 130,
+      diversity: 0.16,
+      weights: {
+        check: 125,
+        forcingPly: 38,
+        kingPressure: 38,
+        defenderRemoval: 48,
+        tempo: 34,
+        development: 20,
+        openKingFile: 58,
+        sustainedAttack: 75,
+        soundSacrifice: 145,
+        speculativeSacrifice: 42,
+        complexity: 28,
+        simplification: -35,
+        ownKingDanger: -24,
+        unsupportedAttack: -45
+      }
     }
   };
 
@@ -518,6 +246,12 @@
     if (from === 'a1') castling = castling.replace(/Q/g, '');
     if (from === 'h8') castling = castling.replace(/k/g, '');
     if (from === 'a8') castling = castling.replace(/q/g, '');
+    // Capturing a rook on its original square also permanently removes that right.
+    const capturedOnTarget = board[squareToCoords(to).row][squareToCoords(to).col];
+    if (capturedOnTarget === 'R' && to === 'h1') castling = castling.replace(/K/g, '');
+    if (capturedOnTarget === 'R' && to === 'a1') castling = castling.replace(/Q/g, '');
+    if (capturedOnTarget === 'r' && to === 'h8') castling = castling.replace(/k/g, '');
+    if (capturedOnTarget === 'r' && to === 'a8') castling = castling.replace(/q/g, '');
     if (!castling) castling = '-';
 
     // Update en passant square
@@ -561,12 +295,12 @@
     const isEnPassant = pieceType === 'p' && from[0] !== to[0] && targetPiece === null;
     const isCapture = targetPiece !== null || isEnPassant;
 
-    // Castling
+    // Castling still needs a check/checkmate suffix (for example O-O+).
     if (pieceType === 'k') {
-      if (from === 'e1' && to === 'g1') return 'O-O';
-      if (from === 'e1' && to === 'c1') return 'O-O-O';
-      if (from === 'e8' && to === 'g8') return 'O-O';
-      if (from === 'e8' && to === 'c8') return 'O-O-O';
+      let castle = null;
+      if ((from === 'e1' && to === 'g1') || (from === 'e8' && to === 'g8')) castle = 'O-O';
+      if ((from === 'e1' && to === 'c1') || (from === 'e8' && to === 'c8')) castle = 'O-O-O';
+      if (castle) return castle + computeCheckOrMateSuffix(uci, fen);
     }
 
     let san = '';
@@ -577,7 +311,9 @@
       const sameType = findPiecesOfType(board, piece, piece === piece.toUpperCase());
       const ambiguous = sameType.filter(sq => {
         if (sq === from) return false;
-        return canPieceReachSquare(board, sq, to, pieceType, piece === piece.toUpperCase());
+        const isWhitePiece = piece === piece.toUpperCase();
+        return canPieceReachSquare(board, sq, to, pieceType, isWhitePiece) &&
+          moveLeavesOwnKingSafe(board, sq, to, isWhitePiece);
       });
       if (ambiguous.length > 0) {
         const fromCol = from[0], fromRow = from[1];
@@ -696,6 +432,21 @@
     return false;
   }
 
+  function moveLeavesOwnKingSafe(board, fromSq, toSq, isWhite) {
+    const target = getPieceAt(board, toSq);
+    // Kings are never captured in legal chess; checkmate is no legal escape.
+    if (target && target.toLowerCase() === 'k') return false;
+    const newBoard = applyMoveToBoard(board, fromSq + toSq);
+    const kingChar = isWhite ? 'K' : 'k';
+    let kingPos = null;
+    for (let r = 0; r < 8 && !kingPos; r++) {
+      for (let c = 0; c < 8 && !kingPos; c++) {
+        if (newBoard[r][c] === kingChar) kingPos = { row: r, col: c };
+      }
+    }
+    return Boolean(kingPos) && !isSquareAttacked(newBoard, kingPos, isWhite ? 'b' : 'w');
+  }
+
   function hasAnyLegalMove(board, color) {
     const isWhite = color === 'w';
     for (let r = 0; r < 8; r++) {
@@ -737,17 +488,7 @@
             // Simulate the move and check if own king is left in check.
             const fromSq = squareName(r, c);
             const toSq = squareName(tr, tc);
-            const uci = fromSq + toSq;
-            const newBoard = applyMoveToBoard(board, uci);
-            const kingChar = isWhite ? 'K' : 'k';
-            let kingPos = null;
-            for (let kr = 0; kr < 8 && !kingPos; kr++) {
-              for (let kc = 0; kc < 8 && !kingPos; kc++) {
-                if (newBoard[kr][kc] === kingChar) kingPos = { row: kr, col: kc };
-              }
-            }
-            if (!kingPos) continue;
-            if (!isSquareAttacked(newBoard, kingPos, isWhite ? 'b' : 'w')) return true;
+            if (moveLeavesOwnKingSafe(board, fromSq, toSq, isWhite)) return true;
           }
         }
       }
@@ -951,1241 +692,382 @@
     if (!fen || typeof fen !== 'string') return 'opening';
     const parts = fen.split(' ');
     const board = parseFENPlacement(parts[0]);
-    let total = 0, queens = 0, rooks = 0, minors = 0;
-    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
-      const p = board[r][c];
-      if (!p || p.toLowerCase() === 'k' || p.toLowerCase() === 'p') continue;
-      total++;
-      if (p.toLowerCase() === 'q') queens++;
-      else if (p.toLowerCase() === 'r') rooks++;
-      else if (p.toLowerCase() === 'n' || p.toLowerCase() === 'b') minors++;
+    const fullmove = parseInt(parts[5], 10) || 1;
+    let phaseMaterial = 0, queens = 0, pawns = 0, undevelopedMinors = 0;
+    for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
+      const piece = board[row][col];
+      if (!piece) continue;
+      const type = piece.toLowerCase();
+      if (type === 'p') pawns++;
+      if (type === 'q') { queens++; phaseMaterial += 4; }
+      if (type === 'r') phaseMaterial += 2;
+      if (type === 'n' || type === 'b') {
+        phaseMaterial += 1;
+        const white = piece === piece.toUpperCase();
+        if (row === (white ? 7 : 0)) undevelopedMinors++;
+      }
     }
-    if (queens === 0 && rooks <= 2 && minors <= 2) return 'endgame';
-    if (total > 8 || queens >= 2) return 'opening';
+    if (phaseMaterial <= 8 || (queens === 0 && phaseMaterial <= 12) || pawns <= 6) return 'endgame';
+    if (fullmove <= 10 && undevelopedMinors >= 2 && phaseMaterial >= 18) return 'opening';
     return 'middlegame';
   }
 
   // ─── Winning Plan Generation ───────────────────────────────────────
   function generateWinningPlan(evalScore, scoreType, position, playerColor, fen, style) {
     const currentStyle = PLAYING_STYLES[style] || PLAYING_STYLES.normal;
-
     if (scoreType === 'mate') {
-      if (evalScore > 0) return `Force checkmate in ${evalScore} move${evalScore > 1 ? 's' : ''}!`;
-      return `Defend against mate in ${Math.abs(evalScore)}!`;
+      if (evalScore > 0) return `Force checkmate in ${Math.abs(evalScore)} move${Math.abs(evalScore) !== 1 ? 's' : ''}!`;
+      return `Stop the forced mate — use every check, tempo, and escape square available.`;
     }
 
     const phase = detectGamePhase(fen);
-    const plans = [];
-
-    // Style-specific plan adjustments
-    if (currentStyle.attackBonus > 200) {
-      // Berserker (v7.3 — intelligent insanity, Patricia/AlphaZero inspired)
-      if (evalScore > 100) plans.push('ANNIHILATE! Multiple pieces attacking — cascade sacrifices until the king falls!');
-      else if (evalScore > 0) plans.push('BERSERKER RAGE! Throw pieces at the king — create chaos, exploit every weakness!');
-      else if (evalScore > -150) plans.push('No retreat! Counter-attack like a berserker — the only defense is OVERWHELMING AGGRESSION!');
-      else plans.push('RAGE MODE! Even losing — ATTACK! Create maximum chaos, force errors, NEVER surrender!');
-    } else if (currentStyle.attackBonus > 120) {
-      // Kamikaze (v7.1 — all-out attack, sacrifice everything)
-      if (evalScore > 50) plans.push('OBLITERATE! Throw everything at the king — sacrifice the queen if it leads to mate!');
-      else if (evalScore > -50) plans.push('ALL-IN ATTACK! Open lines, sacrifice pieces, storm the king — no retreat!');
-      else if (evalScore > -200) plans.push('Counter-attack like a maniac! The only defense is TOTAL AGGRESSION — sac and attack!');
-      else plans.push('Go down swinging! Throw pieces at the king — create chaos, look for mating traps!');
-    } else if (currentStyle.attackBonus > 80) {
-      // Ultra Aggressive Stealth (v6.2 — from v7.0)
-      if (evalScore > 50) plans.push('Storm the king! Sacrifice if needed — calculate the killing blow!');
-      else if (evalScore > -100) plans.push('Create maximum pressure! Open lines, push pawns, force concessions!');
-      else plans.push('Counter-attack with everything! The best defense is overwhelming aggression!');
-    } else if (currentStyle.attackBonus > 40) {
-      // Super Aggressive
-      if (evalScore > 50) plans.push('Attack! Sacrifice if needed — go for the kill!');
-      else if (evalScore > -100) plans.push('Create threats! Attack the king directly — force the issue!');
-      else plans.push('Counter-attack! The best defense is a fierce counter-attack!');
-    } else if (currentStyle.attackBonus > 0) {
-      // Aggressive
-      if (evalScore > 50) plans.push('Press the attack — look for tactical combinations and king hunts');
-      else if (evalScore > -100) plans.push('Find active play — attack where possible, seize the initiative');
-      else plans.push('Counter-attack! Look for tactical tricks and active defense');
-    } else {
-      // Normal
-      if (evalScore > 300) {
-        if (position.material.balance !== 0) {
-          const sign = (playerColor === 'w' && position.material.balance > 0) || (playerColor !== 'w' && position.material.balance < 0);
-          if (sign) plans.push('Trade pieces to convert your material advantage');
-        }
-        plans.push(phase === 'endgame' ? 'Activate your king and push passed pawns' : 'Simplify the position — trade pieces, not pawns');
-      } else if (evalScore > 100) {
-        const myPassedPawns = playerColor === 'w' ? position.pawnStructure.whitePassedPawns : position.pawnStructure.blackPassedPawns;
-        if (myPassedPawns > 0) plans.push('Advance your passed pawn(s) with piece support');
-        const oppKingIssues = position.kingSafety.issues.filter(i => i.color !== playerColor && i.severity === 'high');
-        if (oppKingIssues.length > 0) plans.push('Attack the weakened enemy king');
-        if (plans.length === 0) plans.push('Increase pressure — find small improvements');
-      } else if (evalScore > -100) {
-        plans.push('Equal position — look for active piece play and small edges');
-      } else if (evalScore > -300) {
-        plans.push('Stay solid — defend carefully and look for counterplay');
-      } else {
-        plans.push('Defend stubbornly — look for tactical tricks and simplification');
-      }
+    if (currentStyle.id === 'aggressive') {
+      if (evalScore > 150) return 'Convert fast: keep the initiative, force concessions, and choose the shortest sound route to the king or material gain.';
+      if (evalScore > -80) return 'Seize the initiative now: improve attackers with tempo and force the opponent to react.';
+      return 'Create active counterplay immediately — checks, threats, and tempo are more valuable than passive defense.';
+    }
+    if (currentStyle.id === 'super_ultra_aggressive') {
+      if (evalScore > 100) return 'Accelerate the win: open the king, reject sterile simplification, and calculate every forcing sacrifice.';
+      if (evalScore > -100) return 'Create maximum concrete chaos: expose the king, open lines, and accept material risk for sustained forcing play.';
+      return 'Fight through complications: seek checks, asymmetric material, and validated sacrifices that maximize practical resistance.';
     }
 
-    return plans[0] || 'Find the best move in this position';
+    if (evalScore > 300) {
+      const balance = playerColor === 'w' ? position.material.balance : -position.material.balance;
+      if (balance > 0) return 'Convert reliably: trade pieces, preserve pawns, and remove counterplay.';
+      return phase === 'endgame' ? 'Activate your king and advance passed pawns.' : 'Consolidate the advantage before beginning the final attack.';
+    }
+    if (evalScore > 100) return 'Improve the least active piece and increase pressure without allowing counterplay.';
+    if (evalScore > -100) return 'Maintain flexibility, improve piece activity, and play against the clearest weakness.';
+    if (evalScore > -300) return 'Defend actively and create counterplay rather than waiting passively.';
+    return 'Maximize resistance: preserve material, seek tactical resources, and simplify only when it improves survival chances.';
   }
 
-  // ─── Style-Aware Move Scoring ──────────────────────────────────────
-  // Applies style bonuses to a candidate move's effective score.
-  // This allows aggressive styles to prefer attacking moves even if
-  // they're slightly worse in raw eval.
+  // ─── Candidate analysis and style scoring ─────────────────────────
+  // Retained as a compatibility hook; the rebuilt scorer is intentionally stateless.
+  function resetSacrificeHistory() {}
 
-  // v7.3: Sacrifice cascade tracking state.
-  // v8.5.0: Exposed a resetSacrificeHistory() so the side panel can clear
-  //         it on new-game detection (previously it accumulated forever).
-  const sacrificeHistory = { lastMoveWasSac: false, consecutiveSacs: 0 };
-  function resetSacrificeHistory() {
-    sacrificeHistory.lastMoveWasSac = false;
-    sacrificeHistory.consecutiveSacs = 0;
+  // Style scoring is pure: hypothetical candidates never mutate game history.
+  function findKing(board, isWhite) {
+    const symbol = isWhite ? 'K' : 'k';
+    for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
+      if (board[row][col] === symbol) return { row, col };
+    }
+    return null;
   }
 
-  // v7.3: Attack Unit System — Stockfish-inspired king attack quantification
-  // Counts attack units targeting opponent's king zone:
-  // Minor (N/B) = 2, Rook = 3, Queen = 5
-  function countAttackUnits(board, isWhite, oppKingPos) {
-    let units = 0;
-    if (!oppKingPos) return 0;
-    // King zone: 3x3 area around king + 3 squares forward toward our side
-    const forward = isWhite ? 1 : -1; // forward from opponent's perspective
-    const kingZone = [];
-    for (let dr = -1; dr <= 1; dr++) {
-      for (let dc = -1; dc <= 1; dc++) {
-        kingZone.push({ row: oppKingPos.row + dr, col: oppKingPos.col + dc });
-      }
+  function materialForSide(board, isWhite) {
+    let value = 0;
+    for (const row of board) for (const piece of row) {
+      if (piece && (piece === piece.toUpperCase()) === isWhite) value += (PIECE_VALUES[piece.toLowerCase()] || 0) * 100;
     }
-    // Add 3 forward squares (toward center, from opponent's POV)
-    for (let dc = -1; dc <= 1; dc++) {
-      kingZone.push({ row: oppKingPos.row + forward, col: oppKingPos.col + dc });
-    }
+    return value;
+  }
 
-    for (let r = 0; r < 8; r++) {
-      for (let c = 0; c < 8; c++) {
-        const piece = board[r][c];
-        if (!piece) continue;
-        const isPlayerPiece = isWhite ? (piece === piece.toUpperCase()) : (piece === piece.toLowerCase());
-        if (!isPlayerPiece) continue;
-        const type = piece.toLowerCase();
-        if (type === 'k' || type === 'p') continue;
+  function pieceAttacksSquare(board, row, col, targetRow, targetCol) {
+    const piece = board[row]?.[col];
+    if (!piece || (row === targetRow && col === targetCol)) return false;
+    const type = piece.toLowerCase();
+    const isWhite = piece === piece.toUpperCase();
+    const dr = targetRow - row, dc = targetCol - col;
+    if (type === 'p') return dr === (isWhite ? -1 : 1) && Math.abs(dc) === 1;
+    if (type === 'n') return (Math.abs(dr) === 2 && Math.abs(dc) === 1) || (Math.abs(dr) === 1 && Math.abs(dc) === 2);
+    if (type === 'k') return Math.max(Math.abs(dr), Math.abs(dc)) === 1;
+    if (type === 'b' && Math.abs(dr) === Math.abs(dc)) return isPathClear(board, row, col, targetRow, targetCol);
+    if (type === 'r' && (dr === 0 || dc === 0)) return isPathClear(board, row, col, targetRow, targetCol);
+    if (type === 'q' && (dr === 0 || dc === 0 || Math.abs(dr) === Math.abs(dc))) return isPathClear(board, row, col, targetRow, targetCol);
+    return false;
+  }
 
-        // Check if this piece attacks any square in the king zone
-        let attacksZone = false;
-        if (type === 'n') {
-          const knightJumps = [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
-          for (const [dr, dc] of knightJumps) {
-            const tr = r + dr, tc = c + dc;
-            if (kingZone.some(s => s.row === tr && s.col === tc)) { attacksZone = true; break; }
-          }
-        } else if (type === 'b') {
-          for (const [dr, dc] of [[-1,-1],[-1,1],[1,-1],[1,1]]) {
-            let nr = r + dr, nc = c + dc;
-            while (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-              if (kingZone.some(s => s.row === nr && s.col === nc)) { attacksZone = true; break; }
-              if (board[nr][nc]) break;
-              nr += dr; nc += dc;
-            }
-            if (attacksZone) break;
-          }
-        } else if (type === 'r') {
-          for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1]]) {
-            let nr = r + dr, nc = c + dc;
-            while (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-              if (kingZone.some(s => s.row === nr && s.col === nc)) { attacksZone = true; break; }
-              if (board[nr][nc]) break;
-              nr += dr; nc += dc;
-            }
-            if (attacksZone) break;
-          }
-        } else if (type === 'q') {
-          for (const [dr, dc] of [[-1,-1],[-1,1],[1,-1],[1,1],[-1,0],[1,0],[0,-1],[0,1]]) {
-            let nr = r + dr, nc = c + dc;
-            while (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-              if (kingZone.some(s => s.row === nr && s.col === nc)) { attacksZone = true; break; }
-              if (board[nr][nc]) break;
-              nr += dr; nc += dc;
-            }
-            if (attacksZone) break;
-          }
-        }
-
-        if (attacksZone) {
-          if (type === 'n' || type === 'b') units += 2;
-          else if (type === 'r') units += 3;
-          else if (type === 'q') units += 5;
+  function kingZonePressure(board, attackerIsWhite, kingPos) {
+    if (!kingPos) return { attackers: 0, pressure: 0, attackedSquares: 0 };
+    const attackingPieces = new Set();
+    const attackedZone = new Set();
+    for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
+      const piece = board[row][col];
+      if (!piece || (piece === piece.toUpperCase()) !== attackerIsWhite) continue;
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+        const tr = kingPos.row + dr, tc = kingPos.col + dc;
+        if (tr < 0 || tr > 7 || tc < 0 || tc > 7) continue;
+        if (pieceAttacksSquare(board, row, col, tr, tc)) {
+          attackingPieces.add(`${row},${col}`);
+          attackedZone.add(`${tr},${tc}`);
         }
       }
     }
-    return units;
+    let pressure = 0;
+    for (const key of attackingPieces) {
+      const [row, col] = key.split(',').map(Number);
+      pressure += ({ p: 1, n: 2, b: 2, r: 3, q: 5, k: 1 })[board[row][col].toLowerCase()] || 0;
+    }
+    return { attackers: attackingPieces.size, pressure, attackedSquares: attackedZone.size };
   }
 
-  // v7.3: Convert attack units to bonus using S-curve
-  // S-curve: slow start (0-2 units = nearly worthless),
-  // rapid middle (3-5 = attack building), steep (6-9 = dangerous),
-  // cap (10+ = overwhelming)
-  function attackUnitsToBonus(units, attackUnitBonus) {
-    if (units <= 2) return 0;  // Not enough attackers
-    if (units <= 5) return attackUnitBonus * 0.25 * (units - 2) / 3;
-    if (units <= 9) return attackUnitBonus * 0.25 + attackUnitBonus * 0.45 * (units - 5) / 4;
-    return attackUnitBonus * 0.7 + attackUnitBonus * 0.3 * Math.min((units - 9) / 4, 1);
-  }
-
-  // v7.3: Count player pieces in a zone around a position
-  function countPiecesInZone(board, isWhite, centerPos, radius) {
+  function countPieces(board) {
     let count = 0;
-    if (!centerPos) return 0;
-    for (let r = Math.max(0, centerPos.row - radius); r <= Math.min(7, centerPos.row + radius); r++) {
-      for (let c = Math.max(0, centerPos.col - radius); c <= Math.min(7, centerPos.col + radius); c++) {
-        const p = board[r][c];
-        if (!p) continue;
-        const isPlayerPiece = isWhite ? (p === p.toUpperCase()) : (p === p.toLowerCase());
-        if (isPlayerPiece && p.toLowerCase() !== 'k' && p.toLowerCase() !== 'p') count++;
-      }
-    }
+    for (const row of board) for (const piece of row) if (piece) count++;
     return count;
   }
 
-  // v7.3: Draw contempt — penalize drawish positions
-  // Berserker NEVER wants to draw. Penalize moves that lead to equal positions
-  // and reward moves that push the position away from draw territory.
-  function applyDrawContempt(rawScore, drawContempt) {
-    if (Math.abs(rawScore) < 50) {
-      // Near-equal position — apply contempt penalty to encourage risk-taking
-      return -drawContempt;
+  function isDevelopingMove(piece, from) {
+    if (!piece || !['n', 'b'].includes(piece.toLowerCase())) return false;
+    const isWhite = piece === piece.toUpperCase();
+    return squareToCoords(from).row === (isWhite ? 7 : 0);
+  }
+
+  function moveAttacksHighValuePiece(board, to, playerIsWhite) {
+    const pos = squareToCoords(to);
+    for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
+      const target = board[row][col];
+      if (!target || (target === target.toUpperCase()) === playerIsWhite) continue;
+      if (['q', 'r'].includes(target.toLowerCase()) && pieceAttacksSquare(board, pos.row, pos.col, row, col)) return true;
     }
-    if (Math.abs(rawScore) >= 50 && Math.abs(rawScore) < 200) {
-      // Imbalanced position — small bonus for maintaining tension
-      return drawContempt * 0.3;
+    return false;
+  }
+
+  function analyzeCandidate(fen, pv, playerColor, rawScore, scoreType, depth = 0) {
+    const line = Array.isArray(pv) ? pv.filter(Boolean).slice(0, 8) : [];
+    const board = parseFENPlacement((fen || '').split(' ')[0]);
+    const playerIsWhite = playerColor === 'w';
+    const first = line[0] || '';
+    const from = first.slice(0, 2), to = first.slice(2, 4);
+    const piece = first ? getPieceAt(board, from) : null;
+    const captured = first ? getPieceAt(board, to) : null;
+    if (!piece) return { rawScore, scoreType, depth, invalid: true, reasons: [], risks: [] };
+
+    const opponentKingBefore = findKing(board, !playerIsWhite);
+    const ownKingBefore = findKing(board, playerIsWhite);
+    const pressureBefore = kingZonePressure(board, playerIsWhite, opponentKingBefore);
+    const ownDangerBefore = kingZonePressure(board, !playerIsWhite, ownKingBefore);
+    const materialBefore = materialForSide(board, playerIsWhite);
+    const piecesBefore = countPieces(board);
+    const after = applyMoveToBoard(board, first);
+    const opponentKingAfter = findKing(after, !playerIsWhite);
+    const ownKingAfter = findKing(after, playerIsWhite);
+    const pressureAfter = kingZonePressure(after, playerIsWhite, opponentKingAfter);
+    const ownDangerAfter = kingZonePressure(after, !playerIsWhite, ownKingAfter);
+    const givesCheck = opponentKingAfter ? isSquareAttacked(after, opponentKingAfter, playerColor) : false;
+    const destination = squareToCoords(to);
+    const defended = isSquareAttacked(after, destination, playerColor);
+
+    let currentFen = fen;
+    let currentBoard = board;
+    let forcingPly = 0;
+    let playerForcingMoves = 0;
+    let boardAfterReply = after;
+    for (let i = 0; i < line.length; i++) {
+      const move = line[i];
+      const target = getPieceAt(currentBoard, move.slice(2, 4));
+      const movedBoard = applyMoveToBoard(currentBoard, move);
+      const movingColor = (currentFen.split(' ')[1] || 'w');
+      const enemyKing = findKing(movedBoard, movingColor === 'w' ? false : true);
+      const checks = enemyKing ? isSquareAttacked(movedBoard, enemyKing, movingColor) : false;
+      if (checks || target) {
+        forcingPly++;
+        if (movingColor === playerColor) playerForcingMoves++;
+      } else if (i > 0) break;
+      currentBoard = movedBoard;
+      currentFen = applyMoveToFen(currentFen, move);
+      if (i === 1) boardAfterReply = currentBoard;
     }
-    return 0;
+
+    const materialAfterReply = materialForSide(boardAfterReply, playerIsWhite);
+    const materialDelta = materialAfterReply - materialBefore;
+    const movingPieceSurvives = Boolean(getPieceAt(boardAfterReply, to)) &&
+      (getPieceAt(boardAfterReply, to) === getPieceAt(boardAfterReply, to).toUpperCase()) === playerIsWhite;
+    const sacrifice = materialDelta <= -180 && !movingPieceSurvives;
+    const defenderRemoval = captured && opponentKingBefore
+      ? Math.max(Math.abs(destination.row - opponentKingBefore.row), Math.abs(destination.col - opponentKingBefore.col)) <= 2
+      : false;
+    const opensKingFile = opponentKingAfter && ['r', 'q'].includes(piece.toLowerCase()) &&
+      (destination.row === opponentKingAfter.row || destination.col === opponentKingAfter.col) &&
+      pieceAttacksSquare(after, destination.row, destination.col, opponentKingAfter.row, opponentKingAfter.col);
+    const closeToKing = opponentKingAfter
+      ? Math.max(Math.abs(destination.row - opponentKingAfter.row), Math.abs(destination.col - opponentKingAfter.col)) <= 2
+      : false;
+
+    const features = {
+      rawScore, scoreType, depth, first, from, to, piece, captured,
+      givesCheck,
+      winningMate: scoreType === 'mate' && rawScore > 0,
+      losingMate: scoreType === 'mate' && rawScore < 0,
+      forcingPly,
+      playerForcingMoves,
+      kingPressureDelta: (pressureAfter.pressure - pressureBefore.pressure) +
+        (pressureAfter.attackedSquares - pressureBefore.attackedSquares) * 0.5,
+      attackersAfter: pressureAfter.attackers,
+      ownKingDangerDelta: (ownDangerAfter.pressure - ownDangerBefore.pressure) +
+        (ownDangerAfter.attackedSquares - ownDangerBefore.attackedSquares) * 0.5,
+      defenderRemoval,
+      tempo: moveAttacksHighValuePiece(after, to, playerIsWhite),
+      development: isDevelopingMove(piece, from),
+      opensKingFile,
+      sustainedAttack: playerForcingMoves >= 2 || (pressureAfter.attackers >= 3 && pressureAfter.pressure > pressureBefore.pressure),
+      sacrifice,
+      materialDelta,
+      movingPieceSurvives,
+      simplification: piecesBefore - countPieces(boardAfterReply),
+      complexity: Math.max(0, forcingPly - 1) + Math.max(0, pressureAfter.attackers - 1),
+      unsupportedAttack: closeToKing && !defended && !givesCheck,
+      reasons: [], risks: []
+    };
+    return features;
+  }
+
+  function candidateStyleBonus(candidate, style) {
+    const weights = style.weights || {};
+    let bonus = 0;
+    const add = (condition, key, amount, reason) => {
+      if (!condition || !amount) return;
+      bonus += amount;
+      if (amount > 0 && reason) candidate.reasons.push(reason);
+      if (amount < 0 && reason) candidate.risks.push(reason);
+    };
+    add(candidate.givesCheck, 'check', weights.check, 'forces a check');
+    add(candidate.forcingPly > 0, 'forcingPly', weights.forcingPly * Math.min(candidate.forcingPly, 4), `${candidate.forcingPly}-ply forcing sequence`);
+    add(candidate.kingPressureDelta > 0, 'kingPressure', weights.kingPressure * Math.min(candidate.kingPressureDelta, 6), 'increases concrete king pressure');
+    add(candidate.defenderRemoval, 'defenderRemoval', weights.defenderRemoval, 'removes a king defender');
+    add(candidate.tempo, 'tempo', weights.tempo, 'gains tempo on a major piece');
+    add(candidate.development, 'development', weights.development, 'develops with attacking purpose');
+    add(candidate.opensKingFile, 'openKingFile', weights.openKingFile, 'opens a direct line to the king');
+    add(candidate.sustainedAttack, 'sustainedAttack', weights.sustainedAttack, 'keeps the attack forcing');
+    if (candidate.sacrifice) {
+      // Up to one pawn of objective cost is treated as sound compensation;
+      // larger eligible sacrifices are explicitly speculative.
+      const sound = candidate.winningMate || candidate.evalLoss <= 100;
+      add(sound, 'soundSacrifice', weights.soundSacrifice, 'offers material with concrete compensation');
+      add(!sound, 'speculativeSacrifice', weights.speculativeSacrifice, sound ? '' : 'sacrifice has limited objective compensation');
+      candidate.sacrificeSoundness = sound ? 'sound' : 'speculative';
+    }
+    add(candidate.complexity > 0, 'complexity', weights.complexity * Math.min(candidate.complexity, 4), 'creates practical complexity');
+    add(candidate.simplification > 1, 'simplification', weights.simplification * Math.min(candidate.simplification - 1, 3), 'simplifies the attack');
+    add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * Math.min(candidate.ownKingDangerDelta, 5), 'weakens your own king');
+    add(candidate.unsupportedAttack, 'unsupportedAttack', weights.unsupportedAttack, 'attacking piece lacks support');
+    return bonus;
   }
 
   function scoreMoveForStyle(uci, fen, rawScore, scoreType, style, playerColor) {
-    if (!fen || !uci) return rawScore;
-    const currentStyle = PLAYING_STYLES[style] || PLAYING_STYLES.normal;
-    if (currentStyle.attackBonus === 0 && !currentStyle.antiDetect && !currentStyle.queenSacrificeBonus && !currentStyle.attackUnitBonus) return rawScore;
-
-    const parts = fen.split(' ');
-    const board = parseFENPlacement(parts[0]);
-    const from = uci.substring(0, 2);
-    const to = uci.substring(2, 4);
-    const piece = getPieceAt(board, from);
-    const captured = getPieceAt(board, to);
-    if (!piece) return rawScore;
-
-    const isWhite = playerColor === 'w';
-    const pieceType = piece.toLowerCase();
-
-    // CRITICAL: Only score moves that belong to the assisted player.
-    // If the piece on the from-square belongs to the opponent, skip style scoring
-    // to avoid boosting the opponent's moves or misattributing them.
-    const isPieceOwnerPlayer = isWhite ? (piece === piece.toUpperCase()) : (piece === piece.toLowerCase());
-    if (!isPieceOwnerPlayer) return rawScore;
-
-    let bonus = 0;
-
-    // v8.5.0: Cache assessKingSafety(board) — was called 4× per move
-    //         (twice for oppKingPos, twice for ownKingPos) plus more in
-    //         the practical-chances bonus section. For Berserker's 23
-    //         scoring rules this was a significant hot-path cost.
-    const kingSafety = assessKingSafety(board);
-    const oppKingPos = isWhite ? kingSafety.bKingPos : kingSafety.wKingPos;
-    const ownKingPos = isWhite ? kingSafety.wKingPos : kingSafety.bKingPos;
-
-    // 1. Capture bonus — attacking pieces are preferred
-    if (captured) {
-      const capturedVal = PIECE_VALUES[captured.toLowerCase()] || 0;
-      const pieceVal = PIECE_VALUES[pieceType] || 0;
-      // Sacrifice capture (giving up more valuable piece): big aggressive bonus
-      if (pieceVal > capturedVal) {
-        bonus += currentStyle.sacrificeTolerance * 1.5;
-      }
-      // Equal or winning capture: moderate bonus
-      bonus += currentStyle.forcingBonus;
-    }
-
-    // 2. King hunt bonus — moving pieces toward the opponent's king
-    // v8.5.0: oppKingPos/ownKingPos now cached above.
-    if (oppKingPos) {
-      const toCoords = squareToCoords(to);
-      const distToKing = Math.abs(toCoords.row - oppKingPos.row) + Math.abs(toCoords.col - oppKingPos.col);
-      // The closer to the opponent's king, the bigger the bonus
-      if (distToKing <= 3) {
-        bonus += currentStyle.kingHuntBonus * (4 - distToKing) / 3;
-      }
-      // Moving queen toward king is especially aggressive
-      if (pieceType === 'q' && distToKing <= 2) {
-        bonus += currentStyle.kingHuntBonus * 0.5;
-      }
-
-      // v6.2: Pawn storm detection — pawns advancing toward opponent's castled king
-      if (currentStyle.pawnStormBonus > 0 && pieceType === 'p') {
-        const pawnFile = from.charCodeAt(0) - 97;
-        const kingFile = oppKingPos.col;
-        const isNearKingFile = Math.abs(pawnFile - kingFile) <= 1;
-        const isKingCastled = (kingFile >= 5 && kingFile <= 7) || (kingFile >= 0 && kingFile <= 2);
-        const fromRow = squareToCoords(from).row;
-        const toRow = squareToCoords(to).row;
-        const forward = isWhite ? -1 : 1;
-        const isAdvancing = (toRow - fromRow) * forward > 0;
-        if (isNearKingFile && isKingCastled && isAdvancing) {
-          bonus += currentStyle.pawnStormBonus;
-          const distToKingFile = Math.abs(pawnFile - kingFile);
-          if (distToKingFile === 0) bonus += currentStyle.pawnStormBonus * 0.5;
-        }
-      }
-
-      // v6.2: King zone pressure — moves that attack squares around opponent's king
-      if (currentStyle.kingZonePressure > 0) {
-        const toCoords2 = squareToCoords(to);
-        const kingZoneSize = 2;
-        const distToKingZone = Math.max(
-          Math.abs(toCoords2.row - oppKingPos.row),
-          Math.abs(toCoords2.col - oppKingPos.col)
-        );
-        if (distToKingZone <= kingZoneSize) {
-          bonus += currentStyle.kingZonePressure * 8 * (3 - distToKingZone) / 3;
-        }
-      }
-    }
-
-    // 3. Central control bonus for aggressive play
-    if (pieceType === 'n' || pieceType === 'b') {
-      const toCoords = squareToCoords(to);
-      if (toCoords.row >= 2 && toCoords.row <= 5 && toCoords.col >= 2 && toCoords.col <= 5) {
-        bonus += currentStyle.attackBonus * 0.3;
-      }
-
-      // v6.2: Outpost bonus — knight on protected square in opponent's territory
-      if (currentStyle.outpostBonus > 0) {
-        const toCoords2 = squareToCoords(to);
-        const isOpponentTerritory = isWhite
-          ? (toCoords2.row <= 3)
-          : (toCoords2.row >= 4);
-        const ownPawn = isWhite ? 'P' : 'p';
-        const pawnDir = isWhite ? 1 : -1;
-        let isProtectedByPawn = false;
-        for (const dc of [-1, 1]) {
-          const pr = toCoords2.row + pawnDir;
-          const pc = toCoords2.col + dc;
-          if (pr >= 0 && pr < 8 && pc >= 0 && pc < 8 && board[pr][pc] === ownPawn) {
-            isProtectedByPawn = true;
-            break;
-          }
-        }
-        if (isOpponentTerritory && isProtectedByPawn) {
-          bonus += currentStyle.outpostBonus;
-        }
-      }
-    }
-
-    // 4. Forward push bonus — pawns and pieces advancing toward opponent
-    if (pieceType === 'p') {
-      const fromRow = squareToCoords(from).row;
-      const toRow = squareToCoords(to).row;
-      const forward = isWhite ? -1 : 1;
-      if ((toRow - fromRow) * forward > 0) {
-        bonus += currentStyle.attackBonus * 0.2;
-      }
-    }
-
-    // v6.2: 5. Exchange sacrifice detection (Rxf3, Rxc3 patterns)
-    if (currentStyle.exchangeSacrificeBonus > 0 && captured) {
-      const capturedVal = PIECE_VALUES[captured.toLowerCase()] || 0;
-      const pieceVal = PIECE_VALUES[pieceType] || 0;
-      if (pieceType === 'r' && (captured.toLowerCase() === 'n' || captured.toLowerCase() === 'b')) {
-        if (oppKingPos) {
-          const toCoords = squareToCoords(to);
-          const distToKing = Math.abs(toCoords.row - oppKingPos.row) + Math.abs(toCoords.col - oppKingPos.col);
-          if (distToKing <= 4) {
-            bonus += currentStyle.exchangeSacrificeBonus;
-            const kingShieldSquares = [];
-            const fwd = isWhite ? -1 : 1;
-            for (const dc of [-1, 0, 1]) {
-              const sr = oppKingPos.row + fwd;
-              const sc = oppKingPos.col + dc;
-              if (sr >= 0 && sr < 8 && sc >= 0 && sc < 8) {
-                kingShieldSquares.push({ row: sr, col: sc });
-              }
-            }
-            const hitsShield = kingShieldSquares.some(s => s.row === toCoords.row && s.col === toCoords.col);
-            if (hitsShield) {
-              bonus += currentStyle.exchangeSacrificeBonus * 0.8;
-            }
-          }
-        }
-      }
-    }
-
-    // v6.2: 6. Prophylactic bonus — moves that restrict opponent's piece activity
-    if (currentStyle.prophylacticBonus > 0) {
-      const toCoords = squareToCoords(to);
-      let restrictsOpponent = false;
-      if (['n', 'b', 'q', 'r'].includes(pieceType)) {
-        const isAdvanced = isWhite ? (toCoords.row <= 4) : (toCoords.row >= 3);
-        const isCentral = toCoords.row >= 2 && toCoords.row <= 5 && toCoords.col >= 2 && toCoords.col <= 5;
-        if (isAdvanced || isCentral) {
-          for (let r = 0; r < 8; r++) {
-            for (let c = 0; c < 8; c++) {
-              const opp = board[r][c];
-              if (!opp) continue;
-              const isOppPiece = isWhite ? (opp === opp.toLowerCase()) : (opp === opp.toUpperCase());
-              if (!isOppPiece) continue;
-              const dist = Math.abs(r - toCoords.row) + Math.abs(c - toCoords.col);
-              if (dist <= 2 && opp.toLowerCase() !== 'p') {
-                restrictsOpponent = true;
-                break;
-              }
-            }
-            if (restrictsOpponent) break;
-          }
-        }
-      }
-      if (restrictsOpponent) {
-        bonus += currentStyle.prophylacticBonus;
-      }
-    }
-
-    // v6.2: 7. 7th-rank rook bonus — rooks on the 7th rank are extremely aggressive
-    if (currentStyle.attackBonus >= 60 && pieceType === 'r') {
-      const toRow = squareToCoords(to).row;
-      const isSeventhRank = isWhite ? (toRow === 1) : (toRow === 6);
-      if (isSeventhRank) {
-        bonus += currentStyle.attackBonus * 0.25;
-      }
-    }
-
-    // v6.2: 8. Open file toward king — rook moves to file that leads to opponent's king
-    if (currentStyle.pawnStormBonus > 0 && pieceType === 'r' && oppKingPos) {
-      const toCoords = squareToCoords(to);
-      if (toCoords.col === oppKingPos.col) {
-        const ownPawn = isWhite ? 'P' : 'p';
-        let isSemiOpen = true;
-        for (let r = 0; r < 8; r++) {
-          if (board[r][toCoords.col] === ownPawn) { isSemiOpen = false; break; }
-        }
-        if (isSemiOpen) {
-          bonus += currentStyle.pawnStormBonus * 0.6;
-        }
-      }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    // v7.1: KAMIKAZE-EXCLUSIVE SCORING — goes beyond ultra aggressive
-    // These bonuses are what make Kamikaze play COMPLETELY differently
-    // from typical Stockfish. They reward extreme aggression, sacrifice,
-    // and all-out attack over safe, positional play.
-    // ═══════════════════════════════════════════════════════════════════
-
-    // v7.1: 9. Queen sacrifice detection — sacrificing the queen for attack
-    if (currentStyle.queenSacrificeBonus > 0 && captured && pieceType === 'q') {
-      const capturedVal = PIECE_VALUES[captured.toLowerCase()] || 0;
-      // Queen capturing something less valuable = queen sacrifice
-      if (capturedVal < 9) {
-        bonus += currentStyle.queenSacrificeBonus;
-        // If the queen sac is NEAR the opponent's king, extra huge bonus
-        if (oppKingPos) {
-          const toCoords = squareToCoords(to);
-          const distToKing = Math.abs(toCoords.row - oppKingPos.row) + Math.abs(toCoords.col - oppKingPos.col);
-          if (distToKing <= 3) {
-            bonus += currentStyle.queenSacrificeBonus * 0.8;
-          }
-        }
-      }
-    }
-
-    // v7.1: 10. Mate seeker bonus — moves that lead toward checkmate patterns
-    // If the PV line contains a mate score, this move is on the path to checkmate
-    if (currentStyle.mateSeekerBonus > 0 && oppKingPos) {
-      const toCoords = squareToCoords(to);
-      // Direct check pattern: piece moves adjacent to opponent's king
-      // and the destination square attacks the king's square
-      const attacksKingDirectly = (pieceType === 'q' || pieceType === 'r')
-        ? (toCoords.row === oppKingPos.row || toCoords.col === oppKingPos.col ||
-           Math.abs(toCoords.row - oppKingPos.row) === Math.abs(toCoords.col - oppKingPos.col))
-        : (pieceType === 'n' &&
-          ((Math.abs(toCoords.row - oppKingPos.row) === 2 && Math.abs(toCoords.col - oppKingPos.col) === 1) ||
-           (Math.abs(toCoords.row - oppKingPos.row) === 1 && Math.abs(toCoords.col - oppKingPos.col) === 2)));
-
-      if (attacksKingDirectly) {
-        // Count how many of our pieces already attack the king zone
-        let attackersInZone = 0;
-        const kingZoneRadius = 2;
-        for (let r = Math.max(0, oppKingPos.row - kingZoneRadius); r <= Math.min(7, oppKingPos.row + kingZoneRadius); r++) {
-          for (let c = Math.max(0, oppKingPos.col - kingZoneRadius); c <= Math.min(7, oppKingPos.col + kingZoneRadius); c++) {
-            const p = board[r][c];
-            if (!p) continue;
-            const isPlayerPiece = isWhite ? (p === p.toUpperCase()) : (p === p.toLowerCase());
-            if (isPlayerPiece && p.toLowerCase() !== 'k' && p.toLowerCase() !== 'p') {
-              attackersInZone++;
-            }
-          }
-        }
-        // More attackers = bigger mate-seeker bonus (3+ attackers = mating attack)
-        if (attackersInZone >= 2) {
-          bonus += currentStyle.mateSeekerBonus * Math.min(attackersInZone / 3, 1.5);
-        }
-      }
-
-      // Smothered mate pattern detection: knight gives check near cornered king
-      if (pieceType === 'n' && oppKingPos) {
-        const toCoords = squareToCoords(to);
-        const distToKing = Math.max(Math.abs(toCoords.row - oppKingPos.row), Math.abs(toCoords.col - oppKingPos.col));
-        if (distToKing <= 2) {
-          // Check if king is near the edge (cornered = potential smothered mate)
-          const kingNearEdge = oppKingPos.row <= 1 || oppKingPos.row >= 6 || oppKingPos.col <= 1 || oppKingPos.col >= 6;
-          if (kingNearEdge) {
-            bonus += currentStyle.mateSeekerBonus * 0.5;
-          }
-        }
-      }
-    }
-
-    // v7.1: 11. Initiative bonus — moves that create forcing threats
-    if (currentStyle.initiativeBonus > 0) {
-      let createsThreats = 0;
-      // Captures that open lines are initiative-gaining
-      if (captured) createsThreats++;
-      // Moving queen to aggressive diagonals/files near opponent's territory
-      if (pieceType === 'q') {
-        const toCoords = squareToCoords(to);
-        const isAdvanced = isWhite ? (toCoords.row <= 4) : (toCoords.row >= 3);
-        if (isAdvanced && oppKingPos) {
-          const distToKing = Math.abs(toCoords.row - oppKingPos.row) + Math.abs(toCoords.col - oppKingPos.col);
-          if (distToKing <= 4) createsThreats++;
-        }
-      }
-      // Moving pieces to open lines/diagonals attacking toward the king
-      if ((pieceType === 'r' || pieceType === 'b') && oppKingPos) {
-        const toCoords = squareToCoords(to);
-        const hasLineToKing = pieceType === 'r'
-          ? (toCoords.row === oppKingPos.row || toCoords.col === oppKingPos.col)
-          : (Math.abs(toCoords.row - oppKingPos.row) === Math.abs(toCoords.col - oppKingPos.col));
-        if (hasLineToKing) createsThreats++;
-      }
-      // Piece moving into attack range of opponent's king = initiative
-      if (['q', 'r', 'b', 'n'].includes(pieceType) && oppKingPos) {
-        const toCoords = squareToCoords(to);
-        const distToKing = Math.abs(toCoords.row - oppKingPos.row) + Math.abs(toCoords.col - oppKingPos.col);
-        if (distToKing <= 3) createsThreats += 0.5;
-      }
-
-      if (createsThreats >= 1.5) {
-        bonus += currentStyle.initiativeBonus * Math.min(createsThreats, 3) / 2;
-      }
-    }
-
-    // v7.1: 12. Back rank threat bonus — moves creating back rank mate patterns
-    if (currentStyle.backRankThreatBonus > 0 && oppKingPos) {
-      const oppBackRank = isWhite ? 0 : 7;  // opponent's back rank
-      // Is opponent's king on or near back rank?
-      const kingOnBackRank = Math.abs(oppKingPos.row - oppBackRank) <= 1;
-      if (kingOnBackRank) {
-        // Moving a rook or queen to opponent's back rank
-        if ((pieceType === 'r' || pieceType === 'q')) {
-          const toCoords = squareToCoords(to);
-          if (toCoords.row === oppBackRank) {
-            bonus += currentStyle.backRankThreatBonus;
-          }
-          // Moving to same file as king on back rank (potential back rank)
-          if (toCoords.col === oppKingPos.col && (toCoords.row === oppBackRank || Math.abs(toCoords.row - oppKingPos.row) <= 2)) {
-            bonus += currentStyle.backRankThreatBonus * 0.6;
-          }
-        }
-        // Moving piece that opens a file toward opponent's back rank
-        if (pieceType === 'p' && captured) {
-          const fromCoords = squareToCoords(from);
-          const toCoords = squareToCoords(to);
-          // Capturing pawn opens a file
-          if (Math.abs(fromCoords.col - toCoords.col) === 1) {
-            // Check if the opened file is near opponent's king
-            if (Math.abs(fromCoords.col - oppKingPos.col) <= 1) {
-              bonus += currentStyle.backRankThreatBonus * 0.4;
-            }
-          }
-        }
-      }
-    }
-
-    // v7.1: 13. Piece sacrifice near king — ANY piece sacrifice near opponent's king
-    if (currentStyle.pieceSacNearKingBonus > 0 && captured && oppKingPos) {
-      const pieceVal = PIECE_VALUES[pieceType] || 0;
-      const capturedVal = PIECE_VALUES[captured.toLowerCase()] || 0;
-      // If this is a sacrifice (giving up more valuable piece)
-      if (pieceVal > capturedVal) {
-        const toCoords = squareToCoords(to);
-        const distToKing = Math.abs(toCoords.row - oppKingPos.row) + Math.abs(toCoords.col - oppKingPos.col);
-        // The closer to the king, the bigger the bonus
-        if (distToKing <= 4) {
-          const proximityMultiplier = (5 - distToKing) / 4;  // 1.0 at dist=1, 0.25 at dist=4
-          bonus += currentStyle.pieceSacNearKingBonus * proximityMultiplier;
-          // Extra bonus for rook/queen sacrifices near the king
-          if (pieceType === 'r') bonus += currentStyle.pieceSacNearKingBonus * 0.4;
-          if (pieceType === 'q') bonus += currentStyle.pieceSacNearKingBonus * 0.6;
-        }
-      }
-    }
-
-    // v7.1: 14. Kamikaze double-attack / fork bonus near king
-    if (currentStyle.attackBonus > 120 && oppKingPos) {
-      const toCoords = squareToCoords(to);
-      // Knight forks: knight moving to square that attacks both king and another piece
-      if (pieceType === 'n') {
-        const knightAttacks = [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
-        let attacksKing = false;
-        let attacksOther = false;
-        for (const [dr, dc] of knightAttacks) {
-          const tr = toCoords.row + dr, tc = toCoords.col + dc;
-          if (tr < 0 || tr >= 8 || tc < 0 || tc >= 8) continue;
-          const target = board[tr][tc];
-          if (tr === oppKingPos.row && tc === oppKingPos.col) attacksKing = true;
-          else if (target) {
-            const isOppPiece = isWhite ? (target === target.toLowerCase()) : (target === target.toUpperCase());
-            if (isOppPiece && target.toLowerCase() !== 'p') attacksOther = true;
-          }
-        }
-        if (attacksKing && attacksOther) {
-          bonus += currentStyle.attackBonus * 0.15;  // Fork bonus
-        }
-      }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    // v7.3: BERSERKER-EXCLUSIVE SCORING — goes beyond Kamikaze
-    // These bonuses make Berserker play FUNDAMENTALLY differently from
-    // both Stockfish and Kamikaze. Inspired by Patricia engine (EAS 750K),
-    // AlphaZero's positional sacrifices, and CSTal's speculative eval.
-    // ═══════════════════════════════════════════════════════════════════
-
-    // v7.3: 15. Attack Unit System — Stockfish-inspired S-curve scoring
-    // Counts attack units targeting opponent's king zone:
-    // Minor (N/B) = 2, Rook = 3, Queen = 5. S-curve conversion:
-    // 0-2 units = minimal, 3-5 = moderate, 6-9 = large, 10+ = massive
-    if (currentStyle.attackUnitBonus > 0 && oppKingPos) {
-      const attackUnits = countAttackUnits(board, isWhite, oppKingPos);
-      // Also check if THIS move adds more attack units (piece moving to attack king zone)
-      const toCoords = squareToCoords(to);
-      const kingZoneRadius = 2;
-      const distToKingZone = Math.max(
-        Math.abs(toCoords.row - oppKingPos.row),
-        Math.abs(toCoords.col - oppKingPos.col)
-      );
-      let addedUnits = 0;
-      if (distToKingZone <= kingZoneRadius) {
-        if (pieceType === 'n' || pieceType === 'b') addedUnits = 2;
-        else if (pieceType === 'r') addedUnits = 3;
-        else if (pieceType === 'q') addedUnits = 5;
-      }
-      const totalUnits = attackUnits + addedUnits;
-      bonus += attackUnitsToBonus(totalUnits, currentStyle.attackUnitBonus);
-    }
-
-    // v7.3: 16. Practical Chances — score moves creating max opponent difficulty
-    if (currentStyle.practicalChancesBonus > 0 && oppKingPos) {
-      let practicalScore = 0;
-      // Count our attackers in king zone vs their defenders
-      const ourAttackers = countPiecesInZone(board, isWhite, oppKingPos, 2);
-      const theirDefenders = countPiecesInZone(board, !isWhite, oppKingPos, 2);
-      if (ourAttackers > theirDefenders + 1) practicalScore += 30;
-      else if (ourAttackers > theirDefenders) practicalScore += 15;
-      // Opponent king safety issues = practical chances
-      // v8.5.0: Reuse cached kingSafety from earlier in scoreMoveForStyle.
-      const oppSafetyIssues = kingSafety.issues.filter(i =>
-        isWhite ? i.color === 'b' : i.color === 'w'
-      );
-      practicalScore += oppSafetyIssues.length * 8;
-      // Piece moving right next to opponent king = creates forcing situations
-      const toCoords = squareToCoords(to);
-      const distToKing = Math.abs(toCoords.row - oppKingPos.row) + Math.abs(toCoords.col - oppKingPos.col);
-      if (distToKing <= 1 && ['q', 'r', 'n'].includes(pieceType)) practicalScore += 20;
-      if (practicalScore > 0) {
-        bonus += currentStyle.practicalChancesBonus * Math.min(practicalScore / 40, 1.5);
-      }
-    }
-
-    // v7.3: 17. Complexity Amplifier — boost moves increasing position complexity
-    if (currentStyle.complexityBonus > 0) {
-      let complexityScore = 0;
-      // Sacrifice that does NOT simplify (sac pawn for attack > trade pieces)
-      if (captured && piece) {
-        const pieceVal = PIECE_VALUES[pieceType] || 0;
-        const capturedVal = PIECE_VALUES[captured.toLowerCase()] || 0;
-        if (pieceVal > capturedVal + 1) {
-          complexityScore += 25; // Sacrifice = complexity increases
-        } else if (pieceVal === capturedVal && pieceVal >= 3) {
-          complexityScore -= 10; // Equal trade of minors/rooks = simplification (BAD)
-        }
-      }
-      // Moving pieces to central squares = more tactical possibilities
-      if (['n', 'b', 'r', 'q'].includes(pieceType)) {
-        const toCoords = squareToCoords(to);
-        const isCentral = toCoords.row >= 2 && toCoords.row <= 5 && toCoords.col >= 2 && toCoords.col <= 5;
-        if (isCentral) complexityScore += 10;
-      }
-      // Pawn advancing opens lines = complexity
-      if (pieceType === 'p') {
-        const fromRow = squareToCoords(from).row;
-        const toRow = squareToCoords(to).row;
-        const forward = isWhite ? -1 : 1;
-        if ((toRow - fromRow) * forward > 0) complexityScore += 5;
-      }
-      if (complexityScore > 0) {
-        bonus += currentStyle.complexityBonus * Math.min(complexityScore / 30, 1.5);
-      } else if (complexityScore < 0) {
-        bonus += complexityScore * (currentStyle.complexityBonus / 30); // Penalty
-      }
-    }
-
-    // v7.3: 18. Greek Gift Detection — Bxh7+/Bxh2+ sacrifice pattern
-    if (currentStyle.greekGiftBonus > 0 && pieceType === 'b' && oppKingPos) {
-      const targetSquare = isWhite ? 'h7' : 'h2';
-      if (to === targetSquare) {
-        let greekGiftScore = 40; // Base: bishop going to h7/h2
-        // King must be near the target (castled short)
-        const expectedKingRow = isWhite ? 0 : 7;
-        const expectedKingCol = 6; // g-file
-        if (oppKingPos.row === expectedKingRow && Math.abs(oppKingPos.col - expectedKingCol) <= 1) {
-          greekGiftScore += 30; // King on g8/g1 — perfect target
-        }
-        // Check if our knight can reach g5/g4
-        const knightTarget = isWhite ? 'g5' : 'g4';
-        const knightCoords = squareToCoords(knightTarget);
-        const ourKnight = isWhite ? 'N' : 'n';
-        let knightCanReach = false;
-        const knightJumps = [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
-        for (const [dr, dc] of knightJumps) {
-          const nr = knightCoords.row + dr, nc = knightCoords.col + dc;
-          if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8 && board[nr][nc] === ourKnight) {
-            knightCanReach = true; break;
-          }
-        }
-        if (knightCanReach) greekGiftScore += 25;
-        // Check enemy knight NOT on f6/f3 (defending)
-        const defSquare = isWhite ? 'f6' : 'f3';
-        const defCoords = squareToCoords(defSquare);
-        const enemyKnight = isWhite ? 'n' : 'N';
-        if (!(defCoords.row >= 0 && defCoords.row < 8 && board[defCoords.row]?.[defCoords.col] === enemyKnight)) {
-          greekGiftScore += 15; // No defender
-        }
-        // Our queen exists (can deliver Qh5+)
-        const ourQueen = isWhite ? 'Q' : 'q';
-        const queenExists = board.flat().some(p => p === ourQueen);
-        if (queenExists) greekGiftScore += 10;
-        bonus += currentStyle.greekGiftBonus * Math.min(greekGiftScore / 80, 1.5);
-      }
-    }
-
-    // v7.3: 19. Draw Contempt — penalize drawish positions, avoid draws
-    if (currentStyle.drawContempt > 0 && scoreType === 'cp') {
-      const contemptBonus = applyDrawContempt(rawScore, currentStyle.drawContempt);
-      bonus += contemptBonus;
-    }
-
-    // v7.3: 20. Sacrifice Cascade — bonus for consecutive sacrifices (Tal-style)
-    if (currentStyle.sacrificeCascadeBonus > 0 && captured) {
-      const pieceVal = PIECE_VALUES[pieceType] || 0;
-      const capturedVal = PIECE_VALUES[captured.toLowerCase()] || 0;
-      if (pieceVal > capturedVal) {
-        // This is a sacrifice — check if previous move was also a sacrifice
-        const cascadeMultiplier = sacrificeHistory.consecutiveSacs > 0
-          ? Math.min(sacrificeHistory.consecutiveSacs + 1, 4) / 2
-          : 0;
-        if (cascadeMultiplier > 0) {
-          bonus += currentStyle.sacrificeCascadeBonus * cascadeMultiplier;
-        }
-      }
-    }
-
-    // v7.3: 21. Tempo Bonus — reward development WITH threats
-    if (currentStyle.tempoBonus > 0) {
-      let tempoScore = 0;
-      const backRank = isWhite ? 7 : 0;
-      const fromRow = squareToCoords(from).row;
-      const toCoords = squareToCoords(to);
-      // Development + attack: minor piece leaving back rank to active square near king
-      if (fromRow === backRank && (pieceType === 'n' || pieceType === 'b')) {
-        if (oppKingPos) {
-          const distToKing = Math.abs(toCoords.row - oppKingPos.row) + Math.abs(toCoords.col - oppKingPos.col);
-          if (distToKing <= 4) tempoScore += 20;
-        }
-      }
-      // Capture gains tempo
-      if (captured) tempoScore += 8;
-      // Piece attacking multiple enemy pieces from destination
-      if (['n', 'b', 'q'].includes(pieceType)) {
-        let attackedPieces = 0;
-        for (let r = 0; r < 8; r++) {
-          for (let c = 0; c < 8; c++) {
-            const enemy = board[r][c];
-            if (!enemy) continue;
-            const isEnemy = isWhite ? (enemy === enemy.toLowerCase()) : (enemy === enemy.toUpperCase());
-            if (!isEnemy || enemy.toLowerCase() === 'k' || enemy.toLowerCase() === 'p') continue;
-            const dist = Math.abs(r - toCoords.row) + Math.abs(c - toCoords.col);
-            if (dist <= 2) attackedPieces++;
-          }
-        }
-        if (attackedPieces >= 2) tempoScore += 15;
-      }
-      if (tempoScore > 0) {
-        bonus += currentStyle.tempoBonus * Math.min(tempoScore / 25, 1.5);
-      }
-    }
-
-    // v7.3: 22. Overload Exploitation — exploit overloaded defending pieces
-    if (currentStyle.overloadExploitBonus > 0 && oppKingPos) {
-      let overloadScore = 0;
-      // Check if captured piece was defending king zone
-      if (captured) {
-        const capCoords = squareToCoords(to);
-        const distCapToKing = Math.abs(capCoords.row - oppKingPos.row) + Math.abs(capCoords.col - oppKingPos.col);
-        // If we're capturing a piece near the king, it was likely a defender
-        if (distCapToKing <= 3 && (captured.toLowerCase() === 'n' || captured.toLowerCase() === 'b')) {
-          overloadScore += 20;
-        }
-      }
-      // Moving piece to square that attacks TWO+ enemy pieces near king
-      const toCoords = squareToCoords(to);
-      let enemyPiecesNearKing = 0;
-      for (let r = Math.max(0, oppKingPos.row - 2); r <= Math.min(7, oppKingPos.row + 2); r++) {
-        for (let c = Math.max(0, oppKingPos.col - 2); c <= Math.min(7, oppKingPos.col + 2); c++) {
-          const enemy = board[r][c];
-          if (!enemy) continue;
-          const isEnemy = isWhite ? (enemy === enemy.toLowerCase()) : (enemy === enemy.toUpperCase());
-          if (isEnemy && enemy.toLowerCase() !== 'k' && enemy.toLowerCase() !== 'p') enemyPiecesNearKing++;
-        }
-      }
-      if (enemyPiecesNearKing >= 3) overloadScore += 25; // Many pieces near king = likely overloaded
-      if (overloadScore > 0) {
-        bonus += currentStyle.overloadExploitBonus * Math.min(overloadScore / 30, 1.5);
-      }
-    }
-
-    // v7.3: 23. Phase-Aware Aggression Scaling — adjust by game phase
-    let phaseMultiplier = 1.0;
-    if (currentStyle.phaseAggressionScale > 0 && fen) {
-      const phase = detectGamePhase(fen);
-      switch (phase) {
-        case 'opening':
-          phaseMultiplier = 0.8; // Slightly less — develop first, then attack
-          // But tempo is amplified in opening
-          if (currentStyle.tempoBonus > 0) bonus += currentStyle.tempoBonus * 0.3;
-          break;
-        case 'middlegame':
-          phaseMultiplier = currentStyle.phaseAggressionScale; // MAXIMUM — go berserk
-          break;
-        case 'endgame':
-          phaseMultiplier = 1.0; // Still aggressive but calculated
-          // Mate seeker amplified in endgame
-          if (currentStyle.mateSeekerBonus > 0) bonus += currentStyle.mateSeekerBonus * 0.2;
-          break;
-      }
-    }
-
-    // ─── Synergy Detection (v7.3 Berserker) ─────────────────────────
-    // When multiple aggression bonuses stack, apply exponential multiplier
-    let synergyMultiplier = 1.0;
-    if (currentStyle.phaseAggressionScale > 0) {
-      // Count how many distinct bonus categories contributed
-      let activeBonuses = 0;
-      if (captured && (PIECE_VALUES[pieceType] || 0) > (PIECE_VALUES[captured?.toLowerCase()] || 0)) activeBonuses++; // sacrifice
-      if (oppKingPos && Math.abs(squareToCoords(to).row - oppKingPos.row) + Math.abs(squareToCoords(to).col - oppKingPos.col) <= 3) activeBonuses++; // king hunt
-      if (currentStyle.attackUnitBonus > 0 && oppKingPos) activeBonuses++; // attack units
-      if (currentStyle.practicalChancesBonus > 0) activeBonuses++; // practical chances
-      if (currentStyle.complexityBonus > 0 && captured) activeBonuses++; // complexity
-      if (currentStyle.greekGiftBonus > 0 && pieceType === 'b') activeBonuses++; // greek gift
-      if (currentStyle.sacrificeCascadeBonus > 0 && sacrificeHistory.consecutiveSacs > 0) activeBonuses++; // cascade
-      if (currentStyle.tempoBonus > 0) activeBonuses++; // tempo
-      if (currentStyle.overloadExploitBonus > 0) activeBonuses++; // overload
-      if (currentStyle.drawContempt > 0 && Math.abs(rawScore) < 50) activeBonuses++; // contempt
-
-      // Exponential synergy: stacking bonuses create more-than-linear effect
-      if (activeBonuses >= 7) synergyMultiplier = 3.0;
-      else if (activeBonuses >= 5) synergyMultiplier = 2.0;
-      else if (activeBonuses >= 3) synergyMultiplier = 1.5;
-    }
-
-    // Apply phase multiplier and synergy
-    bonus = bonus * phaseMultiplier * synergyMultiplier;
-
-    // Update sacrifice history for cascade detection
-    if (currentStyle.sacrificeCascadeBonus > 0) {
-      const isSac = captured && (PIECE_VALUES[pieceType] || 0) > (PIECE_VALUES[captured.toLowerCase()] || 0);
-      // Also: moving valuable piece right next to king without capture = offering sac
-      const isOfferingSac = !captured && ['q', 'r', 'b', 'n'].includes(pieceType) && oppKingPos &&
-        Math.abs(squareToCoords(to).row - oppKingPos.row) + Math.abs(squareToCoords(to).col - oppKingPos.col) <= 2;
-      if (isSac || isOfferingSac) {
-        sacrificeHistory.consecutiveSacs++;
-        sacrificeHistory.lastMoveWasSac = true;
-      } else {
-        sacrificeHistory.consecutiveSacs = 0;
-        sacrificeHistory.lastMoveWasSac = false;
-      }
-    }
-
-    // Apply the bonus — scale by evalWeight so aggressive moves get a relative boost
-    // The bonus is capped at sacrificeTolerance to avoid recommending terrible moves
-    // v6.2: Ultra-aggressive has higher cap
-    // v7.1: Kamikaze has MUCH higher cap — allows truly wild sacrifices
-    // v7.3: Berserker has the HIGHEST cap — 6x sacrificeTolerance
-    const capMultiplier = currentStyle.phaseAggressionScale > 0 ? 6
-      : (currentStyle.antiDetect ? 3 : (currentStyle.attackBonus > 120 ? 4 : 2));
-    const cappedBonus = Math.min(bonus, currentStyle.sacrificeTolerance * capMultiplier);
-    return rawScore + cappedBonus;
+    const profile = PLAYING_STYLES[style] || PLAYING_STYLES.normal;
+    if (profile.id === 'normal') return rawScore;
+    const candidate = analyzeCandidate(fen, [uci], playerColor, rawScore, scoreType);
+    candidate.evalLoss = 0;
+    return rawScore + candidateStyleBonus(candidate, profile);
   }
 
-  // ─── Anti-Detection: Position Criticality Assessment (v6.2 — from v7.0) ──
-  // Returns a value 0-1 indicating how critical the position is.
-  // 0 = completely equal/quiet (more diversity allowed)
-  // 1 = extremely critical (stick to best moves)
-  function assessPositionCriticality(fen, pvs) {
-    if (!fen || !pvs || pvs.length < 2) return 0.8;
-
-    const bestScore = pvs[0].score || 0;
-    const secondScore = pvs[1].score || 0;
-    const scoreGap = Math.abs(bestScore - secondScore);
-
-    let criticality = 0.3;
-
-    if (scoreGap > 50) criticality += 0.3;
-    else if (scoreGap > 25) criticality += 0.15;
-
-    if (Math.abs(bestScore) > 200) criticality += 0.25;
-    else if (Math.abs(bestScore) > 100) criticality += 0.1;
-
-    if (pvs[0].scoreType === 'mate') criticality = 1.0;
-
-    const parts = fen.split(' ');
-    const board = parseFENPlacement(parts[0]);
-    let pieceCount = 0;
-    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
-      if (board[r][c]) pieceCount++;
-    }
-    if (pieceCount > 24) criticality += 0.05;
-
-    return Math.min(1.0, criticality);
+  function playerScore(pv, playerColor) {
+    const score = Number(pv?.score) || 0;
+    return playerColor === 'w' ? score : -score;
   }
 
-  // ─── Anti-Detection: Weighted Random Move Selection (v6.2 — from v7.0) ──
-  function applyAntiDetection(pvs, fen, style, playerColor) {
-    const currentStyle = PLAYING_STYLES[style] || PLAYING_STYLES.normal;
-    if (!currentStyle.antiDetect || !pvs || pvs.length < 2) return pvs;
-
-    const criticality = assessPositionCriticality(fen, pvs);
-    const diversityChance = currentStyle.moveDiversity * (1 - criticality);
-
-    // Seeded pseudo-random based on FEN (deterministic per position for consistency)
-    let fenHash = 0;
-    const fenStr = fen || '';
-    for (let i = 0; i < fenStr.length; i++) {
-      fenHash = ((fenHash << 5) - fenHash + fenStr.charCodeAt(i)) | 0;
+  function objectiveUtility(pv, playerColor) {
+    const score = playerScore(pv, playerColor);
+    if (pv?.scoreType === 'mate') {
+      if (score > 0) return 1000000 - Math.min(Math.abs(score), 9999);
+      if (score < 0) return -1000000 + Math.min(Math.abs(score), 9999);
     }
-    const sessionRand = Math.random();
-    const combinedRand = Math.abs(Math.sin(fenHash + sessionRand * 65536));
-
-    if (combinedRand > diversityChance) return pvs;
-
-    const isWhite = playerColor === 'w';
-    const bestScore = isWhite ? (pvs[0].score || 0) : -(pvs[0].score || 0);
-
-    const tolerance = currentStyle.sacrificeTolerance;
-    const alternatives = [];
-    for (let i = 1; i < pvs.length && i < 5; i++) {
-      const altScore = isWhite ? (pvs[i].score || 0) : -(pvs[i].score || 0);
-      const evalLoss = bestScore - altScore;
-      if (evalLoss <= tolerance) {
-        const weight = Math.max(0.1, 1 - evalLoss / tolerance);
-        alternatives.push({ pv: pvs[i], weight, idx: i });
-      }
-    }
-
-    if (alternatives.length === 0) return pvs;
-
-    const totalWeight = alternatives.reduce((sum, a) => sum + a.weight, 0);
-    let roll = Math.random() * totalWeight;
-    let selectedAlt = alternatives[0];
-    for (const alt of alternatives) {
-      roll -= alt.weight;
-      if (roll <= 0) { selectedAlt = alt; break; }
-    }
-
-    const result = [...pvs];
-    const temp = result[0];
-    result[0] = selectedAlt.pv;
-    result[selectedAlt.idx] = temp;
-
-    return result;
+    return score;
   }
 
-  // ─── Anti-Detection: Evaluation Noise (v6.2 — from v7.0) ──────────
-  function injectEvalNoise(score, scoreType, style) {
-    const currentStyle = PLAYING_STYLES[style] || PLAYING_STYLES.normal;
-    if (!currentStyle.antiDetect || currentStyle.evalNoise <= 0) return { score, scoreType };
-    if (scoreType === 'mate') return { score, scoreType };
-
-    const u1 = Math.random();
-    const u2 = Math.random();
-    const gaussianNoise = Math.sqrt(-2 * Math.log(Math.max(u1, 0.0001))) * Math.cos(2 * Math.PI * u2);
-    const noise = Math.round(gaussianNoise * currentStyle.evalNoise * 0.5);
-
-    return { score: score + noise, scoreType };
+  function riskBudgetFor(style, bestScore) {
+    if (bestScore > 150) return style.riskBudget.winning;
+    if (bestScore < -100) return style.riskBudget.worse;
+    return style.riskBudget.equal;
   }
 
-  // ─── Style-Aware Move Selection ────────────────────────────────────
-  // Re-ranks PVs based on style preferences, returns reordered PVs
-  // v6.2: Also applies anti-detection diversification if enabled
-  // v7.3: Berserker uses two-phase re-ranking: filter within tolerance, then rank by pure aggression
+  function stableFenFraction(fen, salt = '') {
+    let hash = 2166136261;
+    for (const ch of `${fen}|${salt}`) {
+      hash ^= ch.charCodeAt(0);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0) / 4294967296;
+  }
+
+  // Returns PVs in style order. Each PV receives non-invasive _styleAnalysis
+  // metadata used to keep hints, candidates, and explanations synchronized.
   function selectPVForStyle(pvs, fen, style, playerColor) {
-    if (!pvs || pvs.length <= 1) return pvs;
-    const currentStyle = PLAYING_STYLES[style] || PLAYING_STYLES.normal;
-    if (currentStyle.attackBonus === 0 && !currentStyle.antiDetect && !currentStyle.attackUnitBonus) return pvs; // Normal: use engine ranking
+    if (!Array.isArray(pvs) || pvs.length <= 1) return pvs || [];
+    const profile = PLAYING_STYLES[style] || PLAYING_STYLES.normal;
+    const objective = pvs.map((pv, index) => ({ pv, index, utility: objectiveUtility(pv, playerColor), score: playerScore(pv, playerColor) }))
+      .sort((a, b) => b.utility - a.utility);
+    const objectiveBest = objective[0];
 
-    const isWhite = playerColor === 'w';
+    if (profile.id === 'normal') {
+      return objective.map((entry, rank) => ({
+        ...entry.pv,
+        _styleAnalysis: { objectiveRank: rank + 1, styleRank: rank + 1, evalLoss: 0, reasons: ['objective best play'], risks: [], mode: profile.id }
+      }));
+    }
 
-    // Score each PV line for style preference
-    const scored = pvs.map((pv, idx) => {
-      const rawScore = isWhite ? pv.score : -pv.score;
-      const firstMove = pv.pv && pv.pv.length > 0 ? pv.pv[0] : null;
-      const styleScore = firstMove
-        ? scoreMoveForStyle(firstMove, fen, rawScore, pv.scoreType, style, playerColor)
-        : rawScore;
-
-      return { pv, styleScore, rawScore, idx };
+    const bestIsWinningMate = objectiveBest.pv.scoreType === 'mate' && objectiveBest.score > 0;
+    const budget = riskBudgetFor(profile, objectiveBest.score);
+    const candidates = objective.map((entry, rank) => {
+      let evalLoss;
+      if (bestIsWinningMate) {
+        evalLoss = entry.pv.scoreType === 'mate' && entry.score > 0 ? Math.max(0, Math.abs(entry.score) - Math.abs(objectiveBest.score)) : Infinity;
+      } else if (entry.pv.scoreType === 'mate') {
+        evalLoss = entry.score > 0 ? 0 : Infinity;
+      } else if (objectiveBest.pv.scoreType === 'mate') {
+        evalLoss = Infinity;
+      } else {
+        evalLoss = Math.max(0, objectiveBest.score - entry.score);
+      }
+      const analysis = analyzeCandidate(fen, entry.pv.pv || [], playerColor, entry.score, entry.pv.scoreType, entry.pv.depth || 0);
+      analysis.evalLoss = evalLoss;
+      analysis.objectiveRank = rank + 1;
+      analysis.mode = profile.id;
+      const eligible = Number.isFinite(evalLoss) && (bestIsWinningMate ? evalLoss === 0 : evalLoss <= budget);
+      const bonus = eligible ? candidateStyleBonus(analysis, profile) : -Infinity;
+      // Aggressive is especially focused on converting quickly: objective cost
+      // remains expensive, while checks and sustained forcing play can overcome it.
+      const lossWeight = profile.id === 'aggressive' ? 1.25 : 0.62;
+      const styleScore = eligible ? bonus - evalLoss * lossWeight : -Infinity;
+      return { ...entry, analysis, eligible, bonus, styleScore };
     });
 
-    // v7.3: Berserker two-phase re-ranking
-    // Phase 1: Filter moves within sacrificeTolerance of best raw score
-    // Phase 2: Among filtered moves, rank by pure aggression score (styleScore)
-    // This makes Berserker DELIBERATELY choose moves that are slightly worse
-    // objectively but MUCH more aggressive — the essence of being "different from Stockfish"
-    if (currentStyle.phaseAggressionScale > 0) {
-      const bestRawScore = Math.max(...scored.map(s => s.rawScore));
-      const tolerance = currentStyle.sacrificeTolerance;
+    let eligible = candidates.filter(candidate => candidate.eligible);
+    if (!eligible.length) eligible = [candidates.find(candidate => candidate.index === objectiveBest.index) || candidates[0]];
+    eligible.sort((a, b) => b.styleScore - a.styleScore || b.utility - a.utility);
 
-      // Filter to moves within tolerance
-      const viable = scored.filter(s => bestRawScore - s.rawScore <= tolerance);
+    // Stable, tightly controlled variety for Super Ultra only. It never applies
+    // to mate lines and only considers a near-tied second attacking candidate.
+    if (profile.diversity > 0 && !bestIsWinningMate && eligible.length > 1 &&
+        eligible[0].styleScore - eligible[1].styleScore <= 18 &&
+        stableFenFraction(fen, profile.id) < profile.diversity) {
+      [eligible[0], eligible[1]] = [eligible[1], eligible[0]];
+    }
 
-      if (viable.length > 1) {
-        // Among viable moves, sort by style score (aggression) — pick the most aggressive
-        viable.sort((a, b) => b.styleScore - a.styleScore);
-
-        // Rebuild the full list: viable (sorted by aggression) first, then the rest (sorted by raw score)
-        const viablePvs = viable.map(s => s.pv);
-        const eliminated = scored.filter(s => !viable.includes(s));
-        eliminated.sort((a, b) => b.rawScore - a.rawScore);
-        const eliminatedPvs = eliminated.map(s => s.pv);
-
-        let result = [...viablePvs, ...eliminatedPvs];
-
-        // Apply anti-detection (not used by Berserker, but just in case)
-        if (currentStyle.antiDetect) {
-          result = applyAntiDetection(result, fen, style, playerColor);
-        }
-
-        return result;
+    const ineligible = candidates.filter(candidate => !candidate.eligible).sort((a, b) => b.utility - a.utility);
+    return [...eligible, ...ineligible].map((candidate, styleRank) => ({
+      ...candidate.pv,
+      _styleAnalysis: {
+        ...candidate.analysis,
+        styleRank: styleRank + 1,
+        styleBonus: Number.isFinite(candidate.bonus) ? Math.round(candidate.bonus) : 0,
+        riskBudget: budget,
+        eligible: candidate.eligible
       }
-    }
-
-    // Standard re-ranking (non-Berserker styles)
-    // Sort by style-adjusted score (descending)
-    scored.sort((a, b) => b.styleScore - a.styleScore);
-
-    // But don't let a much worse move be chosen — limit how far down we'll reach
-    // Only pick a style-preferred move if it's within sacrificeTolerance of the best
-    const bestRawScore = scored[0].rawScore;
-    const tolerance = currentStyle.sacrificeTolerance;
-
-    // Find the best style move within tolerance
-    let bestIdx = 0;
-    for (let i = 0; i < scored.length; i++) {
-      if (bestRawScore - scored[i].rawScore <= tolerance) {
-        bestIdx = i;
-        break;
-      }
-    }
-
-    // If the style-preferred move is within tolerance, promote it
-    if (bestIdx > 0 && scored[bestIdx].styleScore > scored[0].styleScore) {
-      // Swap the style-preferred move to position 0
-      const stylePreferred = scored[bestIdx];
-      scored.splice(bestIdx, 1);
-      scored.unshift(stylePreferred);
-    }
-
-    let result = scored.map(s => s.pv);
-
-    // v6.2: Apply anti-detection diversification
-    if (currentStyle.antiDetect) {
-      result = applyAntiDetection(result, fen, style, playerColor);
-    }
-
-    return result;
+    }));
   }
 
   // ─── Style-Aware Move Annotation ───────────────────────────────────
   // v6.2: Enhanced with pawn storm, exchange sacrifice, outpost, prophylactic annotations
-  function annotateMoveForStyle(uci, fen, style, evalScore) {
-    if (!fen || !uci) return [];
-    const parts = fen.split(' ');
-    const board = parseFENPlacement(parts[0]);
-    const from = uci.substring(0, 2);
-    const to = uci.substring(2, 4);
-    const piece = getPieceAt(board, from);
-    const captured = getPieceAt(board, to);
-    const pieceType = piece ? piece.toLowerCase() : '?';
-    const currentStyle = PLAYING_STYLES[style] || PLAYING_STYLES.normal;
+  function annotateMoveForStyle(uci, fen, style, evalScore, styleAnalysis = null) {
+    const profile = PLAYING_STYLES[style] || PLAYING_STYLES.normal;
+    if (profile.id === 'normal') return [];
+    const analysis = styleAnalysis || analyzeCandidate(fen, [uci], (fen.split(' ')[1] || 'w'), evalScore, 'cp');
     const annotations = [];
-
-    if (captured) {
-      annotations.push('captures');
-      // Sacrifice detection for aggressive styles
-      const capturedVal = PIECE_VALUES[captured.toLowerCase()] || 0;
-      const pieceVal = PIECE_VALUES[pieceType] || 0;
-      if (pieceVal > capturedVal && currentStyle.sacrificeTolerance > 0) {
-        annotations.push('sacrifice');
-      }
-      // v6.2: Exchange sacrifice (rook takes minor)
-      if (currentStyle.exchangeSacrificeBonus > 0 && pieceType === 'r' &&
-          (captured.toLowerCase() === 'n' || captured.toLowerCase() === 'b')) {
-        annotations.push('exchange sac');
-      }
-    }
-
-    // King hunt detection
-    const oppKingColor = piece === piece.toUpperCase() ? 'k' : 'K';
-    let oppKingPos = null;
-    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
-      if (board[r][c] === oppKingColor) oppKingPos = { row: r, col: c };
-    }
-    if (oppKingPos && currentStyle.kingHuntBonus > 0) {
-      const toCoords = squareToCoords(to);
-      const distToKing = Math.abs(toCoords.row - oppKingPos.row) + Math.abs(toCoords.col - oppKingPos.col);
-      if (distToKing <= 2) annotations.push('king hunt');
-    }
-
-    // v6.2: Pawn storm detection
-    if (currentStyle.pawnStormBonus > 0 && pieceType === 'p' && oppKingPos) {
-      const pawnFile = from.charCodeAt(0) - 97;
-      const kingFile = oppKingPos.col;
-      const isNearKingFile = Math.abs(pawnFile - kingFile) <= 1;
-      const isKingCastled = (kingFile >= 5 && kingFile <= 7) || (kingFile >= 0 && kingFile <= 2);
-      if (isNearKingFile && isKingCastled) {
-        annotations.push('pawn storm');
-      }
-    }
-
-    if (pieceType === 'q' && (to[1] === '1' || to[1] === '8') && evalScore > 200) annotations.push('aggressive');
-    if (pieceType === 'n' && (to[0] >= 'c' && to[0] <= 'f') && (to[1] >= '3' && to[1] <= '6')) {
-      annotations.push('centralizing');
-      // v6.2: Outpost detection
-      if (currentStyle.outpostBonus > 0) {
-        const toCoords = squareToCoords(to);
-        const isWhite = piece === piece.toUpperCase();
-        const isOpponentTerritory = isWhite ? (toCoords.row <= 3) : (toCoords.row >= 4);
-        const ownPawn = isWhite ? 'P' : 'p';
-        const pawnDir = isWhite ? 1 : -1;
-        let isProtectedByPawn = false;
-        for (const dc of [-1, 1]) {
-          const pr = toCoords.row + pawnDir;
-          const pc = toCoords.col + dc;
-          if (pr >= 0 && pr < 8 && pc >= 0 && pc < 8 && board[pr][pc] === ownPawn) {
-            isProtectedByPawn = true;
-            break;
-          }
-        }
-        if (isOpponentTerritory && isProtectedByPawn) {
-          annotations.push('outpost');
-        }
-      }
-    }
-    if (pieceType === 'r' && !captured) {
-      const toCoords = squareToCoords(to);
-      let isSemiOpen = true;
-      const ownPawn = piece === piece.toUpperCase() ? 'P' : 'p';
-      for (let r = 0; r < 8; r++) { if (board[r][toCoords.col] === ownPawn) { isSemiOpen = false; break; } }
-      if (isSemiOpen) annotations.push('to open file');
-      // v6.2: 7th rank rook
-      const isWhite = piece === piece.toUpperCase();
-      const isSeventhRank = isWhite ? (toCoords.row === 1) : (toCoords.row === 6);
-      if (isSeventhRank && currentStyle.attackBonus >= 60) {
-        annotations.push('7th rank');
-      }
-    }
-
-    // v6.2: Anti-detection mode indicator
-    if (currentStyle.antiDetect) {
-      annotations.push('stealth');
-    }
-
-    // v7.1: Kamikaze-exclusive annotations
-    if (currentStyle.attackBonus > 120 && currentStyle.attackBonus <= 200) {
-      // Queen sacrifice annotation
-      if (captured && pieceType === 'q') {
-        const capturedVal = PIECE_VALUES[captured.toLowerCase()] || 0;
-        if (capturedVal < 9) {
-          annotations.push('queen sac');
-        }
-      }
-      // Mate attack annotation — piece attacking king directly
-      if (oppKingPos && ['q', 'r', 'n'].includes(pieceType)) {
-        const toCoords = squareToCoords(to);
-        const distToKing = Math.max(Math.abs(toCoords.row - oppKingPos.row), Math.abs(toCoords.col - oppKingPos.col));
-        if (distToKing <= 1) {
-          annotations.push('mate attack');
-        }
-      }
-      // Kamikaze mode indicator
-      annotations.push('kamikaze');
-    }
-
-    // v7.3: Berserker-exclusive annotations
-    if (currentStyle.attackBonus > 200) {
-      // Queen sacrifice annotation
-      if (captured && pieceType === 'q') {
-        const capturedVal = PIECE_VALUES[captured.toLowerCase()] || 0;
-        if (capturedVal < 9) {
-          annotations.push('queen sac');
-        }
-      }
-      // Mate attack annotation
-      if (oppKingPos && ['q', 'r', 'n'].includes(pieceType)) {
-        const toCoords = squareToCoords(to);
-        const distToKing = Math.max(Math.abs(toCoords.row - oppKingPos.row), Math.abs(toCoords.col - oppKingPos.col));
-        if (distToKing <= 1) {
-          annotations.push('mate attack');
-        }
-      }
-      // Greek Gift annotation
-      if (currentStyle.greekGiftBonus > 0 && pieceType === 'b') {
-        const targetSquare = piece === piece.toUpperCase() ? 'h7' : 'h2';
-        if (to === targetSquare) {
-          annotations.push('greek gift');
-        }
-      }
-      // Cascade sacrifice annotation
-      if (currentStyle.sacrificeCascadeBonus > 0 && sacrificeHistory.consecutiveSacs > 0 && captured) {
-        const pieceVal = PIECE_VALUES[pieceType] || 0;
-        const capturedVal = PIECE_VALUES[captured.toLowerCase()] || 0;
-        if (pieceVal > capturedVal) {
-          annotations.push('cascade sac');
-        }
-      }
-      // Overload exploitation annotation
-      if (currentStyle.overloadExploitBonus > 0 && captured && oppKingPos) {
-        const capCoords = squareToCoords(to);
-        const distCapToKing = Math.abs(capCoords.row - oppKingPos.row) + Math.abs(capCoords.col - oppKingPos.col);
-        if (distCapToKing <= 3 && (captured.toLowerCase() === 'n' || captured.toLowerCase() === 'b')) {
-          annotations.push('overload');
-        }
-      }
-      // Berserker mode indicator
-      annotations.push('berserker');
-    }
-
-    return annotations;
+    if (analysis.givesCheck) annotations.push('forcing check');
+    if (analysis.sustainedAttack) annotations.push('sustained attack');
+    if (analysis.kingPressureDelta > 0) annotations.push('king pressure');
+    if (analysis.defenderRemoval) annotations.push('removes defender');
+    if (analysis.tempo) annotations.push('tempo');
+    if (analysis.development) annotations.push('active development');
+    if (analysis.opensKingFile) annotations.push('open king line');
+    if (analysis.sacrifice) annotations.push(analysis.sacrificeSoundness === 'sound' ? 'sound sacrifice' : 'speculative sacrifice');
+    if (profile.id === 'super_ultra_aggressive') annotations.push('super ultra');
+    else annotations.push('aggressive');
+    return [...new Set(annotations)];
   }
 
   // ─── Generate Hints (Main Entry) ───────────────────────────────────
@@ -2196,18 +1078,14 @@
     const currentStyle = PLAYING_STYLES[style] || PLAYING_STYLES.normal;
     const currentRepertoire = OPENING_REPERTOIRES[openingRepertoire] || OPENING_REPERTOIRES.none;
 
-    // Apply style-aware PV re-ranking
-    let rankedPVs = pvs;
-    if (pvs && pvs.length > 1 && (currentStyle.attackBonus > 0 || currentStyle.antiDetect || currentStyle.attackUnitBonus > 0)) {
-      rankedPVs = selectPVForStyle(pvs, fen, style, playerColor);
-    }
-
-    const bestPV = rankedPVs && rankedPVs.length > 0 ? rankedPVs[0] : null;
-    // All scores are normalized to White's perspective
+    // Apply the rebuilt, mate-safe style ranking. Normal also receives objective
+    // metadata, while one-PV sources remain unchanged and are explained honestly.
+    const rankedPVs = pvs?.[0]?._styleAnalysis
+      ? pvs
+      : (pvs && pvs.length > 1 ? selectPVForStyle(pvs, fen, style, playerColor) : (pvs || []));
+    const bestPV = rankedPVs.length > 0 ? rankedPVs[0] : null;
+    // All scores are normalized to White's perspective.
     const evalScore = bestPV ? (isWhite ? bestPV.score : -bestPV.score) : 0;
-    // v6.2: Apply eval noise for anti-detection styles
-    const noisyEval = injectEvalNoise(evalScore, bestPV ? bestPV.scoreType : 'cp', style);
-    const displayEvalScore = noisyEval.score;
     const scoreType = bestPV ? bestPV.scoreType : 'cp';
 
     // Determine whose turn it is from the FEN
@@ -2282,6 +1160,25 @@
       hints.fairPlayWarning = 'Using exact move hints frequently may cause your moves to match engine recommendations, which fair play systems can detect.';
     }
 
+    // Explain why the selected move fits the requested mode. This keeps lower
+    // hint levels educational and gives exact/deep hints concrete compensation.
+    if (bestPV?._styleAnalysis) {
+      const meta = bestPV._styleAnalysis;
+      hints.styleAnalysis = meta;
+      if (currentStyle.id !== 'normal') {
+        const reasons = (meta.reasons || []).slice(0, 3);
+        const risks = (meta.risks || []).slice(0, 2);
+        if (reasons.length) {
+          const prefix = currentStyle.id === 'aggressive' ? 'Fast-win idea' : 'Maximum-pressure idea';
+          hints.main += ` ${prefix}: ${reasons.join(', ')}.`;
+        }
+        if (hintLevel >= 4 && Number.isFinite(meta.evalLoss) && meta.evalLoss > 0) {
+          hints.main += ` Objective cost: ${(meta.evalLoss / 100).toFixed(1)} pawn${meta.evalLoss === 100 ? '' : 's'}.`;
+        }
+        if (hintLevel >= 4 && risks.length) hints.main += ` Risk: ${risks.join(', ')}.`;
+      }
+    }
+
     // From-to square notation — always show actual piece color
     if (hintLevel >= 5 && bestPV && bestPV.pv && bestPV.pv.length > 0) {
       const uci = bestPV.pv[0];
@@ -2316,7 +1213,7 @@
 
     // Style annotation for L5
     if (hintLevel >= 5 && bestPV && bestPV.pv && bestPV.pv.length > 0 && fen) {
-      const annotations = annotateMoveForStyle(bestPV.pv[0], fen, style, evalScore);
+      const annotations = annotateMoveForStyle(bestPV.pv[0], fen, style, evalScore, bestPV._styleAnalysis);
       if (annotations.length > 0) hints.styleAnnotation = annotations.join(', ');
     }
 
@@ -2542,9 +1439,7 @@
     // Add context
     if (captured) {
       hint += ' — there is a capture available';
-      const capturedVal = PIECE_VALUES[captured.toLowerCase()] || 0;
-      const pieceVal = PIECE_VALUES[piece.toLowerCase()] || 0;
-      if (pieceVal > capturedVal) hint += ' (sacrifice!)';
+      if (bestPV._styleAnalysis?.sacrifice) hint += ' (calculated sacrifice!)';
     }
 
     if (scoreType === 'mate' && evalScore > 0) {
@@ -2587,11 +1482,9 @@
       const isOppPiece = isWhite ? (captured === captured.toLowerCase()) : (captured === captured.toUpperCase());
       hint = `Capture with ${possessive} ${pieceName} from ${from} to ${to}`;
       if (isOppPiece) hint += `, taking opponent's ${capturedName}`;
-      // Sacrifice annotation for aggressive styles
-      const pieceVal = PIECE_VALUES[piece.toLowerCase()] || 0;
-      const capturedVal = PIECE_VALUES[captured.toLowerCase()] || 0;
-      if (pieceVal > capturedVal && currentStyle.sacrificeTolerance > 0) {
-        hint += ' (sacrifice!)';
+      // Only call it a sacrifice when the PV confirms material is actually lost.
+      if (bestPV._styleAnalysis?.sacrifice) {
+        hint += ` (${bestPV._styleAnalysis.sacrificeSoundness || 'calculated'} sacrifice!)`;
       }
       if (bestPV.pv.length >= 3) {
         const nextUci = bestPV.pv[2];
@@ -2634,7 +1527,6 @@
     const uci = bestPV.pv[0];
     const from = uci.substring(0, 2);
     const to = uci.substring(2, 4);
-    const promo = uci.length > 4 ? uci[4] : null;
     const piece = getPieceAt(board, from);
     const captured = getPieceAt(board, to);
     const pieceName = piece ? PIECE_NAMES[piece.toLowerCase()] : 'piece';
@@ -2648,9 +1540,10 @@
     const pieceSideLabel = isPieceWhite ? 'White' : 'Black';
     const currentStyle = style || PLAYING_STYLES.normal;
 
-    let moveStr = san;
-    if (promo) moveStr += '=' + promo.toUpperCase();
-    let hint = `Best: ${moveStr}  (${pieceSideLabel}: ${pieceName}: ${from} \u2192 ${to})`;
+    // uciToSan already includes the promotion suffix.
+    const moveStr = san;
+    const choiceLabel = currentStyle.id === 'normal' ? 'Best' : `${currentStyle.name} choice`;
+    let hint = `${choiceLabel}: ${moveStr}  (${pieceSideLabel}: ${pieceName}: ${from} \u2192 ${to})`;
 
     if (scoreType === 'mate') {
       hint += ` \u2014 MATE IN ${Math.abs(evalScore)}`;
@@ -2662,12 +1555,10 @@
     if (captured) {
       const capturedName = PIECE_NAMES[captured.toLowerCase()] || 'piece';
       const isOppPiece = isWhite ? (captured === captured.toLowerCase()) : (captured === captured.toUpperCase());
-      // Sacrifice annotation
-      const pieceVal = PIECE_VALUES[piece.toLowerCase()] || 0;
-      const capturedVal = PIECE_VALUES[captured.toLowerCase()] || 0;
+      // Sacrifice annotation comes from PV-validated material loss.
       if (isOppPiece) {
-        if (pieceVal > capturedVal && currentStyle.sacrificeTolerance > 0) {
-          hint += ` | Sacrifice! Takes opponent's ${capturedName}`;
+        if (bestPV._styleAnalysis?.sacrifice) {
+          hint += ` | ${bestPV._styleAnalysis.sacrificeSoundness === 'sound' ? 'Sound' : 'Speculative'} sacrifice: takes opponent's ${capturedName}`;
         } else {
           hint += ` | Captures opponent's ${capturedName}`;
         }
@@ -3035,7 +1926,9 @@
       const absDelta = Math.abs(delta);
 
       let quality, qualityClass;
-      if (idx === 0) { quality = 'Best'; qualityClass = 'cm-best'; }
+      const styleMeta = pv._styleAnalysis;
+      if (idx === 0 && styleMeta?.objectiveRank > 1) { quality = `Style Choice · objective #${styleMeta.objectiveRank}`; qualityClass = 'cm-best'; }
+      else if (idx === 0) { quality = 'Objective Best'; qualityClass = 'cm-best'; }
       else if (absDelta <= 10) { quality = 'Equal Best'; qualityClass = 'cm-best'; }
       else if (absDelta <= 30) { quality = 'Great'; qualityClass = 'cm-good'; }
       else if (absDelta <= 80) { quality = 'Good'; qualityClass = 'cm-good'; }
@@ -3145,7 +2038,10 @@
         pv: pv.pv || [],
         isOpponentTurn,
         opponentMoveSan,
-        candidateMoveUci
+        candidateMoveUci,
+        objectiveRank: styleMeta?.objectiveRank || idx + 1,
+        styleReason: styleMeta?.reasons?.[0] || '',
+        styleRisk: styleMeta?.risks?.[0] || ''
       };
     });
   }
@@ -3387,12 +2283,16 @@
     generateEndgameCoach,
     scoreMoveForStyle,
     selectPVForStyle,
+    analyzeCandidate,
     PLAYING_STYLES,
     OPENING_REPERTOIRES,
     HINT_LEVELS,
     // v8.5.0
     resetSacrificeHistory,
-    formatScorePlayerPerspective  // Enhancement D
+    formatScorePlayerPerspective, // Enhancement D
+    // Exposed for deterministic regression tests and progressive-PV consumers.
+    applyMoveToFen,
+    applyMoveToBoard
   };
 
 })();

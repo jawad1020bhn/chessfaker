@@ -1,20 +1,6 @@
 /* ============================================
-   Chess Hint Assistant — v8.5.0 "Midnight Chess"
-   Dark-Only Design (bug-fix & enhancement release)
-
-   Design Language:
-    - Deep obsidian base with electric cyan accents
-    - Refined glassmorphism with neon border glow
-    - Tab-based navigation for reduced scrolling
-    - SVG icons throughout (no unicode symbols)
-    - Bottom action bar for always-visible controls
-    - Smooth micro-animations and transitions
-    - No light mode — pure dark experience
-
-   v8.5.0 additions:
-    - .hint-card.berserker-mode accent (was missing — only kamikaze-mode)
-    - .hint-tag.tag-human for masters-explorer source
-    - .hint-tag.tag-berserker (already existed — now actually used)
+   Chess Hint Assistant — Midnight Chess
+   Three playing modes: Normal, Aggressive, Super Ultra Aggressive
    ============================================ */
 
 /* ─── CSS Custom Properties (Dark Only) ─── */
@@ -49,11 +35,8 @@
   --accent-purple: #a855f7;
   --accent-cloud: #f59e0b;
   --accent-tb: #10b981;
-  --accent-aggressive: #ef4444;
-  --accent-super-aggressive: #dc2626;
-  --accent-ultra-stealth: #ff1744;
-  --accent-kamikaze: #ff0500;
-  --accent-berserker: #ff2770;
+  --accent-aggressive: #ff5a36;
+  --accent-super-ultra: #ff146d;
 
   /* Borders & radius */
   --border-color: rgba(0, 212, 255, 0.08);
@@ -681,13 +664,16 @@ button:focus-visible, select:focus-visible {
 .hint-card.level-4 { border-left-color: var(--accent-purple); }
 .hint-card.level-5 { border-left-color: var(--accent-red); }
 
-/* v8.5.0: Style-aware hint-card accents */
-.hint-card.kamikaze-mode { border-left-color: var(--accent-kamikaze); box-shadow: 0 0 16px rgba(255, 5, 0, 0.18); }
-.hint-card.berserker-mode { border-left-color: var(--accent-berserker); box-shadow: 0 0 18px rgba(255, 39, 112, 0.22); animation: berserkerCardPulse 2.4s ease-in-out infinite; }
+/* Rebuilt three-mode style accents */
+.hint-card.super-ultra-mode {
+  border-left-color: var(--accent-super-ultra);
+  box-shadow: 0 0 18px rgba(255, 20, 109, 0.22);
+  animation: superUltraCardPulse 2.4s ease-in-out infinite;
+}
 
-@keyframes berserkerCardPulse {
-  0%, 100% { box-shadow: 0 0 14px rgba(255, 39, 112, 0.18); }
-  50% { box-shadow: 0 0 24px rgba(255, 39, 112, 0.32); }
+@keyframes superUltraCardPulse {
+  0%, 100% { box-shadow: 0 0 14px rgba(255, 20, 109, 0.18); }
+  50% { box-shadow: 0 0 24px rgba(255, 20, 109, 0.34); }
 }
 
 .hint-text {
@@ -736,21 +722,13 @@ button:focus-visible, select:focus-visible {
 .hint-tag.tag-cloud { background: rgba(245, 158, 11, 0.1); color: var(--accent-cloud); }
 .hint-tag.tag-tb { background: rgba(16, 185, 129, 0.1); color: var(--accent-tb); }
 .hint-tag.tag-human { background: rgba(168, 85, 247, 0.1); color: var(--accent-purple); }  /* v8.5.0: masters-explorer */
-.hint-tag.tag-aggressive { background: rgba(239, 68, 68, 0.1); color: var(--accent-aggressive); }
-.hint-tag.tag-super-aggressive { background: rgba(220, 38, 38, 0.12); color: var(--accent-super-aggressive); }
-.hint-tag.tag-ultra-stealth { background: rgba(255, 23, 68, 0.12); color: var(--accent-ultra-stealth); text-shadow: 0 0 8px rgba(255, 23, 68, 0.5); }
-.hint-tag.tag-kamikaze { background: rgba(255, 5, 0, 0.15); color: var(--accent-kamikaze); text-shadow: 0 0 10px rgba(255, 5, 0, 0.7), 0 0 20px rgba(255, 69, 0, 0.4); font-weight: 800; letter-spacing: 1px; }
-.hint-tag.tag-berserker { background: rgba(255, 39, 112, 0.15); color: var(--accent-berserker); text-shadow: 0 0 10px rgba(255, 39, 112, 0.7), 0 0 25px rgba(255, 0, 80, 0.4); font-weight: 800; letter-spacing: 1.5px; animation: berserkerTagPulse 2s ease-in-out infinite; }
+.hint-tag.tag-aggressive { background: rgba(255, 90, 54, 0.12); color: var(--accent-aggressive); }
+.hint-tag.tag-super-ultra { background: rgba(255, 20, 109, 0.16); color: var(--accent-super-ultra); text-shadow: 0 0 10px rgba(255, 20, 109, 0.65); font-weight: 800; letter-spacing: 1px; }
 .hint-tag.tag-queen-sac { background: rgba(255, 215, 0, 0.12); color: #ffd700; text-shadow: 0 0 8px rgba(255, 215, 0, 0.5); }
 .hint-tag.tag-mate-attack { background: rgba(255, 69, 0, 0.15); color: #ff4500; text-shadow: 0 0 8px rgba(255, 69, 0, 0.6); font-weight: 700; }
 .hint-tag.tag-depth-deep { background: rgba(0, 230, 138, 0.1); color: var(--accent-green); }
 .hint-tag.tag-depth-standard { background: rgba(0, 212, 255, 0.1); color: var(--accent-cyan); }
 .hint-tag.tag-depth-basic { background: rgba(74, 90, 115, 0.12); color: var(--text-secondary); }
-
-@keyframes berserkerTagPulse {
-  0%, 100% { text-shadow: 0 0 10px rgba(255, 39, 112, 0.7); }
-  50% { text-shadow: 0 0 18px rgba(255, 39, 112, 1), 0 0 35px rgba(255, 0, 80, 0.5); }
-}
 
 /* ─── Fair Play Warning ─── */
 .fair-play-warning {
@@ -1273,6 +1251,8 @@ button:focus-visible, select:focus-visible {
 .pv-score.negative { color: var(--accent-red); }
 .pv-score.neutral { color: var(--text-secondary); }
 .pv-depth { font-size: var(--fs-xs); color: var(--text-dim); }
+
+.pv-opponent-first { color: var(--text-dim); opacity: 0.7; }
 
 .pv-moves { font-size: var(--fs-sm); color: var(--text-secondary); font-family: var(--font-mono); word-break: break-word; }
 

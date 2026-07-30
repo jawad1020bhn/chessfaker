@@ -14,7 +14,7 @@
   <div id="shortcut-help" class="shortcut-help" style="display:none" role="dialog" aria-label="Keyboard shortcuts">
     <div class="shortcut-help-header">
       <h4>Keyboard Shortcuts</h4>
-      <button class="shortcut-close" onclick="document.getElementById('shortcut-help').style.display='none'" aria-label="Close">&times;</button>
+      <button id="btn-close-shortcut-help" class="shortcut-close" aria-label="Close">&times;</button>
     </div>
     <div class="shortcut-grid">
       <div class="shortcut-row"><span>Refresh analysis</span><kbd>R</kbd></div>
@@ -380,13 +380,10 @@
         <label for="setting-style">Playing Style</label>
         <select id="setting-style">
           <option value="normal" selected>Normal</option>
-          <option value="aggressive">Aggressive Attacking</option>
-          <option value="super_aggressive">Super Aggressive</option>
-          <option value="ultra_aggressive_stealth">Ultra Aggressive</option>
-          <option value="kamikaze">Kamikaze</option>
-          <option value="berserker">Berserker</option>
+          <option value="aggressive">Aggressive — Fastest Sound Win</option>
+          <option value="super_ultra_aggressive">Super Ultra Aggressive</option>
         </select>
-        <div class="setting-hint">Berserker: Maximum destruction! Sacrifices for chaos, seeks mate through overwhelming attack.</div>
+        <div class="setting-hint">Aggressive seeks the fastest sound win. Super Ultra accepts greater calculated risk for forcing attacks and validated sacrifices.</div>
       </div>
 
       <div class="setting-group">
@@ -566,6 +563,7 @@
 
   </div><!-- /app -->
 
+  <script src="../engine/core-utils.js"></script>
   <script src="../engine/cloud-engine.js"></script>
   <script src="../engine/hint-engine.js"></script>
   <script src="sidepanel.js"></script>
