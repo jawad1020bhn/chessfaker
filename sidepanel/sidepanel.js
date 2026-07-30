@@ -1,6 +1,9 @@
 /**
- * Chess Hint Assistant — Side Panel Controller v8.5.0
+ * Chess Hint Assistant — Side Panel Controller v9.0.0
  * Turn-Based Analysis Engine. No local Stockfish.
+ *
+ * v9.0.0 — Three playing styles with Standard/Human-like modes, synchronized
+ *            candidate views, natural plan continuity, and human coaching hints.
  *
  * v8.5.0 — Bug-fix & Enhancement Release:
  *  - FIX: Berserker style now produces border color + tag + mode class in UI

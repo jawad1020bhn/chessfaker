@@ -1,8 +1,11 @@
 importScripts('engine/core-utils.js');
 
 /**
- * Chess Hint Assistant — Background Service Worker v8.5.0
+ * Chess Hint Assistant — Background Service Worker v9.0.0
  * 3-API Rotation Engine with Anti-Ban Protection
+ *
+ * v9.0.0 — Three-mode style engine, Human-like selection setting,
+ *            stateful FEN reconciliation, safer rendering, and regression coverage.
  *
  * v8.5.0 — Bug-fix & Enhancement Release:
  *  - FIX: Removed dead message handlers ('position_update_from_panel', 'position_changed',

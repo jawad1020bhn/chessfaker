@@ -1,8 +1,9 @@
 /**
- * Chess Hint Assistant — Cloud Engine v8.5.0
+ * Chess Hint Assistant — Cloud Engine v9.0.0
  *
  * 3-API Rotation Engine Metadata
  *
+ * v9.0.0: Metadata retained for the rebuilt Standard/Human-like style pipeline.
  * v8.5.0: Removed unused duplicate cache (localCache/clearLocalCache/getCacheStats)
  *         — background.js has its own memoryCache and is the only consumer.
  * v7.5.0 — API Rotation & Anti-Ban:
