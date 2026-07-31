@@ -179,6 +179,11 @@ const greekGiftMove = engine.analyzeCandidate(greekGiftFen, ['c4h7'], 'w', 40, '
 assert.equal(greekGiftMove.isGreekGift, true, 'bishop takes h7 with a castled king is a Greek gift');
 const nonGreek = engine.analyzeCandidate(greekGiftFen, ['c4d5'], 'w', 20, 'cp');
 assert.equal(nonGreek.isGreekGift, false, 'a non-h7 bishop move is not a Greek gift');
+// Black Greek gift: bishop captures the h2 pawn with the White king castled on g1.
+const blackGreekFen = '4k3/8/8/8/8/6b1/7P/6K1 b - - 0 1';
+assert.equal(engine.analyzeCandidate(blackGreekFen, ['g3h2'], 'b', 50, 'cp').isGreekGift, true, 'bishop takes h2 with a castled White king is a Black Greek gift');
+const blackNonGreekFen = '4k3/8/8/8/8/6b1/8/6K1 b - - 0 1';
+assert.equal(engine.analyzeCandidate(blackNonGreekFen, ['g3h2'], 'b', 50, 'cp').isGreekGift, false, 'a bishop move that captures nothing is not a Greek gift');
 
 // A5 — Draw contempt: near-equal quiet positions are penalized.
 const drawContemptNearEqual = engine.analyzeCandidate('6k1/8/8/8/8/8/8/6K1 w - - 0 1', ['g1f2'], 'w', 20, 'cp');

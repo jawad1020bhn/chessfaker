@@ -994,9 +994,12 @@
     if (!isBishop || !captured || captured.toLowerCase() !== 'p') return { detected: false };
     const target = playerIsWhite ? 'h7' : 'h2';
     if (to !== target) return { detected: false };
+    // The enemy king must be castled toward the corner next to the target pawn:
+    //  White Bxh7+ -> Black king on h8/g8/h7 (kingside, high files 6-7).
+    //  Black Bxh2+ -> White king on h1/g1/h2 (kingside, high files 6-7).
     const nearCorner = enemyKing && (
       (playerIsWhite && (enemyKing.row === 0 || enemyKing.row === 1) && enemyKing.col >= 6) ||
-      (!playerIsWhite && (enemyKing.row === 7 || enemyKing.row === 6) && enemyKing.col <= 1)
+      (!playerIsWhite && (enemyKing.row === 7 || enemyKing.row === 6) && enemyKing.col >= 6)
     );
     return { detected: Boolean(nearCorner) };
   }

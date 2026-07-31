@@ -17,6 +17,19 @@
 - Added Chaos-only annotations: `greek gift`, `overload`, `practical chances`, `storm the king`.
 - All additions feed the existing `chaosSacrificeTrigger` gate and risk budget — no guardrail bypass.
 
+### Fixes (deep-scan review)
+- **Lichess Cloud eval normalization**: cloud-eval `cp`/`mate` is reported relative to the
+  side to move (UCI convention), but the pipeline treats every `pv.score` as White-relative.
+  Black-to-move positions had inverted evaluations, eval-bar, move ranking, and move
+  classification. Scores are now flipped to White's perspective on import.
+- **Chess-API mate consistency**: chess-api.com reports `eval`/`centipawns`/`mate` from
+  White's perspective, but the mate path was re-flipped for black-to-move while the
+  centipawn path was not. The mate path now stays White-relative and matches the
+  centipawn path and the rest of the pipeline.
+- **Greek Gift (Black)**: the Black `Bxh2+` detection tested the enemy king for a
+  queenside column, so a Black Greek gift against a White king castled on g1/h1 was
+  never recognized. Both colors now detect the castled-kingside pattern correctly.
+
 ## 9.2.0 — Chaos Attack
 
 ### Position integrity
