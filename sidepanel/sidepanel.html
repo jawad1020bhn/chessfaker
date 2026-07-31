@@ -19,8 +19,7 @@
     <div class="shortcut-grid">
       <div class="shortcut-row"><span>Refresh analysis</span><kbd>R</kbd></div>
       <div class="shortcut-row"><span>Toggle settings</span><kbd>S</kbd></div>
-      <div class="shortcut-row"><span>Hint level 1-5</span><kbd>1</kbd>-<kbd>5</kbd></div>
-      <div class="shortcut-row"><span>Switch tabs</span><kbd>Q</kbd>/<kbd>W</kbd>/<kbd>E</kbd></div>
+            <div class="shortcut-row"><span>Switch tabs</span><kbd>Q</kbd>/<kbd>W</kbd>/<kbd>E</kbd></div>
       <div class="shortcut-row"><span>Close / Dismiss</span><kbd>Esc</kbd></div>
       <div class="shortcut-row"><span>Show shortcuts</span><kbd>?</kbd></div>
     </div>
@@ -113,7 +112,7 @@
               <h2>Hint</h2>
             </div>
           </div>
-          <div id="hint-card" class="hint-card level-3" aria-live="polite">
+          <div id="hint-card" class="hint-card exact-move" aria-live="polite">
             <p id="hint-text" class="hint-text">Waiting for board position...</p>
             <div id="hint-fromto" class="hint-fromto" style="display:none" aria-label="Move squares"></div>
             <div id="hint-tags" class="hint-tags" aria-label="Hint tags"></div>
@@ -126,7 +125,7 @@
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                 Coach Mode
               </span>
-              <span id="hint-usage-counter" class="hint-usage-counter">0/3 L5 hints used</span>
+              <span id="hint-usage-counter" class="hint-usage-counter">0/3 exact hints used</span>
             </div>
           </div>
           <div id="winning-plan" class="winning-plan" style="display:none">
@@ -325,13 +324,7 @@
 
     <!-- ═══ Bottom Action Bar ═══ -->
     <div class="bottom-bar">
-      <div class="hint-level-selector" role="radiogroup" aria-label="Hint detail level">
-        <button class="level-btn level-l1" data-level="1" role="radio" aria-checked="false" title="Position assessment only (1)">L1</button>
-        <button class="level-btn level-l2" data-level="2" role="radio" aria-checked="false" title="Area and piece type (2)">L2</button>
-        <button class="level-btn level-l3 active" data-level="3" role="radio" aria-checked="true" title="Piece and direction (3)">L3</button>
-        <button class="level-btn" data-level="4" role="radio" aria-checked="false" title="Deep line (4)">L4</button>
-        <button class="level-btn" data-level="5" role="radio" aria-checked="false" title="Exact move (5)">L5</button>
-      </div>
+      <div class="exact-hint-label" aria-label="Hint type">Exact Move</div>
       <button id="btn-refresh" class="refresh-btn" title="Refresh analysis (R)" aria-label="Refresh analysis">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
       </button>
@@ -371,7 +364,7 @@
           <option value="30">30 (deep)</option>
           <option value="40">40 (deepest)</option>
         </select>
-        <div class="setting-hint">Hides L4/L5 hints until engine reaches this depth. Helps filter shallow cloud-eval cache hits.</div>
+        <div class="setting-hint">Shows exact-move hints only after the engine reaches this depth. Helps filter shallow cloud-eval cache hits.</div>
       </div>
 
       <div class="setting-divider"></div>
@@ -528,11 +521,11 @@
           <input type="checkbox" id="setting-coach-mode" checked>
           <span>Coach Mode</span>
         </label>
-        <div class="setting-hint">Limits exact move (L5) hints per game to prevent engine correlation</div>
+        <div class="setting-hint">Limits exact-move hints per game to prevent engine correlation</div>
       </div>
 
       <div class="setting-group">
-        <label for="setting-coach-max-hints">Max L5 hints per game</label>
+        <label for="setting-coach-max-hints">Max exact hints per game</label>
         <select id="setting-coach-max-hints">
           <option value="1">1 hint</option>
           <option value="2">2 hints</option>
@@ -551,7 +544,7 @@
           <option value="60">60% — relaxed</option>
           <option value="50">50% — very relaxed</option>
         </select>
-        <div class="setting-hint">Downgrades L5 → L3 when your engine-match rate over the last 8 moves crosses this threshold. Real correlation guard, not just a counter.</div>
+        <div class="setting-hint">Withholds exact-move hints when your engine-match rate over the last 8 moves crosses this threshold. Real correlation guard, not just a counter.</div>
       </div>
 
       <div class="setting-divider"></div>

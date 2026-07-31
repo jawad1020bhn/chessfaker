@@ -73,6 +73,11 @@ assert.match(aggressiveHint.main, /Aggressive choice: Qh5\+/);
 assert.match(aggressiveHint.main, /Fast-win idea:/);
 assert.equal(aggressiveHint.pvs[0].pv[0], 'd1h5');
 
+const legacyLevelHint = engine.generateHints({ fen: attackFen, pvs: [quiet], moveHistory: [] }, 1, 'w', 'normal', 'none');
+assert.equal(legacyLevelHint.level, 5, 'exact-only mode normalizes legacy level requests');
+assert.match(legacyLevelHint.main, /^Best:/, 'legacy level requests still receive the exact move');
+assert.ok(legacyLevelHint.bestMoveFromTo?.includes('d1 → d2'));
+
 // Human-like mode stays inside objective/style budgets but prefers natural plans.
 const naturalFen = '4k3/8/8/8/8/8/8/3QK1N1 w - - 0 1';
 const engineQueenMove = { score: 20, scoreType: 'cp', depth: 24, pv: ['d1d2'] };

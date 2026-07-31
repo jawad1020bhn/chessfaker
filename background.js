@@ -19,7 +19,7 @@ importScripts('engine/core-utils.js', 'engine/api-coordinator.js');
  *  - FIX: Consolidated keep-alive into a single chrome.alarms-based mechanism
  *         (removed the redundant setInterval + platform-info leak)
  *  - ENH (G): Replaced setInterval keep-alive with chrome.alarms (MV3 best practice)
- *  - ENH (C): Forwards depthTarget setting to sidepanel for L4/L5 gating
+ *  - ENH (C): Enforces the minimum depth target before showing exact hints
  *  - ENH (I): Tracks player-move / engine-recommendation correlation; sidepanel reads it
  *  - ENH (J): ECO openings now loaded from engine/eco.json (with inline fallback)
  *
@@ -53,7 +53,6 @@ const DEFAULT_SETTINGS = {
   style: 'normal',
   humanLikeMode: false,
   repertoire: 'none',
-  hintLevel: 3,
   autoAnalyze: true,
   showThreats: true,
   showAssessment: true,
@@ -67,8 +66,8 @@ const DEFAULT_SETTINGS = {
   coachModeEnabled: true,
   coachModeMaxHints: 3,
   // v8.5.0 enhancements
-  depthTarget: 0,                  // 0 = no minimum; otherwise min depth for L4/L5
-  correlationThreshold: 100        // 100 = off; otherwise % cap that downgrades L5→L3
+  depthTarget: 0,                  // 0 = no minimum; otherwise min depth for exact hints
+  correlationThreshold: 100        // 100 = off; otherwise blocks exact hints when exceeded
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -307,9 +306,9 @@ function semanticSourceOrder(fen) {
 
 
 // ─── Coach Mode & Hint Tracking ──────────────────────────────────────
-let hintUsageTracker = { gameId: null, l5Count: 0, l4Count: 0, lastWarnLevel: 0 };
-let lastL5HintTime = 0;
-const L5_COOLDOWN_MS = 5000;
+let hintUsageTracker = { gameId: null, exactHintCount: 0 };
+let lastExactHintTime = 0;
+const EXACT_HINT_COOLDOWN_MS = 5000;
 
 // v8.5.0 — Real engine-correlation guard (Enhancement I)
 // Stores the engine's first-choice UCI move keyed by FEN-of-side-to-move.
@@ -1227,27 +1226,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const positionToken = registerPosition(message.fen, tabId);
 
       if (positionToken && hintUsageTracker.gameId !== positionToken.gameId) {
-        hintUsageTracker = { gameId: positionToken.gameId, l5Count: 0, l4Count: 0, lastWarnLevel: 0 };
+        hintUsageTracker = { gameId: positionToken.gameId, exactHintCount: 0 };
+        lastExactHintTime = 0;
         resetAnalysisState();
         resetCorrelationTracker();
       }
 
-      let effectiveHintLevel = message.hintLevel || settings.hintLevel || 3;
-      let coachModeDowngrade = false;
-      if (settings.coachModeEnabled && effectiveHintLevel === 5) {
+      const effectiveHintLevel = 5;
+      let exactHintBlocked = null;
+      if (settings.coachModeEnabled) {
         const now = Date.now();
-        if (now - lastL5HintTime < L5_COOLDOWN_MS) {
-          effectiveHintLevel = 3;
-          coachModeDowngrade = true;
-        } else if (hintUsageTracker.l5Count >= (settings.coachModeMaxHints || 3)) {
-          effectiveHintLevel = 3;
-          coachModeDowngrade = true;
-        } else {
-          hintUsageTracker.l5Count++;
-          lastL5HintTime = now;
+        if (now - lastExactHintTime < EXACT_HINT_COOLDOWN_MS) {
+          exactHintBlocked = { reason: 'cooldown', message: 'Please wait a few seconds before requesting another exact-move hint.' };
+        } else if (hintUsageTracker.exactHintCount >= (settings.coachModeMaxHints || 3)) {
+          exactHintBlocked = { reason: 'coach_limit', message: `You have used this game’s ${settings.coachModeMaxHints || 3} exact-move hints.` };
         }
-      } else if (effectiveHintLevel === 4) {
-        hintUsageTracker.l4Count++;
       }
 
       // Refresh is deliberately non-destructive: caches, cooldowns, quotas and
@@ -1296,39 +1289,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           turnState.consecutiveFailures = 0;
 
           cloudResult.hintLevel = effectiveHintLevel;
-          cloudResult.coachModeDowngrade = coachModeDowngrade;
-          cloudResult.hintUsage = {
-            l5Count: hintUsageTracker.l5Count,
-            l4Count: hintUsageTracker.l4Count,
-            maxL5: settings.coachModeMaxHints || 3
-          };
 
-          // v8.5.0: Apply depth-target gating (Enhancement C) — if the engine's
-          // depth is below the user's configured minimum AND hint level is L4/L5,
-          // downgrade to L3 so we don't reveal specific moves on shallow analysis.
+          // Exact-only mode has no lower-detail fallback. Guards withhold the
+          // move rather than leaking it through a downgraded hint level.
           const depthTarget = settings.depthTarget || 0;
-          if (depthTarget > 0 && effectiveHintLevel >= 4) {
+          if (!exactHintBlocked && depthTarget > 0) {
             const actualDepth = cloudResult.depth || 0;
-            // Tablebase (depth 999) always passes.
             if (actualDepth < depthTarget && actualDepth < 100) {
-              cloudResult.depthDowngrade = { from: effectiveHintLevel, to: 3, reason: `depth ${actualDepth} < target ${depthTarget}` };
-              effectiveHintLevel = 3;
-              cloudResult.hintLevel = 3;
+              exactHintBlocked = { reason: 'depth_target', message: `Exact-move hints require depth ${depthTarget}; current depth is ${actualDepth}.` };
             }
           }
 
-          // v8.5.0: Apply correlation cap (Enhancement I) — if recent
-          // engine-match rate over the last 8 moves exceeds the user's
-          // threshold, downgrade L5 → L3.
           const corrThreshold = settings.correlationThreshold || 100;
-          if (effectiveHintLevel === 5 && corrThreshold < 100) {
+          if (!exactHintBlocked && corrThreshold < 100) {
             const stats = getCorrelationStats();
             if (stats.recentSize >= 3 && stats.recentPct >= corrThreshold) {
-              cloudResult.correlationDowngrade = { from: 5, to: 3, recentPct: stats.recentPct, threshold: corrThreshold };
-              effectiveHintLevel = 3;
-              cloudResult.hintLevel = 3;
+              exactHintBlocked = { reason: 'correlation_cap', message: `Exact-move hints are withheld because your engine-match rate (${stats.recentPct}%) reached the ${corrThreshold}% cap.` };
             }
           }
+          if (!exactHintBlocked && settings.coachModeEnabled) {
+            hintUsageTracker.exactHintCount++;
+            lastExactHintTime = Date.now();
+          }
+          cloudResult.exactHintBlocked = exactHintBlocked;
+          cloudResult.hintUsage = {
+            exactHintCount: hintUsageTracker.exactHintCount,
+            maxExactHints: settings.coachModeMaxHints || 3
+          };
 
           // v8.5.0: Record the engine's first-choice move so that when the
           // player makes their move, we can update the correlation tracker.
@@ -1443,7 +1430,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (msgType === 'player_color_changed') {
     // v8.5.0: Reset all per-game/per-color trackers, not just turnState.
     resetAnalysisState();
-    hintUsageTracker = { gameId: null, l5Count: 0, l4Count: 0, lastWarnLevel: 0 };
+    hintUsageTracker = { gameId: null, exactHintCount: 0 };
+    lastExactHintTime = 0;
     resetCorrelationTracker();
     sendResponse({ ok: true });
     return false;
@@ -1471,7 +1459,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // v8.5.0 (Enhancement I): Side panel signals a new game so the tracker resets.
   if (msgType === 'reset_correlation') {
     resetCorrelationTracker();
-    hintUsageTracker = { gameId: null, l5Count: 0, l4Count: 0, lastWarnLevel: 0 };
+    hintUsageTracker = { gameId: null, exactHintCount: 0 };
+    lastExactHintTime = 0;
     sendResponse({ ok: true });
     return false;
   }
@@ -1509,6 +1498,7 @@ chrome.runtime.onInstalled.addListener(() => {
       }
 
       if (s.humanLikeMode === undefined) { s.humanLikeMode = false; updated = true; }
+      if (s.hintLevel !== undefined) { delete s.hintLevel; updated = true; }
 
       // v8.5.0: ensure new fields exist on migrated settings
       if (s.depthTarget === undefined) { s.depthTarget = 0; updated = true; }

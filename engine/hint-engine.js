@@ -18,13 +18,10 @@
   const PIECE_NAMES = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' };
   // v8.5.0: Removed unused PIECE_UNICODE constant.
 
-  // ─── Hint Levels (5 levels) ────────────────────────────────────────
+  // Exact-move-only product: all primary hints use this single level.
+  const EXACT_HINT_LEVEL = 5;
   const HINT_LEVELS = {
-    1: { name: 'Positional Coach', desc: 'Position assessment and plan only — no move hints' },
-    2: { name: 'Area Hint', desc: 'Which area of the board and which piece type to focus on' },
-    3: { name: 'Direction Hint', desc: 'Which piece to move and general direction — no exact squares' },
-    4: { name: 'Deep Line', desc: 'Explains multi-move idea with piece names and direction' },
-    5: { name: 'Exact Move', desc: 'Shows exact move with from-to squares, style, and plan' }
+    [EXACT_HINT_LEVEL]: { name: 'Exact Move', desc: 'Shows the selected move with SAN, squares, style, and plan' }
   };
 
   // ─── Playing Styles (v7.3 — 6 styles, incl. Berserker from v7.3) ──
@@ -1174,6 +1171,7 @@
 
   // ─── Generate Hints (Main Entry) ───────────────────────────────────
   function generateHints(analysisData, hintLevel, playerColor, style, openingRepertoire, humanLikeMode = false, humanContext = {}) {
+    hintLevel = EXACT_HINT_LEVEL;
     const { fen, pvs, bestMove, source, tablebaseData, openingData } = analysisData;
     const position = assessPosition(fen);
     const isWhite = playerColor === 'w';
@@ -1265,26 +1263,9 @@
       return hints;
     }
 
-    // Generate main hint
-    if (hintLevel === 1) {
-      hints.main = generatePositionalCoachHint(bestPV, position, evalScore, scoreType, playerColor, fen || '', currentStyle);
-      hints.bestMoveFromTo = null;
-      hints.fairPlayWarning = null;
-    } else if (hintLevel === 2) {
-      hints.main = generateAreaHint(bestPV, position, evalScore, scoreType, playerColor, fen || '', currentStyle);
-      hints.bestMoveFromTo = null;
-      hints.fairPlayWarning = null;
-    } else if (hintLevel === 3) {
-      hints.main = generateDirectionHint(bestPV, position, evalScore, scoreType, playerColor, fen || '', currentStyle);
-      hints.bestMoveFromTo = null;
-      hints.fairPlayWarning = null;
-    } else if (hintLevel === 4) {
-      hints.main = generateDeepLineHint(bestPV, position, evalScore, scoreType, playerColor, fen || '', currentStyle);
-      hints.fairPlayWarning = 'Deep line hints reveal specific moves. Use sparingly to avoid engine correlation patterns.';
-    } else {
-      hints.main = generateExactMoveHint(bestPV, position, evalScore, scoreType, playerColor, fen || '', currentStyle, currentRepertoire, analysisData.moveHistory);
-      hints.fairPlayWarning = 'Using exact move hints frequently may cause your moves to match engine recommendations, which fair play systems can detect.';
-    }
+    // Exact-move-only primary hint.
+    hints.main = generateExactMoveHint(bestPV, position, evalScore, scoreType, playerColor, fen || '', currentStyle, currentRepertoire, analysisData.moveHistory);
+    hints.fairPlayWarning = 'Using exact move hints frequently may cause your moves to match engine recommendations, which fair play systems can detect.';
 
     // Explain why the selected move fits the requested mode. This keeps lower
     // hint levels educational and gives exact/deep hints concrete compensation.
@@ -1292,7 +1273,7 @@
       const meta = bestPV._styleAnalysis;
       hints.styleAnalysis = meta;
       if (humanLikeMode) {
-        if (hintLevel >= 5) {
+        if (hintLevel === EXACT_HINT_LEVEL) {
           hints.main = hints.main.replace(/^Best:/, 'Human choice:')
             .replace(/^Aggressive choice:/, 'Human Aggressive choice:')
             .replace(/^Super Ultra Aggressive choice:/, 'Human Super Ultra choice:');
@@ -1301,13 +1282,13 @@
         const humanRisks = [...(meta.humanRisks || []), ...(meta.risks || [])].slice(0, 2);
         hints.main += ` Human plan: ${meta.plan || 'improve the position with a clear purpose'}.`;
         if (humanReasons.length) hints.main += ` Why it feels natural: ${humanReasons.join(', ')}.`;
-        if (hintLevel >= 3 && meta.followUpUci && bestPV.pv?.length >= 3) {
+        if (hintLevel === EXACT_HINT_LEVEL && meta.followUpUci && bestPV.pv?.length >= 3) {
           let followFen = fen;
           followFen = applyMoveToFen(followFen, bestPV.pv[0]);
           if (bestPV.pv[1]) followFen = applyMoveToFen(followFen, bestPV.pv[1]);
           hints.main += ` If the expected reply comes, continue with ${uciToSan(meta.followUpUci, followFen)}.`;
         }
-        if (hintLevel >= 4 && humanRisks.length) hints.main += ` Practical risk: ${humanRisks.join(', ')}.`;
+        if (hintLevel === EXACT_HINT_LEVEL && humanRisks.length) hints.main += ` Practical risk: ${humanRisks.join(', ')}.`;
       } else if (currentStyle.id !== 'normal') {
         const reasons = (meta.reasons || []).slice(0, 3);
         const risks = (meta.risks || []).slice(0, 2);
@@ -1315,18 +1296,18 @@
           const prefix = currentStyle.id === 'aggressive' ? 'Fast-win idea' : 'Maximum-pressure idea';
           hints.main += ` ${prefix}: ${reasons.join(', ')}.`;
         }
-        if (hintLevel >= 4 && Number.isFinite(meta.evalLoss) && meta.evalLoss > 0) {
+        if (hintLevel === EXACT_HINT_LEVEL && Number.isFinite(meta.evalLoss) && meta.evalLoss > 0) {
           hints.main += ` Objective cost: ${(meta.evalLoss / 100).toFixed(1)} pawn${meta.evalLoss === 100 ? '' : 's'}.`;
         }
-        if (hintLevel >= 4 && risks.length) hints.main += ` Risk: ${risks.join(', ')}.`;
+        if (hintLevel === EXACT_HINT_LEVEL && risks.length) hints.main += ` Risk: ${risks.join(', ')}.`;
       }
-      if (hintLevel >= 4 && Number.isFinite(meta.evalLoss) && meta.evalLoss > 0 && humanLikeMode) {
+      if (hintLevel === EXACT_HINT_LEVEL && Number.isFinite(meta.evalLoss) && meta.evalLoss > 0 && humanLikeMode) {
         hints.main += ` Objective cost: ${(meta.evalLoss / 100).toFixed(1)} pawn${meta.evalLoss === 100 ? '' : 's'}.`;
       }
     }
 
     // From-to square notation — always show actual piece color
-    if (hintLevel >= 5 && bestPV && bestPV.pv && bestPV.pv.length > 0) {
+    if (hintLevel === EXACT_HINT_LEVEL && bestPV && bestPV.pv && bestPV.pv.length > 0) {
       const uci = bestPV.pv[0];
       const from = uci.substring(0, 2);
       const to = uci.substring(2, 4);
@@ -1357,8 +1338,8 @@
     // Winning plan (style-aware)
     hints.winningPlan = generateWinningPlan(evalScore, scoreType, position, playerColor, fen || '', style);
 
-    // Style annotation for L5
-    if (hintLevel >= 5 && bestPV && bestPV.pv && bestPV.pv.length > 0 && fen) {
+    // Style annotation for exact-move hints
+    if (hintLevel === EXACT_HINT_LEVEL && bestPV && bestPV.pv && bestPV.pv.length > 0 && fen) {
       const annotations = annotateMoveForStyle(bestPV.pv[0], fen, style, evalScore, bestPV._styleAnalysis);
       if (annotations.length > 0) hints.styleAnnotation = annotations.join(', ');
     }
@@ -1423,248 +1404,7 @@
     return 'Endgame position \u2014 tablebase analysis available';
   }
 
-  // ─── L1: Positional Coach Hint ───────────────────────────────────
-  function generatePositionalCoachHint(bestPV, position, evalScore, scoreType, playerColor, fen, style) {
-    if (!fen) return 'Waiting for position...';
-
-    const isWhite = playerColor === 'w';
-    const playerLabel = isWhite ? 'White' : 'Black';
-    const phase = detectGamePhase(fen);
-    const balance = position.material.balance;
-    const playerBalance = isWhite ? balance : -balance;
-
-    // Build position assessment
-    let assessment = '';
-
-    // Material assessment
-    if (playerBalance > 5) assessment += 'You have a decisive material advantage. ';
-    else if (playerBalance > 2) assessment += 'You have a significant material advantage. ';
-    else if (playerBalance > 0) assessment += 'You have a slight material edge. ';
-    else if (playerBalance === 0) assessment += 'Material is equal. ';
-    else if (playerBalance > -2) assessment += 'Your opponent has a slight material edge. ';
-    else if (playerBalance > -5) assessment += 'You are down material. ';
-    else assessment += 'You face a significant material deficit. ';
-
-    // King safety
-    const myKingIssues = position.kingSafety.issues.filter(i => i.color === playerColor && i.severity === 'high');
-    if (myKingIssues.length > 0) assessment += 'Your king safety needs attention. ';
-
-    // Pawn structure
-    const myPassedPawns = isWhite ? position.pawnStructure.whitePassedPawns : position.pawnStructure.blackPassedPawns;
-    if (myPassedPawns > 0) assessment += `You have ${myPassedPawns} passed pawn(s). `;
-
-    // Piece activity
-    const developed = position.pieceActivity.developed;
-    if (phase === 'opening' && developed < 2) assessment += 'Focus on developing your minor pieces. ';
-
-    // Tactical opportunities
-    if (position.threats.length > 0) assessment += 'There are tactical opportunities on the board. ';
-
-    // Game phase and plan
-    let plan = '';
-    if (scoreType === 'mate' && evalScore > 0) {
-      plan = 'You have a winning attack — look for forcing sequences.';
-    } else if (scoreType === 'mate' && evalScore < 0) {
-      plan = 'Defend carefully — your opponent has a dangerous attack.';
-    } else if (evalScore > 300) {
-      plan = phase === 'endgame'
-        ? 'Activate your king and push your passed pawns.'
-        : 'Simplify the position — trade pieces to convert your advantage.';
-    } else if (evalScore > 100) {
-      plan = 'Increase pressure — look for small improvements and piece activity.';
-    } else if (evalScore > -100) {
-      plan = 'Equal position — focus on piece activity and controlling the center.';
-    } else if (evalScore > -300) {
-      plan = 'Stay solid — defend carefully and look for counterplay.';
-    } else {
-      plan = 'Defend stubbornly — look for tactical tricks and simplification.';
-    }
-
-    return `${assessment}Plan: ${plan}`;
-  }
-
-  // ─── L2: Area Hint ──────────────────────────────────────────────
-  function generateAreaHint(bestPV, position, evalScore, scoreType, playerColor, fen, style) {
-    if (!fen) return 'Waiting for position...';
-    if (!bestPV || !bestPV.pv || bestPV.pv.length === 0) {
-      return generatePositionalCoachHint(bestPV, position, evalScore, scoreType, playerColor, fen, style);
-    }
-
-    const isWhite = playerColor === 'w';
-    const board = parseFENPlacement(fen.split(' ')[0]);
-    const uci = bestPV.pv[0];
-    const from = uci.substring(0, 2);
-    const to = uci.substring(2, 4);
-    const piece = getPieceAt(board, from);
-    const pieceName = piece ? PIECE_NAMES[piece.toLowerCase()] : 'piece';
-
-    // Determine the area of the board based on the destination square
-    const toCol = to.charCodeAt(0) - 97; // 0-7
-    const toRow = 8 - parseInt(to[1]); // 0-7
-
-    let area = '';
-    if (toCol <= 2) area = 'queenside';
-    else if (toCol >= 5) area = 'kingside';
-    else area = 'center';
-
-    // Determine if it's attacking or defensive based on eval
-    let intent = '';
-    if (evalScore > 50) intent = 'press your advantage on the';
-    else if (evalScore > -50) intent = 'focus your attention on the';
-    else intent = 'shore up your defenses on the';
-
-    // Check for king proximity for attacking hints
-    const oppKingColor = isWhite ? 'k' : 'K';
-    let oppKingPos = null;
-    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
-      if (board[r][c] === oppKingColor) oppKingPos = { row: r, col: c };
-    }
-
-    if (oppKingPos) {
-      const distToKing = Math.abs(toRow - oppKingPos.row) + Math.abs(toCol - oppKingPos.col);
-      if (distToKing <= 3 && evalScore > 0) {
-        intent = 'attack the enemy king on the';
-      }
-    }
-
-    // Piece type hint
-    const pieceTypeHint = piece ? `Consider moving a ${pieceName}` : 'Consider your pieces';
-
-    return `${pieceTypeHint} — ${intent} ${area}.`;
-  }
-
-  // ─── L3: Direction Hint ──────────────────────────────────────────
-  function generateDirectionHint(bestPV, position, evalScore, scoreType, playerColor, fen, style) {
-    if (!fen) return 'Waiting for position...';
-    if (!bestPV || !bestPV.pv || bestPV.pv.length === 0) {
-      return generatePositionalCoachHint(bestPV, position, evalScore, scoreType, playerColor, fen, style);
-    }
-
-    const isWhite = playerColor === 'w';
-    const board = parseFENPlacement(fen.split(' ')[0]);
-    const uci = bestPV.pv[0];
-    const from = uci.substring(0, 2);
-    const to = uci.substring(2, 4);
-    const piece = getPieceAt(board, from);
-    const pieceName = piece ? PIECE_NAMES[piece.toLowerCase()] : 'piece';
-    const captured = getPieceAt(board, to);
-
-    // Determine direction
-    const fromCol = from.charCodeAt(0) - 97;
-    const fromRow = 8 - parseInt(from[1]);
-    const toCol = to.charCodeAt(0) - 97;
-    const toRow = 8 - parseInt(to[1]);
-
-    let direction = '';
-    const dCol = toCol - fromCol;
-    const dRow = toRow - fromRow;
-
-    if (Math.abs(dCol) <= 1 && dRow < 0 && isWhite) direction = 'forward';
-    else if (Math.abs(dCol) <= 1 && dRow > 0 && !isWhite) direction = 'forward';
-    else if (Math.abs(dCol) <= 1 && dRow > 0 && isWhite) direction = 'backward';
-    else if (Math.abs(dCol) <= 1 && dRow < 0 && !isWhite) direction = 'backward';
-    else if (dCol < 0 && Math.abs(dRow) <= 1) direction = 'toward the queenside';
-    else if (dCol > 0 && Math.abs(dRow) <= 1) direction = 'toward the kingside';
-    else if (dCol < 0 && dRow < 0 && isWhite) direction = 'forward toward the queenside';
-    else if (dCol > 0 && dRow < 0 && isWhite) direction = 'forward toward the kingside';
-    else if (dCol < 0 && dRow > 0 && !isWhite) direction = 'forward toward the queenside';
-    else if (dCol > 0 && dRow > 0 && !isWhite) direction = 'forward toward the kingside';
-    else if (dCol < 0 && dRow > 0 && isWhite) direction = 'backward toward the queenside';
-    else if (dCol > 0 && dRow > 0 && isWhite) direction = 'backward toward the kingside';
-    else if (dCol < 0 && dRow < 0 && !isWhite) direction = 'backward toward the queenside';
-    else if (dCol > 0 && dRow < 0 && !isWhite) direction = 'backward toward the kingside';
-    else direction = 'to a new position';
-
-    // Center check
-    if (toCol >= 2 && toCol <= 5 && toRow >= 2 && toRow <= 5) {
-      direction = 'toward the center';
-    }
-
-    let hint = `Move your ${pieceName} ${direction}`;
-
-    // Add context
-    if (captured) {
-      hint += ' — there is a capture available';
-      if (bestPV._styleAnalysis?.sacrifice) hint += ' (calculated sacrifice!)';
-    }
-
-    if (scoreType === 'mate' && evalScore > 0) {
-      hint += ' — look for a forcing sequence';
-    } else if (scoreType === 'mate' && evalScore < 0) {
-      hint += ' — defend against the threat';
-    }
-
-    return hint + '.';
-  }
-
-  // ─── L4: Deep Line Hint (Player-First) ──────────────────────────
-  function generateDeepLineHint(bestPV, position, evalScore, scoreType, playerColor, fen, style) {
-    if (!bestPV || !bestPV.pv || bestPV.pv.length === 0) return 'Analyzing position...';
-    if (!fen) return 'Waiting for position...';
-
-    const board = parseFENPlacement(fen.split(' ')[0]);
-    const uci = bestPV.pv[0];
-    const from = uci.substring(0, 2);
-    const to = uci.substring(2, 4);
-    const piece = getPieceAt(board, from);
-    const captured = getPieceAt(board, to);
-    const pieceName = piece ? PIECE_NAMES[piece.toLowerCase()] : 'piece';
-    const isWhite = playerColor === 'w';
-    const playerLabel = isWhite ? 'White' : 'Black';
-    // v5.4.0: Use ACTUAL piece color from the board, not assumed ownership
-    const isPieceWhite = piece && piece === piece.toUpperCase();
-    const pieceSideLabel = isPieceWhite ? 'White' : 'Black';
-    const possessive = pieceSideLabel.toLowerCase() + "'s";
-    const currentStyle = style || PLAYING_STYLES.normal;
-
-    let hint = '';
-
-    if (scoreType === 'mate' && evalScore > 0) {
-      hint = `Force mate! Move ${possessive} ${pieceName} from ${from} to ${to}`;
-    } else if (scoreType === 'mate' && evalScore < 0) {
-      hint = `Defend! Move ${possessive} ${pieceName} from ${from} to ${to} to avoid mate`;
-    } else if (captured) {
-      const capturedName = PIECE_NAMES[captured.toLowerCase()] || 'piece';
-      const isOppPiece = isWhite ? (captured === captured.toLowerCase()) : (captured === captured.toUpperCase());
-      hint = `Capture with ${possessive} ${pieceName} from ${from} to ${to}`;
-      if (isOppPiece) hint += `, taking opponent's ${capturedName}`;
-      // Only call it a sacrifice when the PV confirms material is actually lost.
-      if (bestPV._styleAnalysis?.sacrifice) {
-        hint += ` (${bestPV._styleAnalysis.sacrificeSoundness || 'calculated'} sacrifice!)`;
-      }
-      if (bestPV.pv.length >= 3) {
-        const nextUci = bestPV.pv[2];
-        if (nextUci) hint += ` \u2014 the idea continues toward ${nextUci.substring(2, 4)}`;
-      }
-    } else if (evalScore > 100) {
-      hint = `${possessive} ${pieceName} from ${from} to ${to} strengthens ${playerLabel.toLowerCase()}'s winning position`;
-      if (bestPV.pv.length >= 3) {
-        const nextUci = bestPV.pv[2];
-        if (nextUci) {
-          const boardAfter2 = applyMoveToBoard(applyMoveToBoard(board, bestPV.pv[0]), bestPV.pv[1]);
-          const nextFrom = nextUci.substring(0, 2);
-          const nextTo = nextUci.substring(2, 4);
-          const nextPiece = getPieceAt(boardAfter2, nextFrom);
-          if (nextPiece) hint += `. Follow-up: ${PIECE_NAMES[nextPiece.toLowerCase()]} ${nextFrom} to ${nextTo}`;
-        }
-      }
-    } else if (evalScore > -100) {
-      hint = `Play ${possessive} ${pieceName} from ${from} to ${to}`;
-      if (bestPV.pv.length >= 3) {
-        const nextUci = bestPV.pv[2];
-        if (nextUci) hint += ` with the idea of reaching ${nextUci.substring(2, 4)}`;
-      }
-    } else {
-      hint = `Defend with ${possessive} ${pieceName} from ${from} to ${to}`;
-    }
-
-    const myKingIssues = position.kingSafety.issues.filter(i => i.color === playerColor && i.severity === 'high');
-    if (myKingIssues.length > 0 && evalScore < 0) hint += `. ${playerLabel}'s king needs attention`;
-
-    return hint;
-  }
-
-  // ─── L5: Exact Move Hint (Player-First) ──────────────────────────
+  // ─── Exact Move Hint (Player-First) ───────────────────────────────
   function generateExactMoveHint(bestPV, position, evalScore, scoreType, playerColor, fen, style, repertoire, moveHistory) {
     if (!bestPV || !bestPV.pv || bestPV.pv.length === 0) return 'Analysis in progress...';
     if (!fen) return 'Waiting for position...';
@@ -1816,7 +1556,7 @@
 
     // From-to notation — ALWAYS show the PLAYER'S response move
     // Never show opponent's move as the primary from-to hint
-    if (hintLevel >= 5) {
+    if (hintLevel === EXACT_HINT_LEVEL) {
       if (responseUci) {
         hints.bestMoveFromTo = responseFromToHint;
       } else {
@@ -2444,6 +2184,7 @@
     PLAYING_STYLES,
     OPENING_REPERTOIRES,
     HINT_LEVELS,
+    EXACT_HINT_LEVEL,
     // v8.5.0
     resetSacrificeHistory,
     formatScorePlayerPerspective, // Enhancement D
