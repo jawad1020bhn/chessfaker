@@ -67,7 +67,6 @@ const DEFAULT_SETTINGS = {
   coachModeMaxHints: 3,
   // v8.5.0 enhancements
   depthTarget: 0,                  // 0 = no minimum; otherwise min depth for exact hints
-  correlationThreshold: 100,       // 100 = off; otherwise blocks exact hints when exceeded
   // Individual analysis providers can be excluded without bypassing safeguards.
   useChessApi: true,
   useLichessCloud: true,
@@ -1391,13 +1390,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
           }
 
-          const corrThreshold = settings.correlationThreshold || 100;
-          if (!exactHintBlocked && corrThreshold < 100) {
-            const stats = getCorrelationStats();
-            if (stats.recentSize >= 3 && stats.recentPct >= corrThreshold) {
-              exactHintBlocked = { reason: 'correlation_cap', message: `Exact-move hints are withheld because your engine-match rate (${stats.recentPct}%) reached the ${corrThreshold}% cap.` };
-            }
-          }
           if (!exactHintBlocked && settings.coachModeEnabled) {
             hintUsageTracker.exactHintCount++;
             lastExactHintTime = Date.now();
@@ -1593,7 +1585,7 @@ chrome.runtime.onInstalled.addListener(() => {
 
       // v8.5.0: ensure new fields exist on migrated settings
       if (s.depthTarget === undefined) { s.depthTarget = 0; updated = true; }
-      if (s.correlationThreshold === undefined) { s.correlationThreshold = 100; updated = true; }
+      if (s.correlationThreshold !== undefined) { delete s.correlationThreshold; updated = true; }
       if (s.useChessApi === undefined) { s.useChessApi = true; updated = true; }
       if (s.useLichessCloud === undefined) { s.useLichessCloud = true; updated = true; }
       if (s.useMastersExplorer === undefined) { s.useMastersExplorer = true; updated = true; }

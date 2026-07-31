@@ -97,7 +97,6 @@
     coachModeMaxHints: 3,
     // v8.5.0 enhancements
     depthTarget: 0,                 // 0 = no minimum; otherwise min depth for exact hints
-    correlationThreshold: 100,      // 100 = off; otherwise blocks exact hints when exceeded
     useChessApi: true,
     useLichessCloud: true,
     useMastersExplorer: true
@@ -492,7 +491,6 @@
       'setting-show-candidate-moves': settings.showCandidateMoves,
       'setting-coach-mode': settings.coachModeEnabled,
       'setting-coach-max-hints': settings.coachModeMaxHints,
-      'setting-correlation-threshold': settings.correlationThreshold,  // v8.5.0
       'setting-use-chess-api': settings.useChessApi,
       'setting-use-lichess-cloud': settings.useLichessCloud,
       'setting-use-masters-explorer': settings.useMastersExplorer,
@@ -616,7 +614,6 @@
       'setting-show-candidate-moves': (v) => { settings.showCandidateMoves = v; },
       'setting-coach-mode': (v) => { settings.coachModeEnabled = v; updateCoachModeInfo(); },
       'setting-coach-max-hints': (v) => { settings.coachModeMaxHints = parseInt(v); updateCoachModeInfo(); },
-      'setting-correlation-threshold': (v) => { settings.correlationThreshold = parseInt(v); },  // v8.5.0
       'setting-use-chess-api': (v) => { settings.useChessApi = v; },
       'setting-use-lichess-cloud': (v) => { settings.useLichessCloud = v; },
       'setting-use-masters-explorer': (v) => { settings.useMastersExplorer = v; },
