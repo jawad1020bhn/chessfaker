@@ -120,6 +120,15 @@ function send(message) {
   };
 
   await send({ type: 'panel_state', open: true, tabId: 7 });
+  const turnUnknownUpdates = sentMessages.filter(message => message?.type === 'turn_status_update').length;
+  const unknownTurn = await send({
+    type: 'request_analysis', tabId: 7,
+    fen: '8/8/8/8/8/8/4K3/6kR w - - 0 1', playerColor: 'w'
+  });
+  assert.equal(unknownTurn.turnStatus, 'turn_unknown', 'analysis is withheld when turn information is not verified');
+  await waitForMessage('turn_status_update', turnUnknownUpdates);
+  assert.equal(remoteFetches, 0, 'an unknown turn never starts a provider request');
+
   remoteMode = 'tablebase';
   const tablebaseUpdates = sentMessages.filter(message => message?.type === 'analysis_update').length;
   await send({
@@ -128,7 +137,9 @@ function send(message) {
     fen: '8/8/8/8/8/8/4K3/6kR w - - 0 1',
     playerColor: 'w',
     multiPv: 3,
-    hintLevel: 3
+    hintLevel: 3,
+    positionReliable: true,
+    turnReliable: true
   });
   const tablebaseUpdate = await waitForMessage('analysis_update', tablebaseUpdates);
   assert.equal(tablebaseUpdate.data.source, 'tablebase');
@@ -146,7 +157,9 @@ function send(message) {
     fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
     playerColor: 'w',
     multiPv: 3,
-    hintLevel: 3
+    hintLevel: 3,
+    positionReliable: true,
+    turnReliable: true
   });
   const openingUpdate = await waitForMessage('analysis_update', openingUpdates);
   assert.equal(openingUpdate.data.source, 'masters-explorer');

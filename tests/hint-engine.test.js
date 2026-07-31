@@ -125,4 +125,24 @@ const onePvHumanHint = engine.generateHints({ fen: naturalFen, pvs: [naturalDeve
 assert.match(onePvHumanHint.main, /^Human choice:/);
 assert.match(onePvHumanHint.main, /Human plan:/);
 assert.equal(onePvHumanHint.styleAnalysis.limitedCandidates, true);
+// A repertoire preference must never replace a forced mate with a non-mating line.
+const forcedMateFen = '6k1/5Q2/6K1/8/8/8/8/8 w - - 0 1';
+const forcedMatePv = { score: 1, scoreType: 'mate', depth: 28, pv: ['f7g7'] };
+const highCpRepertoirePv = { score: 900, scoreType: 'cp', depth: 28, pv: ['f7f8'] };
+const mateSafeRepertoire = engine.selectPVForStyle(
+  [forcedMatePv, highCpRepertoirePv], forcedMateFen, 'normal', 'w', false,
+  { repertoire: { nextMoves: ['f7f8'] } }
+);
+assert.equal(mateSafeRepertoire[0].pv[0], 'f7g7', 'a repertoire line cannot displace a forced mate');
+
+// Chaos Attack should recognize concrete attack features instead of only checks.
+const stormFen = '6k1/6pp/6P1/5P2/8/8/6PP/6K1 w - - 0 1';
+const stormAnalysis = engine.analyzeCandidate(stormFen, ['f5f6'], 'w', 10, 'cp', 20);
+assert.ok(stormAnalysis.penetration >= 2, 'advanced attacking pieces count as enemy-half penetration');
+assert.ok(stormAnalysis.pawnStorm >= 2, 'pawns advancing on the enemy king wing count as a pawn storm');
+const pawnStormAdvance = engine.analyzeCandidate('6k1/8/8/8/6P1/8/8/6K1 w - - 0 1', ['g4g5'], 'w', 10, 'cp', 20);
+assert.equal(pawnStormAdvance.pawnStormDelta, 1, 'only a new pawn-storm advance receives the style bonus');
+const invade = engine.analyzeCandidate('6k1/8/8/8/8/5N2/8/6K1 w - - 0 1', ['f3g5'], 'w', 10, 'cp', 20);
+assert.equal(invade.penetrationDelta, 1, 'only a move entering enemy territory receives penetration credit');
 console.log('hint-engine tests passed');
+console.log('chaos-style regression tests passed');

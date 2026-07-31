@@ -1,8 +1,11 @@
 importScripts('engine/core-utils.js', 'engine/api-coordinator.js');
 
 /**
- * Chess Hint Assistant — Background Service Worker v9.1.0
+ * Chess Hint Assistant — Background Service Worker v9.2.0
  * Centralized API reliability, cache, quota, and cooldown protection
+ *
+ * v9.2.0 — Chaos Attack release: authoritative-position metadata,
+ *          attack-first candidate ranking, and verified turn handling.
  *
  * v9.1.0 — DGT Slate & Tournament Obsidian Minimalist UI/UX redesign,
  *          synchronized horizontal evaluation gauge, enhanced analytical
@@ -75,6 +78,26 @@ const DEFAULT_SETTINGS = {
   useLichessCloud: true,
   useMastersExplorer: true
 };
+
+function normalizeSettings(value = {}) {
+  const candidate = value && typeof value === 'object' ? value : {};
+  const booleanKeys = [
+    'humanLikeMode', 'autoAnalyze', 'showThreats', 'showAssessment',
+    'showContinuation', 'showEvalHistory', 'showOpeningExplorer',
+    'showTablebase', 'showEndgameCoach', 'showCriticalMoments',
+    'showCandidateMoves', 'useChessApi', 'useLichessCloud', 'useMastersExplorer'
+  ];
+  const normalized = { ...DEFAULT_SETTINGS };
+  normalized.cloudDepth = ChessCore.clampNumber(candidate.cloudDepth, 1, 10, DEFAULT_SETTINGS.cloudDepth);
+  normalized.depthTarget = ChessCore.clampNumber(candidate.depthTarget, 0, 40, DEFAULT_SETTINGS.depthTarget);
+  normalized.style = ['normal', 'aggressive', 'super_ultra_aggressive'].includes(candidate.style)
+    ? candidate.style
+    : DEFAULT_SETTINGS.style;
+  normalized.whiteRepertoire = typeof candidate.whiteRepertoire === 'string' ? candidate.whiteRepertoire : DEFAULT_SETTINGS.whiteRepertoire;
+  normalized.blackRepertoire = typeof candidate.blackRepertoire === 'string' ? candidate.blackRepertoire : DEFAULT_SETTINGS.blackRepertoire;
+  for (const key of booleanKeys) normalized[key] = typeof candidate[key] === 'boolean' ? candidate[key] : DEFAULT_SETTINGS[key];
+  return normalized;
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 // ─── Turn-Based Analysis State Machine ────────────────────────────────
@@ -995,14 +1018,18 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
     };
   }
   const settings = await new Promise(resolve =>
-    chrome.storage.local.get('settings', result => resolve({ ...DEFAULT_SETTINGS, ...(result.settings || {}) }))
+    chrome.storage.local.get('settings', result => resolve(normalizeSettings(result.settings)))
   );
   const priority = options.refresh ? 'manual-current-position' : 'current-player-turn';
   const context = { positionToken, refresh: Boolean(options.refresh), priority };
+  // A board-placement snapshot cannot reliably encode castling, en-passant, or
+  // move counters. Keep regular engine analysis available, but never use it
+  // for state-sensitive databases until the site supplied an authoritative FEN.
+  const hasReliablePositionMetadata = options.positionReliable === true;
 
   // Deterministic tablebases are the sole remote workflow for eligible
   // endgames. A successful tablebase lookup always stops engine routing.
-  if (settings.showTablebase !== false && countFenPieces(fen) <= 7) {
+  if (hasReliablePositionMetadata && settings.showTablebase !== false && countFenPieces(fen) <= 7) {
     const tbResult = await lichessTablebase(fen, {
       ...context,
       priority: options.refresh ? 'manual-current-position' : 'current-position-tablebase'
@@ -1021,7 +1048,9 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
     }
   }
 
-  const sourceOrder = semanticSourceOrder(fen, settings);
+  const sourceOrder = semanticSourceOrder(fen, hasReliablePositionMetadata
+    ? settings
+    : { ...settings, useMastersExplorer: false });
   if (sourceOrder.length === 0) {
     return {
       error: true,
@@ -1044,7 +1073,7 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
     for (const source of sourceOrder) {
       // In openings, a cached player-explorer result is useful human move data
       // and is checked after Masters but before any engine cache or remote call.
-      if (source === 'lichess-cloud' && isPlausibleOpening(fen)) {
+      if (hasReliablePositionMetadata && source === 'lichess-cloud' && isPlausibleOpening(fen)) {
         const cachedOpening = await apiCoordinator.getCached(openingCacheKey(fen), 'openingExplorer');
         if (cachedOpening?.ok) {
           bestResult = analysisFromOpeningData(cachedOpening.data, fen, multiPv);
@@ -1126,7 +1155,7 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
   // Use cached opening data immediately. A remote enrichment is allowed only
   // for a current, plausible opening while the panel feature is enabled and
   // the low-priority budget still has capacity.
-  if (settings.showOpeningExplorer === true && isPlausibleOpening(fen)) {
+  if (hasReliablePositionMetadata && settings.showOpeningExplorer === true && isPlausibleOpening(fen)) {
     if (usedSource === 'masters-explorer') bestResult.openingData = openingDataFromMastersResult(bestResult);
     const cachedOpening = bestResult.openingData ? null : await apiCoordinator.getCached(openingCacheKey(fen), 'openingExplorer');
     if (cachedOpening?.ok) bestResult.openingData = cachedOpening.data;
@@ -1238,16 +1267,35 @@ async function readBoardFromActiveTab() {
     const isChessSite = host === 'chess.com' || host.endsWith('.chess.com') ||
       host === 'lichess.org' || host.endsWith('.lichess.org');
     if (!isChessSite) return null;
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ['content.js']
-    });
+    // Run in the page's main world first. This is required to read the
+    // sites' own game objects, whose full FEN includes castling, en-passant,
+    // and move counters. The content reader still falls back to DOM placement
+    // when no site API is exposed.
+    let results;
+    try {
+      results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['content.js'],
+        world: 'MAIN'
+      });
+    } catch (_) {
+      // Older Chromium builds or hardened pages can reject MAIN-world
+      // injection; retain the isolated-world DOM-reader fallback.
+      results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['content.js']
+      });
+    }
     const result = results?.[0]?.result;
     if (!result || !ChessCore.parseFen(result.fen)) return null;
     result.tabId = tab.id;
 
     const previousFen = lastObservedFenByTab.get(tab.id) || null;
-    if (previousFen && previousFen.split(' ')[0] === result.fen.split(' ')[0]) {
+    if (result.positionReliable === true) {
+      // A site API FEN is authoritative, including its counters, castling and
+      // en-passant fields. Never overwrite it with locally inferred metadata.
+      lastObservedFenByTab.set(tab.id, result.fen);
+    } else if (previousFen && previousFen.split(' ')[0] === result.fen.split(' ')[0]) {
       result.fen = previousFen;
     } else {
       result.fen = ChessCore.reconcileFen(previousFen, result.fen) || result.fen;
@@ -1308,8 +1356,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: false, error: 'Invalid board position' });
       return false;
     }
+    if (message.turnReliable !== true) {
+      chrome.runtime.sendMessage({
+        type: 'turn_status_update',
+        data: { isPlayerTurn: false, waitingForOpponent: false, reason: 'turn_unknown', fen: message.fen }
+      }).catch(() => {});
+      sendResponse({ ok: true, turnStatus: 'turn_unknown' });
+      return false;
+    }
     chrome.storage.local.get(['settings', 'assistedPlayerColor'], (result) => {
-      const settings = { ...DEFAULT_SETTINGS, ...(result.settings || {}) };
+      const settings = normalizeSettings(result.settings);
       const assistedPlayerColor = message.playerColor || result.assistedPlayerColor || 'w';
       const tabId = message.tabId ?? sender.tab?.id ?? 'active';
       notePanelActivity(tabId, true);
@@ -1360,7 +1416,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         moveHistory: message.gameInfo?.moveHistory || [],
         refresh: Boolean(message.refresh),
         positionToken,
-        tabId
+        tabId,
+        positionReliable: message.positionReliable === true
       }).then(cloudResult => {
         turnState.analysisInProgress = false;
         if (!apiCoordinator.isPositionCurrent(positionToken) || cloudResult?.stalePosition) return;
@@ -1422,20 +1479,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       moveHistory: message.moveHistory || [],
       refresh: Boolean(message.refresh),
       positionToken,
-      tabId
+      tabId,
+      positionReliable: message.positionReliable === true
     }).then(result => sendResponse(result)).catch(() => sendResponse(null));
     return true;
   }
 
   if (msgType === 'request_opening_data') {
-    if (!ChessCore.parseFen(message.fen) || !isPlausibleOpening(message.fen)) {
+    if (message.positionReliable !== true || !ChessCore.parseFen(message.fen) || !isPlausibleOpening(message.fen)) {
       sendResponse(null);
       return false;
     }
     const tabId = message.tabId ?? sender.tab?.id ?? 'active';
     const positionToken = registerPosition(message.fen, tabId);
     chrome.storage.local.get('settings').then(result => {
-      const settings = { ...DEFAULT_SETTINGS, ...(result.settings || {}) };
+      const settings = normalizeSettings(result.settings);
       if (!settings.showOpeningExplorer) return null;
       return lichessOpeningExplorer(message.fen, { positionToken, priority: 'opening-enrichment' });
     }).then(data => sendResponse(data)).catch(() => sendResponse(null));
@@ -1443,7 +1501,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (msgType === 'request_tablebase_data') {
-    if (!ChessCore.parseFen(message.fen) || countFenPieces(message.fen) > 7) {
+    if (message.positionReliable !== true || !ChessCore.parseFen(message.fen) || countFenPieces(message.fen) > 7) {
       sendResponse(null);
       return false;
     }

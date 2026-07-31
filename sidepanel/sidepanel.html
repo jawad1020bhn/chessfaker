@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Chess Hint Assistant v9.1.0</title>
+  <title>Chess Hint Assistant v9.2.0</title>
   <link rel="stylesheet" href="sidepanel.css">
 </head>
 <body>
@@ -37,7 +37,7 @@
           </svg>
         </div>
         <h1 class="topbar-title">CHESS COACH</h1>
-        <span class="version-tag" aria-label="Version 9.1.0">v9.1</span>
+        <span class="version-tag" aria-label="Version 9.2.0">v9.2</span>
       </div>
       <div class="topbar-right">
         <div id="player-selector" class="player-selector" role="radiogroup" aria-label="Which player to assist">
@@ -65,6 +65,10 @@
     <div id="engine-status" class="engine-status" role="status" aria-live="polite">
       <span class="status-dot offline" aria-hidden="true"></span>
       <span class="status-text">Connecting to engine...</span>
+      <div id="position-context" class="position-context" aria-label="Position source and turn status">
+        <span id="position-source" class="context-chip pending">BOARD</span>
+        <span id="position-turn" class="context-turn">Awaiting position</span>
+      </div>
     </div>
 
     <!-- ═══ Tab Navigation ═══ -->
@@ -117,6 +121,7 @@
             <p id="hint-text" class="hint-text">Waiting for board position...</p>
             <div id="hint-fromto" class="hint-fromto" style="display:none" aria-label="Move squares"></div>
             <div id="hint-tags" class="hint-tags" aria-label="Hint tags"></div>
+            <div id="chaos-explanation" class="chaos-explanation" style="display:none" aria-live="polite"></div>
             <div id="fair-play-warning" class="fair-play-warning" style="display:none" role="alert">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
               <span id="fair-play-warning-text" class="warning-text"></span>
@@ -371,9 +376,9 @@
         <select id="setting-style">
           <option value="normal" selected>Normal</option>
           <option value="aggressive">Aggressive — Fastest Sound Win</option>
-          <option value="super_ultra_aggressive">Super Ultra Aggressive</option>
+          <option value="super_ultra_aggressive">Chaos Attack — Bold Sacrifices</option>
         </select>
-        <div class="setting-hint">Aggressive seeks the fastest sound win. Super Ultra accepts greater calculated risk for forcing attacks and validated sacrifices.</div>
+        <div class="setting-hint">Aggressive seeks the fastest sound win. Chaos Attack prioritizes king hunts, pawn storms, deep penetration, and concrete speculative sacrifices when they create immediate attacking pressure.</div>
       </div>
 
       <div class="setting-group human-mode-setting">

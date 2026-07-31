@@ -1,6 +1,9 @@
 /**
- * Chess Hint Assistant — Side Panel Controller v9.1.0
+ * Chess Hint Assistant — Side Panel Controller v9.2.0
  * Turn-Based Analysis Engine. No local Stockfish.
+ *
+ * v9.2.0 — Chaos Attack explanations, Safe/Bold/Wild candidate comparison,
+ *          verified-position context, and visual hierarchy refinements.
  *
  * v9.1.0 — DGT Slate & Tournament Obsidian Minimalist UI/UX redesign,
  *          synchronized horizontal evaluation gauge, enhanced analytical
@@ -61,6 +64,8 @@
   let playerColor = null;          // Auto-detected from board orientation
   let assistedPlayerColor = null;  // User-selected: which player to assist (null = not yet set)
   let activeTabId = 'active';       // Included in position-generation tokens
+  let positionReliable = false;     // True only when the site supplied a complete FEN
+  let turnReliable = false;         // True only when the site supplied an active color
   const EXACT_HINT_LEVEL = 5;
   let lastAnalysis = null;
   let prevEval = null;
@@ -111,6 +116,9 @@
     engineStatus: $('#engine-status'),
     statusDot: $('.status-dot'),
     statusText: $('.status-text'),
+    positionContext: $('#position-context'),
+    positionSource: $('#position-source'),
+    positionTurn: $('#position-turn'),
     evalBarBlack: $('#eval-bar-black'),
     evalBarWhite: $('#eval-bar-white'),
     evalWhiteLabel: $('#eval-white-label'),
@@ -125,6 +133,7 @@
     hintText: $('#hint-text'),
     hintFromTo: $('#hint-fromto'),
     hintTags: $('#hint-tags'),
+    chaosExplanation: $('#chaos-explanation'),
     hintCard: $('#hint-card'),
     winningPlan: $('#winning-plan'),
     planText: $('#plan-text'),
@@ -224,6 +233,9 @@
         handlePositionUpdate({
           fen: result.fen,
           playerColor: result.playerColor,
+          positionReliable: result.positionReliable === true,
+          turnReliable: result.turnReliable === true,
+          fenSource: result.fenSource || 'dom-placement',
           gameInfo: { site: result.site, url: result.url, timestamp: result.timestamp, moveHistory: [], tabId: activeTabId }
         });
       }
@@ -505,7 +517,9 @@
   function updatePlayerSelectorUI() {
     if (!dom.playerSelector) return;
     $$('.player-btn').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.color === assistedPlayerColor);
+      const selected = btn.dataset.color === assistedPlayerColor;
+      btn.classList.toggle('active', selected);
+      btn.setAttribute('aria-checked', selected ? 'true' : 'false');
     });
   }
 
@@ -517,7 +531,12 @@
         const newColor = btn.dataset.color;
         if (newColor === assistedPlayerColor) return;
         assistedPlayerColor = newColor;
+        if (currentFen && turnReliable) {
+          isPlayerTurn = (currentFen.split(' ')[1] || 'w') === assistedPlayerColor;
+          waitingForOpponent = !isPlayerTurn;
+        }
         updatePlayerSelectorUI();
+        updatePositionContext();
         // v7.9.0: Update ARIA
         $$('.player-btn').forEach(b => b.setAttribute('aria-checked', b.dataset.color === assistedPlayerColor ? 'true' : 'false'));
         saveSettings();
@@ -731,11 +750,26 @@
     return false;
   }
 
+  function updatePositionContext() {
+    if (!dom.positionContext || !dom.positionSource || !dom.positionTurn) return;
+    const verified = positionReliable && turnReliable;
+    dom.positionContext.classList.toggle('verified', verified);
+    dom.positionContext.classList.toggle('partial', !positionReliable && turnReliable);
+    dom.positionContext.classList.toggle('pending', !turnReliable);
+    dom.positionSource.className = `context-chip ${positionReliable ? 'verified' : 'partial'}`;
+    dom.positionSource.textContent = positionReliable ? 'VERIFIED FEN' : 'BOARD SNAPSHOT';
+    dom.positionTurn.textContent = !turnReliable
+      ? 'Turn unavailable'
+      : (isPlayerTurn ? 'Your turn' : 'Opponent turn');
+  }
+
   function handlePositionUpdate(message) {
     const prevFen = currentFen;
     currentFen = message.fen;
     const positionChanged = !prevFen || prevFen.split(' ').slice(0, 4).join(' ') !== currentFen.split(' ').slice(0, 4).join(' ');
     playerColor = message.playerColor || 'w';
+    positionReliable = message.positionReliable === true;
+    turnReliable = message.turnReliable === true;
     if (assistedPlayerColor === null) {
       assistedPlayerColor = playerColor;
       updatePlayerSelectorUI();
@@ -765,6 +799,7 @@
     isPlayerTurn = activeColor === effectiveColor;
     waitingForOpponent = !isPlayerTurn;
     turnJustChanged = !wasPlayerTurn && isPlayerTurn; // Turn just changed to player's turn
+    updatePositionContext();
 
     // v8.5.0 (Enhancement I): Detect that the player just moved (transition
     // from "player's turn" to "opponent's turn" while we had a stored engine
@@ -776,6 +811,14 @@
       tryReportPlayerMove(lastEngineRecommendationFen, lastEngineRecommendationUci, currentFen);
       lastEngineRecommendationFen = null;
       lastEngineRecommendationUci = null;
+    }
+
+    if (!turnReliable) {
+      isPlayerTurn = false;
+      waitingForOpponent = false;
+      updateEngineStatus('unknown', 'Turn unavailable — waiting for a verified position');
+      if (dom.hintText) dom.hintText.textContent = 'Turn information is unavailable for this board.';
+      return;
     }
 
     if (isPlayerTurn) {
@@ -844,6 +887,14 @@
     if (!data) return;
     isPlayerTurn = data.isPlayerTurn;
     waitingForOpponent = data.waitingForOpponent;
+    if (data.reason === 'turn_unknown') turnReliable = false;
+    updatePositionContext();
+
+    if (data.reason === 'turn_unknown') {
+      updateEngineStatus('unknown', 'Turn unavailable — waiting for a verified position');
+      if (dom.hintText) dom.hintText.textContent = 'Turn information is unavailable for this board.';
+      return;
+    }
 
     if (isPlayerTurn) {
       updateEngineStatus('analyzing', 'Your turn — analyzing...');
@@ -1000,7 +1051,9 @@
       multiPv: settings.cloudDepth || 3,
       hintLevel: EXACT_HINT_LEVEL,
       refresh: refresh,
-      tabId: activeTabId
+      tabId: activeTabId,
+      positionReliable,
+      turnReliable
     }).catch(() => {});
   }
 
@@ -1162,6 +1215,21 @@
 
     const isOpponentTurn = candidates[0]?.isOpponentTurn || false;
     const maxWinPct = Math.max(...candidates.map(c => c.winPct));
+    const useChaosComparison = settings.style === 'super_ultra_aggressive' && candidates.length >= 2;
+    const safeCandidate = useChaosComparison
+      ? candidates.reduce((best, candidate) => candidate.objectiveRank < best.objectiveRank ? candidate : best, candidates[0])
+      : null;
+    const boldCandidate = useChaosComparison ? candidates[0] : null;
+    const wildCandidate = useChaosComparison
+      ? [...candidates].filter(candidate => candidate !== safeCandidate && candidate !== boldCandidate)
+        .sort((left, right) => {
+          const score = candidate => (candidate.aggression?.sacrifice ? 100 : 0) +
+            (candidate.aggression?.check ? 55 : 0) + candidate.aggression?.kingPressureDelta * 14 +
+            candidate.aggression?.penetrationDelta * 18 + candidate.aggression?.pawnStormDelta * 18 +
+            candidate.aggression?.complexity * 8;
+          return score(right) - score(left);
+        })[0]
+      : null;
 
     let headerHtml = '';
     if (isOpponentTurn) {
@@ -1188,10 +1256,17 @@
         oppMoveContext = `<span class="cm-opp-move" style="font-size:9px;color:var(--text-dim);display:block">if ${h(c.opponentMoveSan)}</span>`;
       }
 
+      let comparisonBadge = '';
+      if (c === safeCandidate && c === boldCandidate) comparisonBadge = '<span class="candidate-lane safe">SAFE · BOLD</span>';
+      else if (c === safeCandidate) comparisonBadge = '<span class="candidate-lane safe">SAFE</span>';
+      else if (c === boldCandidate) comparisonBadge = '<span class="candidate-lane bold">BOLD</span>';
+      else if (c === wildCandidate) comparisonBadge = '<span class="candidate-lane wild">WILD</span>';
+
       return `
         <div class="candidate-move ${qualityClass}">
           <span class="cm-rank">${h(c.rank)}</span>
           <span class="cm-move">${h(c.san)}</span>
+          ${comparisonBadge}
           ${oppMoveContext}
           <span class="cm-fromto">${h(c.fromTo)}</span>
           <span class="cm-eval ${evalClass}">${h(c.evalDisplay)}</span>
@@ -1493,6 +1568,31 @@
       }
       if (hints.isAssistedPlayerTurn === false) tags.push('Waiting for Opponent');
       dom.hintTags.innerHTML = tags.map(t => `<span class="hint-tag">${h(t)}</span>`).join('');
+    }
+
+    if (dom.chaosExplanation) {
+      const meta = hints.styleAnalysis;
+      if (settings.style === 'super_ultra_aggressive' && meta) {
+        const badges = [];
+        if (meta.sacrifice) badges.push(meta.sacrificeSoundness === 'sound' ? 'SOUND SACRIFICE' : (meta.sacrificeSoundness === 'speculative' ? 'SPECULATIVE SACRIFICE' : 'UNSOUND SACRIFICE'));
+        if (meta.givesCheck) badges.push('FORCING CHECK');
+        if (meta.pawnStormDelta > 0) badges.push('PAWN STORM');
+        if (meta.deepPenetrationDelta > 0 || meta.penetrationDelta > 0) badges.push('PENETRATION');
+        if (meta.kingPressureDelta > 0) badges.push('KING PRESSURE');
+        const reasons = (meta.reasons || []).slice(0, 2);
+        const objectiveCost = Number(meta.evalLoss || 0);
+        const depth = Number(meta.depth || data.depth || 0);
+        const risk = meta.sacrificeSoundness === 'unsound' || objectiveCost > 250 ? 'HIGH' : (objectiveCost > 80 || meta.sacrificeSoundness === 'speculative' ? 'MEDIUM' : 'LOW');
+        dom.chaosExplanation.innerHTML = `
+          <div class="chaos-title">CHAOS ATTACK <span>RISK: ${h(risk)}</span></div>
+          ${badges.length ? `<div class="chaos-badges">${badges.map(badge => `<span>${h(badge)}</span>`).join('')}</div>` : ''}
+          ${reasons.length ? `<p>${h(reasons.join(' · '))}</p>` : '<p>Attack-first choice within the available engine candidates.</p>'}
+          <div class="chaos-meta">Objective cost: ${h((objectiveCost / 100).toFixed(1))} pawns · Analysis: ${h(depth ? `depth ${depth}` : 'provider depth unavailable')}</div>`;
+        dom.chaosExplanation.style.display = 'block';
+      } else {
+        dom.chaosExplanation.style.display = 'none';
+        dom.chaosExplanation.textContent = '';
+      }
     }
 
     if (dom.winningPlan && dom.planText) {
