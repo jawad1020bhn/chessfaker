@@ -130,6 +130,7 @@
     hintText: $('#hint-text'),
     hintFromTo: $('#hint-fromto'),
     hintTags: $('#hint-tags'),
+    chaosExplanation: $('#chaos-explanation'),
     hintCard: $('#hint-card'),
     winningPlan: $('#winning-plan'),
     planText: $('#plan-text'),
@@ -1211,6 +1212,21 @@
 
     const isOpponentTurn = candidates[0]?.isOpponentTurn || false;
     const maxWinPct = Math.max(...candidates.map(c => c.winPct));
+    const useChaosComparison = settings.style === 'super_ultra_aggressive' && candidates.length >= 2;
+    const safeCandidate = useChaosComparison
+      ? candidates.reduce((best, candidate) => candidate.objectiveRank < best.objectiveRank ? candidate : best, candidates[0])
+      : null;
+    const boldCandidate = useChaosComparison ? candidates[0] : null;
+    const wildCandidate = useChaosComparison
+      ? [...candidates].filter(candidate => candidate !== safeCandidate && candidate !== boldCandidate)
+        .sort((left, right) => {
+          const score = candidate => (candidate.aggression?.sacrifice ? 100 : 0) +
+            (candidate.aggression?.check ? 55 : 0) + candidate.aggression?.kingPressureDelta * 14 +
+            candidate.aggression?.penetrationDelta * 18 + candidate.aggression?.pawnStormDelta * 18 +
+            candidate.aggression?.complexity * 8;
+          return score(right) - score(left);
+        })[0]
+      : null;
 
     let headerHtml = '';
     if (isOpponentTurn) {
@@ -1237,10 +1253,17 @@
         oppMoveContext = `<span class="cm-opp-move" style="font-size:9px;color:var(--text-dim);display:block">if ${h(c.opponentMoveSan)}</span>`;
       }
 
+      let comparisonBadge = '';
+      if (c === safeCandidate && c === boldCandidate) comparisonBadge = '<span class="candidate-lane safe">SAFE · BOLD</span>';
+      else if (c === safeCandidate) comparisonBadge = '<span class="candidate-lane safe">SAFE</span>';
+      else if (c === boldCandidate) comparisonBadge = '<span class="candidate-lane bold">BOLD</span>';
+      else if (c === wildCandidate) comparisonBadge = '<span class="candidate-lane wild">WILD</span>';
+
       return `
         <div class="candidate-move ${qualityClass}">
           <span class="cm-rank">${h(c.rank)}</span>
           <span class="cm-move">${h(c.san)}</span>
+          ${comparisonBadge}
           ${oppMoveContext}
           <span class="cm-fromto">${h(c.fromTo)}</span>
           <span class="cm-eval ${evalClass}">${h(c.evalDisplay)}</span>
@@ -1542,6 +1565,31 @@
       }
       if (hints.isAssistedPlayerTurn === false) tags.push('Waiting for Opponent');
       dom.hintTags.innerHTML = tags.map(t => `<span class="hint-tag">${h(t)}</span>`).join('');
+    }
+
+    if (dom.chaosExplanation) {
+      const meta = hints.styleAnalysis;
+      if (settings.style === 'super_ultra_aggressive' && meta) {
+        const badges = [];
+        if (meta.sacrifice) badges.push(meta.sacrificeSoundness === 'sound' ? 'SOUND SACRIFICE' : (meta.sacrificeSoundness === 'speculative' ? 'SPECULATIVE SACRIFICE' : 'UNSOUND SACRIFICE'));
+        if (meta.givesCheck) badges.push('FORCING CHECK');
+        if (meta.pawnStormDelta > 0) badges.push('PAWN STORM');
+        if (meta.deepPenetrationDelta > 0 || meta.penetrationDelta > 0) badges.push('PENETRATION');
+        if (meta.kingPressureDelta > 0) badges.push('KING PRESSURE');
+        const reasons = (meta.reasons || []).slice(0, 2);
+        const objectiveCost = Number(meta.evalLoss || 0);
+        const depth = Number(meta.depth || data.depth || 0);
+        const risk = meta.sacrificeSoundness === 'unsound' || objectiveCost > 250 ? 'HIGH' : (objectiveCost > 80 || meta.sacrificeSoundness === 'speculative' ? 'MEDIUM' : 'LOW');
+        dom.chaosExplanation.innerHTML = `
+          <div class="chaos-title">CHAOS ATTACK <span>RISK: ${h(risk)}</span></div>
+          ${badges.length ? `<div class="chaos-badges">${badges.map(badge => `<span>${h(badge)}</span>`).join('')}</div>` : ''}
+          ${reasons.length ? `<p>${h(reasons.join(' · '))}</p>` : '<p>Attack-first choice within the available engine candidates.</p>'}
+          <div class="chaos-meta">Objective cost: ${h((objectiveCost / 100).toFixed(1))} pawns · Analysis: ${h(depth ? `depth ${depth}` : 'provider depth unavailable')}</div>`;
+        dom.chaosExplanation.style.display = 'block';
+      } else {
+        dom.chaosExplanation.style.display = 'none';
+        dom.chaosExplanation.textContent = '';
+      }
     }
 
     if (dom.winningPlan && dom.planText) {

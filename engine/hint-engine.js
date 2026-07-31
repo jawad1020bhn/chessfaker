@@ -895,6 +895,24 @@
     return false;
   }
 
+  function attackTerrain(board, playerIsWhite, opponentKing) {
+    const isEnemyHalf = row => playerIsWhite ? row <= 3 : row >= 4;
+    const isDeepEnemyHalf = row => playerIsWhite ? row <= 1 : row >= 6;
+    const attackFiles = opponentKing?.col >= 4 ? [5, 6, 7] : [0, 1, 2];
+    let penetration = 0, deepPenetration = 0, pawnStorm = 0, advancedPawns = 0;
+    for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
+      const piece = board[row][col];
+      if (!piece || (piece === piece.toUpperCase()) !== playerIsWhite || piece.toLowerCase() === 'k') continue;
+      if (isEnemyHalf(row)) penetration++;
+      if (isDeepEnemyHalf(row)) deepPenetration++;
+      if (piece.toLowerCase() === 'p') {
+        if (attackFiles.includes(col) && isEnemyHalf(row)) pawnStorm++;
+        if (playerIsWhite ? row <= 2 : row >= 5) advancedPawns++;
+      }
+    }
+    return { penetration, deepPenetration, pawnStorm, advancedPawns };
+  }
+
   function analyzeCandidate(fen, pv, playerColor, rawScore, scoreType, depth = 0) {
     const line = Array.isArray(pv) ? pv.filter(Boolean).slice(0, 8) : [];
     const board = parseFENPlacement((fen || '').split(' ')[0]);
@@ -956,29 +974,26 @@
       ? Math.max(Math.abs(destination.row - opponentKingAfter.row), Math.abs(destination.col - opponentKingAfter.col)) <= 2
       : false;
     const attackersOnKing = attackersToSquare(after, opponentKingAfter, playerIsWhite);
-    const isEnemyHalf = (row) => playerIsWhite ? row <= 3 : row >= 4;
-    const isDeepEnemyHalf = (row) => playerIsWhite ? row <= 1 : row >= 6;
-    let penetration = 0, deepPenetration = 0, pawnStorm = 0, passedPawnPush = false;
-    const attackFiles = opponentKingAfter?.col >= 4 ? [5, 6, 7] : [0, 1, 2];
-    for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
-      const candidatePiece = after[row][col];
-      if (!candidatePiece || (candidatePiece === candidatePiece.toUpperCase()) !== playerIsWhite || candidatePiece.toLowerCase() === 'k') continue;
-      if (isEnemyHalf(row)) penetration++;
-      if (isDeepEnemyHalf(row)) deepPenetration++;
-      if (candidatePiece.toLowerCase() === 'p') {
-        if (attackFiles.includes(col) && isEnemyHalf(row)) pawnStorm++;
-        if (playerIsWhite ? row <= 2 : row >= 5) passedPawnPush = true;
-      }
-    }
+    // Style preferences must reward what the candidate *creates*, rather than
+    // repeatedly rewarding an attack that was already on the board.
+    const terrainBefore = attackTerrain(board, playerIsWhite, opponentKingBefore);
+    const terrainAfter = attackTerrain(after, playerIsWhite, opponentKingAfter);
+    const penetrationDelta = terrainAfter.penetration - terrainBefore.penetration;
+    const deepPenetrationDelta = terrainAfter.deepPenetration - terrainBefore.deepPenetration;
+    const pawnStormDelta = terrainAfter.pawnStorm - terrainBefore.pawnStorm;
+    const passedPawnPush = terrainAfter.advancedPawns > terrainBefore.advancedPawns;
 
     const features = {
       rawScore, scoreType, depth, first, from, to, piece, captured,
       givesCheck,
       doubleCheck: givesCheck && attackersOnKing >= 2,
       attackersOnKing,
-      penetration,
-      deepPenetration,
-      pawnStorm,
+      penetration: terrainAfter.penetration,
+      penetrationDelta,
+      deepPenetration: terrainAfter.deepPenetration,
+      deepPenetrationDelta,
+      pawnStorm: terrainAfter.pawnStorm,
+      pawnStormDelta,
       passedPawnPush,
       winningMate: scoreType === 'mate' && rawScore > 0,
       losingMate: scoreType === 'mate' && rawScore < 0,
@@ -997,7 +1012,7 @@
       sacrifice,
       // A speculative sacrifice must create an immediate attacking fact, not
       // merely lose material. This is a gate for Chaos Attack's bonus.
-      chaosSacrificeTrigger: sacrifice && (givesCheck || opensKingFile || defenderRemoval || pawnStorm >= 2 || penetration >= 4),
+      chaosSacrificeTrigger: sacrifice && (givesCheck || opensKingFile || defenderRemoval || terrainAfter.pawnStorm >= 2 || terrainAfter.penetration >= 4),
       materialDelta,
       movingPieceSurvives,
       simplification: piecesBefore - countPieces(boardAfterReply),
@@ -1041,9 +1056,9 @@
     add(candidate.development, 'development', weights.development, 'develops with attacking purpose');
     add(candidate.opensKingFile, 'openKingFile', weights.openKingFile, 'opens a direct line to the king');
     add(candidate.sustainedAttack, 'sustainedAttack', weights.sustainedAttack, 'keeps the attack forcing');
-    add(candidate.penetration > 0, 'penetration', weights.penetration * Math.min(candidate.penetration, 4), 'penetrates the opponent half');
-    add(candidate.deepPenetration > 0, 'deepPenetration', weights.deepPenetration * Math.min(candidate.deepPenetration, 2), 'establishes a deep invading piece');
-    add(candidate.pawnStorm > 0, 'pawnStorm', weights.pawnStorm * Math.min(candidate.pawnStorm, 3), 'drives a pawn storm toward the king');
+    add(candidate.penetrationDelta > 0, 'penetration', weights.penetration * Math.min(candidate.penetrationDelta, 2), 'penetrates the opponent half');
+    add(candidate.deepPenetrationDelta > 0, 'deepPenetration', weights.deepPenetration * Math.min(candidate.deepPenetrationDelta, 2), 'establishes a deep invading piece');
+    add(candidate.pawnStormDelta > 0, 'pawnStorm', weights.pawnStorm * Math.min(candidate.pawnStormDelta, 2), 'drives a pawn storm toward the king');
     add(candidate.passedPawnPush, 'passedPawnPush', weights.passedPawnPush, 'creates a dangerous advanced pawn');
     if (candidate.sacrifice) {
       // Up to one pawn of objective cost is treated as sound compensation;
@@ -2079,7 +2094,19 @@
           ? (styleMeta?.humanRisks?.[0] || styleMeta?.risks?.[0] || '')
           : (styleMeta?.risks?.[0] || ''),
         naturalnessScore: styleMeta?.naturalnessScore ?? null,
-        humanLikeMode: Boolean(styleMeta?.humanLikeMode)
+        humanLikeMode: Boolean(styleMeta?.humanLikeMode),
+        styleRank: styleMeta?.styleRank || idx + 1,
+        sacrificeSoundness: styleMeta?.sacrificeSoundness || '',
+        aggression: {
+          check: Boolean(styleMeta?.givesCheck),
+          sacrifice: Boolean(styleMeta?.sacrifice),
+          kingPressureDelta: Number(styleMeta?.kingPressureDelta || 0),
+          penetrationDelta: Number(styleMeta?.penetrationDelta || 0),
+          pawnStormDelta: Number(styleMeta?.pawnStormDelta || 0),
+          complexity: Number(styleMeta?.complexity || 0),
+          evalLoss: Number(styleMeta?.evalLoss || 0),
+          depth: Number(styleMeta?.depth || pv.depth || 0)
+        }
       };
     });
   }
