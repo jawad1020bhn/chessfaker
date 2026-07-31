@@ -1469,6 +1469,8 @@
     }
 
     if (dom.hintTags) {
+      // Keep this compact: only persistent position warnings belong beside an
+      // exact hint. Source, style, depth, and mode labels add noise.
       const tags = [];
       if (hints.positionAssessment) {
         const pa = hints.positionAssessment;
@@ -1478,53 +1480,9 @@
         else if (playerBalance < -2) tags.push('Material-');
         if (pa.kingSafety.issues.some(i => i.severity === 'high' && i.color === ec)) tags.push('King Danger');
         if (pa.pawnStructure.issues.some(i => i.issue && i.issue.includes('passed') && i.color === ec)) tags.push('Passed Pawn');
-        if (pa.threats.some(t => t.type === 'hanging-piece')) tags.push('Tactic');
       }
-      if (hints.styleAnnotation) tags.push(hints.styleAnnotation);
-      // v8.5.0: Distinguish masters-explorer ('Human') from cloud sources.
-      const sourceTag = currentSource === 'chess-api' ? 'API'
-        : (currentSource === 'lichess-cloud' ? 'Cloud'
-        : (currentSource === 'masters-explorer' ? 'Human'
-        : (currentSource === 'opening-explorer' ? 'Human'
-        : (currentSource === 'tablebase' ? 'Tablebase' : 'Cloud'))));
-      tags.push(sourceTag);
-
-      // v6.0.0: Depth quality indicator
-      if (hints.depthQuality) {
-        const depthLabels = { deep: 'Deep Analysis', standard: 'Standard', basic: 'Basic' };
-        const depthClass = hints.depthQuality === 'deep' ? 'tag-depth-deep' : (hints.depthQuality === 'standard' ? 'tag-depth-standard' : 'tag-depth-basic');
-        tags.push(depthLabels[hints.depthQuality]);
-      }
-      const effectiveColor = assistedPlayerColor || 'w';
-      const playerLabel = effectiveColor === 'w' ? 'White' : 'Black';
-      tags.push(`Assisting ${playerLabel}`);
-      if (hints.isAssistedPlayerTurn === false) {
-        tags.push('Waiting for Opponent');
-      }
-      if (settings.style === 'aggressive') tags.push('Aggressive');
-      if (settings.style === 'super_ultra_aggressive') tags.push('Super Ultra');
-      if (settings.humanLikeMode) {
-        tags.push('Human-like');
-        if (hints.styleAnalysis?.planContinuity) tags.push('Plan continuity');
-        if (hints.styleAnalysis?.masterGames > 0) tags.push('Master choice');
-      }
-
-      dom.hintTags.innerHTML = tags.map(t => {
-        let tagClass = 'hint-tag';
-        if (t === 'Aggressive') tagClass += ' tag-aggressive';
-        if (t === 'Super Ultra') tagClass += ' tag-super-ultra';
-        if (t === 'Human-like' || t === 'Plan continuity' || t === 'Master choice') tagClass += ' tag-human-like';
-        if (t === 'queen sac') tagClass += ' tag-queen-sac';
-        if (t === 'mate attack') tagClass += ' tag-mate-attack';
-        if (t === 'Cloud' || t === 'API') tagClass += ' tag-cloud';
-        if (t === 'Human') tagClass += ' tag-human';  // v8.5.0: masters-explorer
-        if (t === 'CDB') tagClass += ' tag-cdb';
-        if (t === 'Tablebase') tagClass += ' tag-tb';
-        if (t === 'Deep Analysis') tagClass += ' tag-depth-deep';
-        if (t === 'Standard') tagClass += ' tag-depth-standard';
-        if (t === 'Basic') tagClass += ' tag-depth-basic';
-        return `<span class="${tagClass}">${h(t)}</span>`;
-      }).join('');
+      if (hints.isAssistedPlayerTurn === false) tags.push('Waiting for Opponent');
+      dom.hintTags.innerHTML = tags.map(t => `<span class="hint-tag">${h(t)}</span>`).join('');
     }
 
     if (dom.winningPlan && dom.planText) {
