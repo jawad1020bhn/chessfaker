@@ -1,6 +1,10 @@
 /**
- * Chess Hint Assistant — Three-Mode Hint Engine v9.2.0
+ * Chess Hint Assistant — Three-Mode Hint Engine v9.2.1
  *
+ * v9.2.1: Chaos Attack gains the Berserker aggression vocabulary (attack units,
+ *   practical chances, structural complexity, Greek gift, draw contempt, overload,
+ *   develop-with-attack, phase-aware scaling, bonus cap) while keeping its
+ *   mate-safety gate and risk budget authoritative.
  * v9.2.0: Chaos Attack redesign with feature-delta scoring, attack explanations, and Safe/Bold/Wild comparison metadata.
  * v9.1.0: Updated version metadata for the DGT Slate & Tournament Obsidian redesign.
  *
@@ -92,8 +96,17 @@
         complexity: 80,
         simplification: -160,
         ownKingDanger: -5,
-        unsupportedAttack: -5
-      }
+        unsupportedAttack: -5,
+        // ── Grafted Berserker-vocabulary weights (Chaos Attack additions) ──
+        attackUnits: 26,
+        practicalChances: 40,
+        complexityStructural: 45,
+        greekGift: 120,
+        drawContempt: 30,
+        overload: 55,
+        developmentWithAttack: 25
+      },
+      phaseAggressionScale: 1.5
     }
   };
 
@@ -914,6 +927,103 @@
     return { penetration, deepPenetration, pawnStorm, advancedPawns };
   }
 
+  // ─── Chaos Attack feature primitives (grafted from the Berserker vocabulary) ──
+  // Each helper is a pure, stateless board computation so the rebuilt scorer keeps
+  // its "hypothetical candidates never mutate game history" invariant (v9.2).
+
+  // A1 — Attack Unit System: king-zone attacker quality weighted by piece type
+  // (N/B = 2, R = 3, Q = 5) rather than raw attacker count.
+  function countAttackUnits(board, attackerIsWhite, kingPos) {
+    if (!kingPos) return 0;
+    let units = 0;
+    const zone = [];
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      const tr = kingPos.row + dr, tc = kingPos.col + dc;
+      if (tr >= 0 && tr < 8 && tc >= 0 && tc < 8) zone.push([tr, tc]);
+    }
+    for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
+      const piece = board[row][col];
+      if (!piece || (piece === piece.toUpperCase()) !== attackerIsWhite) continue;
+      for (const [tr, tc] of zone) {
+        if (pieceAttacksSquare(board, row, col, tr, tc)) {
+          units += ({ p: 1, n: 2, b: 2, r: 3, q: 5, k: 0 })[piece.toLowerCase()] || 0;
+          break;
+        }
+      }
+    }
+    return units;
+  }
+
+  // A1 — S-curve: diminishing returns on a couple of units, then accelerating as
+  // the king-zone attacker mass becomes a genuine mating net.
+  function attackUnitsToBonus(units) {
+    if (units <= 0) return 0;
+    if (units <= 4) return units * 0.7;      // build-up phase (diminishing-ish)
+    if (units <= 8) return 2.8 + (units - 4) * 1.3; // acceleration
+    return 8 + (units - 8) * 1.6;            // full swarm
+  }
+
+  // A2 — Practical chances: how many of our pieces bear on the enemy king zone
+  // versus how many enemy pieces can answer in their own king zone.
+  function countPiecesInZone(board, colorIsWhite, kingPos) {
+    if (!kingPos) return 0;
+    let count = 0;
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      const r = kingPos.row + dr, c = kingPos.col + dc;
+      if (r < 0 || r > 7 || c < 0 || c > 7) continue;
+      const piece = board[r][c];
+      if (piece && (piece === piece.toUpperCase()) === colorIsWhite) count++;
+    }
+    return count;
+  }
+
+  // A3 — Structural complexity: sacs and central pawn advances raise it, equal
+  // minor/rook trades (simplification) lower it. Signed value.
+  function structuralComplexityOf(candidate) {
+    let value = 0;
+    if (candidate.sacrifice) value += 2;
+    if (candidate.centralPawnAdvance) value += 1;
+    if (candidate.equalMinorRookTrade) value -= 1.5;
+    return value;
+  }
+
+  // A4 — Greek Gift pattern: bishop takes h7/h2 while the enemy king sits next to
+  // the corner (castled). Returns a boolean plus modifiers for annotations.
+  function detectGreekGift(piece, from, to, captured, playerIsWhite, enemyKing) {
+    const isBishop = piece && piece.toLowerCase() === 'b';
+    if (!isBishop || !captured || captured.toLowerCase() !== 'p') return { detected: false };
+    const target = playerIsWhite ? 'h7' : 'h2';
+    if (to !== target) return { detected: false };
+    const nearCorner = enemyKing && (
+      (playerIsWhite && (enemyKing.row === 0 || enemyKing.row === 1) && enemyKing.col >= 6) ||
+      (!playerIsWhite && (enemyKing.row === 7 || enemyKing.row === 6) && enemyKing.col <= 1)
+    );
+    return { detected: Boolean(nearCorner) };
+  }
+
+  // A6 — Overload exploitation: capturing a defender near the king, or landing
+  // where many enemy pieces are clustered in the king zone.
+  function overloadScoreOf(candidate, after, playerIsWhite, enemyKing) {
+    let score = 0;
+    if (candidate.defenderRemoval) score += 1;
+    const clustered = enemyKing ? countPiecesInZone(after, !playerIsWhite, enemyKing) : 0;
+    if (clustered >= 3) score += 1;
+    return score;
+  }
+
+  // A7 — Tempo-with-threats: count of enemy major pieces (Q/R) attacked from the
+  // destination square, and whether the piece develops while pressing the king.
+  function multiThreatCount(after, to, playerIsWhite) {
+    const pos = squareToCoords(to);
+    let count = 0;
+    for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
+      const target = after[row][col];
+      if (!target || (target === target.toUpperCase()) === playerIsWhite) continue;
+      if (['q', 'r'].includes(target.toLowerCase()) && pieceAttacksSquare(after, pos.row, pos.col, row, col)) count++;
+    }
+    return count;
+  }
+
   function analyzeCandidate(fen, pv, playerColor, rawScore, scoreType, depth = 0) {
     const line = Array.isArray(pv) ? pv.filter(Boolean).slice(0, 8) : [];
     const board = parseFENPlacement((fen || '').split(' ')[0]);
@@ -984,8 +1094,29 @@
     const pawnStormDelta = terrainAfter.pawnStorm - terrainBefore.pawnStorm;
     const passedPawnPush = terrainAfter.advancedPawns > terrainBefore.advancedPawns;
 
+    // ── Chaos Attack feature-delta primitives (grafted Berserker vocabulary) ──
+    const attackUnitsBefore = countAttackUnits(board, playerIsWhite, opponentKingBefore);
+    const attackUnitsAfter = countAttackUnits(after, playerIsWhite, opponentKingAfter);
+    const attackUnitDelta = attackUnitsAfter - attackUnitsBefore;
+    const attackersZoneAfter = opponentKingAfter ? countPiecesInZone(after, playerIsWhite, opponentKingAfter) : 0;
+    const defendersZoneAfter = opponentKingAfter ? countPiecesInZone(after, !playerIsWhite, opponentKingAfter) : 0;
+    const practicalChancesScore = attackersZoneAfter - defendersZoneAfter;
+    const centralPawnAdvance = piece && piece.toLowerCase() === 'p' &&
+      destination.row >= 2 && destination.row <= 5 && destination.col >= 2 && destination.col <= 5;
+    const equalMinorRookTrade = captured && ['n', 'b', 'r'].includes(piece?.toLowerCase()) &&
+      ['n', 'b', 'r'].includes(captured.toLowerCase()) &&
+      PIECE_VALUES[piece.toLowerCase()] === PIECE_VALUES[captured.toLowerCase()];
+    const greekGift = detectGreekGift(piece, from, to, captured, playerIsWhite, opponentKingBefore);
+    const drawContemptScore = Math.abs(rawScore) < 50 ? -1 - (50 - Math.abs(rawScore)) / 50 : 0;
+    const overloadScore = overloadScoreOf({ defenderRemoval }, after, playerIsWhite, opponentKingAfter);
+    const tempoThreatCount = multiThreatCount(after, to, playerIsWhite);
+    const pressureDeltaForDevelopment = (pressureAfter.pressure - pressureBefore.pressure) +
+      (pressureAfter.attackedSquares - pressureBefore.attackedSquares) * 0.5;
+    const developmentWithAttack = isDevelopingMove(piece, from) &&
+      (pressureDeltaForDevelopment > 0 || terrainAfter.penetration > terrainBefore.penetration || givesCheck);
+
     const features = {
-      rawScore, scoreType, depth, first, from, to, piece, captured,
+      rawScore, scoreType, depth, first, from, to, piece, captured, fen,
       givesCheck,
       doubleCheck: givesCheck && attackersOnKing >= 2,
       attackersOnKing,
@@ -996,6 +1127,17 @@
       pawnStorm: terrainAfter.pawnStorm,
       pawnStormDelta,
       passedPawnPush,
+      attackUnits: attackUnitsAfter,
+      attackUnitDelta,
+      practicalChancesScore,
+      structuralComplexity: structuralComplexityOf({
+        sacrifice, centralPawnAdvance, equalMinorRookTrade
+      }),
+      isGreekGift: greekGift.detected,
+      drawContemptScore,
+      overloadScore,
+      tempoThreatCount,
+      developmentWithAttack,
       winningMate: scoreType === 'mate' && rawScore > 0,
       losingMate: scoreType === 'mate' && rawScore < 0,
       forcingPly,
@@ -1054,7 +1196,9 @@
     add(candidate.kingPressureDelta > 0, 'kingPressure', weights.kingPressure * Math.min(candidate.kingPressureDelta, 6), 'increases concrete king pressure');
     add(candidate.defenderRemoval, 'defenderRemoval', weights.defenderRemoval, 'removes a king defender');
     add(candidate.tempo, 'tempo', weights.tempo, 'gains tempo on a major piece');
+    add(candidate.tempoThreatCount > 1, 'tempo', weights.tempo * Math.min(candidate.tempoThreatCount - 1, 2), 'creates multiple simultaneous threats');
     add(candidate.development, 'development', weights.development, 'develops with attacking purpose');
+    add(candidate.developmentWithAttack, 'developmentWithAttack', weights.developmentWithAttack, 'develops directly into the attack');
     add(candidate.opensKingFile, 'openKingFile', weights.openKingFile, 'opens a direct line to the king');
     add(candidate.sustainedAttack, 'sustainedAttack', weights.sustainedAttack, 'keeps the attack forcing');
     add(candidate.penetrationDelta > 0, 'penetration', weights.penetration * Math.min(candidate.penetrationDelta, 2), 'penetrates the opponent half');
@@ -1076,6 +1220,46 @@
     add(candidate.simplification > 1, 'simplification', weights.simplification * Math.min(candidate.simplification - 1, 3), 'simplifies the attack');
     add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * Math.min(candidate.ownKingDangerDelta, 5), 'weakens your own king');
     add(candidate.unsupportedAttack, 'unsupportedAttack', weights.unsupportedAttack, 'attacking piece lacks support');
+
+    // ── Grafted Berserker-vocabulary features (additive, guardrail-preserving) ──
+    // A1 — Attack Unit System (S-curve on king-zone attacker quality).
+    if (candidate.attackUnitDelta > 0) {
+      const after = candidate.attackUnits;
+      const before = after - candidate.attackUnitDelta;
+      const sBonus = attackUnitsToBonus(after) - attackUnitsToBonus(before);
+      add(sBonus > 0, 'attackUnits', weights.attackUnits * Math.min(sBonus, 4), 'swarms the king zone with high-value attackers');
+    }
+    // A2 — Practical chances: out-number the enemy defenders in the king zone.
+    add(candidate.practicalChancesScore > 0, 'practicalChances', weights.practicalChances * Math.min(candidate.practicalChancesScore, 4), 'out-numbers the defenders in the enemy king zone');
+    // A3 — Structural complexity: sacs and central pushes up, equal trades down.
+    add(candidate.structuralComplexity !== 0, 'complexityStructural',
+      weights.complexityStructural * Math.min(Math.abs(candidate.structuralComplexity), 3) * Math.sign(candidate.structuralComplexity),
+      candidate.structuralComplexity > 0 ? 'raises the structural complexity with a sacrifice or central push' : 'squanders complexity with an even minor/rook trade');
+    // A4 — Greek Gift pattern.
+    add(candidate.isGreekGift, 'greekGift', weights.greekGift, 'delivers the classic Greek gift on h7/h2');
+    // A5 — Draw contempt: penalize near-equal calm positions (the score is
+    // negative for |rawScore| < 50, so a positive weight yields a penalty).
+    add(candidate.drawContemptScore < 0, 'drawContempt',
+      weights.drawContempt * Math.max(-2, Math.min(candidate.drawContemptScore, 0)), 'rejects a near-equal calm position');
+    // A6 — Overload exploitation.
+    add(candidate.overloadScore > 0, 'overload', weights.overload * Math.min(candidate.overloadScore, 2), 'exploits overloaded defenders near the king');
+
+    // A8 — Phase-aware aggression scaling (Chaos only). Middlegame amplifies the
+    // whole aggression budget; the endgame amplifies a forced-mate seeker. The
+    // middlegame magnitude comes from the style's phaseAggressionScale config.
+    if (style.id === 'super_ultra_aggressive') {
+      const phase = candidate.fen ? detectGamePhase(candidate.fen) : 'middlegame';
+      const base = style.phaseAggressionScale || 1;
+      let phaseMult = phase === 'middlegame' ? base : (phase === 'opening' ? 0.8 + base * 0.3 : 1.0);
+      if (phase === 'endgame' && candidate.winningMate) phaseMult = Math.max(phaseMult, base);
+      if (bonus > 0) bonus *= phaseMult;
+    }
+
+    // A9 — Secondary hard ceiling so a single stacked move cannot run away with
+    // the score. The existing chaosSacrificeTrigger gate and risk budget remain
+    // authoritative; this cap is purely a symmetry safety net.
+    const synergyCap = (style.sacrificeTolerance || 0) * 6;
+    if (synergyCap > 0 && Number.isFinite(bonus)) bonus = Math.min(bonus, synergyCap);
     return bonus;
   }
 
@@ -1272,12 +1456,22 @@
       const repertoireBonus = context.repertoire?.nextMoves?.includes(firstMove) ? 45 : 0;
       const styleScore = eligible ? bonus - evalLoss * lossWeight + repertoireBonus : -Infinity;
       analysis.repertoireMove = repertoireBonus > 0;
+      // C1 — Two-phase re-rank: among budget-eligible candidates, prefer the most
+      // aggressive on concrete attack facts before human-naturalness decides.
+      analysis.attackSubTotal = (analysis.kingPressureDelta || 0) +
+        (analysis.penetrationDelta || 0) + (analysis.pawnStormDelta || 0);
       return { ...entry, analysis, eligible, bonus: bonus + repertoireBonus, styleScore };
     });
 
     let eligible = candidates.filter(candidate => candidate.eligible);
     if (!eligible.length) eligible = [candidates.find(candidate => candidate.index === objectiveBest.index) || candidates[0]];
-    eligible.sort((a, b) => b.styleScore - a.styleScore || b.utility - a.utility);
+    // C1 — For Chaos, tie-break budget-eligible candidates by concrete attack
+    // facts (king pressure + penetration + pawn storm) so the most aggressive
+    // candidate within tolerance surfaces first. Budget gate stays authoritative.
+    eligible.sort((a, b) =>
+      b.styleScore - a.styleScore ||
+      (profile.id === 'super_ultra_aggressive' ? (b.analysis.attackSubTotal - a.analysis.attackSubTotal) : 0) ||
+      b.utility - a.utility);
     if (humanLikeMode && eligible.length > 0 && !bestIsWinningMate) {
       const standardBest = eligible[0].styleScore;
       const shortlistMargin = profile.id === 'normal' ? 32 : (profile.id === 'aggressive' ? 70 : 90);
@@ -1331,8 +1525,16 @@
     if (analysis.development) annotations.push('active development');
     if (analysis.opensKingFile) annotations.push('open king line');
     if (analysis.sacrifice) annotations.push(analysis.sacrificeSoundness === 'sound' ? 'sound sacrifice' : (analysis.sacrificeSoundness === 'speculative' ? 'speculative sacrifice' : 'unsound sacrifice'));
-    if (profile.id === 'super_ultra_aggressive') annotations.push('chaos attack');
-    else annotations.push('aggressive');
+    // Chaos-only flavor tags keyed on the grafted Berserker-vocabulary features.
+    if (profile.id === 'super_ultra_aggressive') {
+      annotations.push('chaos attack');
+      if (analysis.isGreekGift) annotations.push('greek gift');
+      if (analysis.overloadScore > 0) annotations.push('overload');
+      if (analysis.practicalChancesScore > 0) annotations.push('practical chances');
+      if (analysis.structuralComplexity > 0) annotations.push('storm the king');
+    } else {
+      annotations.push('aggressive');
+    }
     return [...new Set(annotations)];
   }
 
