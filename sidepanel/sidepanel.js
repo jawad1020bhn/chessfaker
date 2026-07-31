@@ -1,6 +1,10 @@
 /**
- * Chess Hint Assistant — Side Panel Controller v9.0.0
+ * Chess Hint Assistant — Side Panel Controller v9.1.0
  * Turn-Based Analysis Engine. No local Stockfish.
+ *
+ * v9.1.0 — DGT Slate & Tournament Obsidian Minimalist UI/UX redesign,
+ *          synchronized horizontal evaluation gauge, enhanced analytical
+ *          chart canvas rendering, and improved source indicator badges.
  *
  * v9.0.0 — Three playing styles with Standard/Human-like modes, synchronized
  *            candidate views, natural plan continuity, and human coaching hints.
@@ -1083,8 +1087,14 @@
     const isWhite = effectiveColor === 'w';
     const displayScore = isWhite ? score : -score;
     const winPct = window.ChessHintEngine.formatEvalBar(score, scoreType, true);
-    if (dom.evalBarWhite) dom.evalBarWhite.style.height = `${winPct}%`;
-    if (dom.evalBarBlack) dom.evalBarBlack.style.height = `${100 - winPct}%`;
+    if (dom.evalBarWhite) {
+      dom.evalBarWhite.style.height = `${winPct}%`;
+      dom.evalBarWhite.style.width = `${winPct}%`;
+    }
+    if (dom.evalBarBlack) {
+      dom.evalBarBlack.style.height = `${100 - winPct}%`;
+      dom.evalBarBlack.style.width = `${100 - winPct}%`;
+    }
     const scoreStr = scoreType === 'mate'
       ? (displayScore > 0 ? `+M${displayScore}` : `-M${Math.abs(displayScore)}`)
       : (displayScore >= 0 ? `+${(displayScore / 100).toFixed(1)}` : (displayScore / 100).toFixed(1));
@@ -1360,9 +1370,9 @@
       'maybe-loss': 'Probably Losing', 'loss': 'Losing', 'unknown': 'Unknown'
     };
     const catColors = {
-      'win': '#5cb85c', 'syzygy-win': '#5cb85c', 'maybe-win': '#8cc08c',
-      'cursed-win': '#8cc08c', 'draw': '#f0ad4e', 'blessed-loss': '#e09050',
-      'maybe-loss': '#d9534f', 'loss': '#d9534f', 'unknown': '#999'
+      'win': '#2b8c5e', 'syzygy-win': '#2b8c5e', 'maybe-win': '#439e72',
+      'cursed-win': '#439e72', 'draw': '#d9822b', 'blessed-loss': '#c97238',
+      'maybe-loss': '#c94248', 'loss': '#c94248', 'unknown': '#8c93a2'
     };
 
     if (dom.tbCategory) {
@@ -1644,20 +1654,22 @@
     ctx.clearRect(0, 0, width, height);
 
     // Draw center line
-    ctx.strokeStyle = '#3a3a5c';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
     ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
     ctx.beginPath();
     ctx.moveTo(0, height / 2);
     ctx.lineTo(width, height / 2);
     ctx.stroke();
+    ctx.setLineDash([]);
 
     // Find scale
     const maxEval = Math.max(200, ...evalHistory.map(e => Math.abs(e.score)));
     const scale = (height / 2 - 10) / maxEval;
 
     // Draw line
-    ctx.strokeStyle = '#4a90d9';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#d9822b';
+    ctx.lineWidth = 1.75;
     ctx.beginPath();
     for (let i = 0; i < evalHistory.length; i++) {
       const x = (i / (evalHistory.length - 1)) * width;
@@ -1669,9 +1681,9 @@
 
     // Fill area
     const gradient = ctx.createLinearGradient(0, 0, 0, height);
-    gradient.addColorStop(0, 'rgba(92, 184, 92, 0.3)');
-    gradient.addColorStop(0.5, 'rgba(74, 144, 217, 0.1)');
-    gradient.addColorStop(1, 'rgba(217, 83, 79, 0.3)');
+    gradient.addColorStop(0, 'rgba(43, 140, 94, 0.25)');
+    gradient.addColorStop(0.5, 'rgba(217, 130, 43, 0.05)');
+    gradient.addColorStop(1, 'rgba(201, 66, 72, 0.25)');
     ctx.lineTo(width, height / 2);
     ctx.lineTo(0, height / 2);
     ctx.fillStyle = gradient;

@@ -1,5 +1,7 @@
 /**
- * Chess Hint Assistant — Three-Mode Hint Engine
+ * Chess Hint Assistant — Three-Mode Hint Engine v9.1.0
+ *
+ * v9.1.0: Updated version metadata for the DGT Slate & Tournament Obsidian redesign.
  *
  * Modes:
  *  - Normal: objective best play and reliable conversion.
