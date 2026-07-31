@@ -61,6 +61,7 @@
   let playerColor = null;          // Auto-detected from board orientation
   let assistedPlayerColor = null;  // User-selected: which player to assist (null = not yet set)
   let activeTabId = 'active';       // Included in position-generation tokens
+  let positionReliable = false;     // True only when the site supplied a complete FEN
   const EXACT_HINT_LEVEL = 5;
   let lastAnalysis = null;
   let prevEval = null;
@@ -224,6 +225,8 @@
         handlePositionUpdate({
           fen: result.fen,
           playerColor: result.playerColor,
+          positionReliable: result.positionReliable === true,
+          fenSource: result.fenSource || 'dom-placement',
           gameInfo: { site: result.site, url: result.url, timestamp: result.timestamp, moveHistory: [], tabId: activeTabId }
         });
       }
@@ -505,7 +508,9 @@
   function updatePlayerSelectorUI() {
     if (!dom.playerSelector) return;
     $$('.player-btn').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.color === assistedPlayerColor);
+      const selected = btn.dataset.color === assistedPlayerColor;
+      btn.classList.toggle('active', selected);
+      btn.setAttribute('aria-checked', selected ? 'true' : 'false');
     });
   }
 
@@ -736,6 +741,7 @@
     currentFen = message.fen;
     const positionChanged = !prevFen || prevFen.split(' ').slice(0, 4).join(' ') !== currentFen.split(' ').slice(0, 4).join(' ');
     playerColor = message.playerColor || 'w';
+    positionReliable = message.positionReliable === true;
     if (assistedPlayerColor === null) {
       assistedPlayerColor = playerColor;
       updatePlayerSelectorUI();
@@ -1000,7 +1006,8 @@
       multiPv: settings.cloudDepth || 3,
       hintLevel: EXACT_HINT_LEVEL,
       refresh: refresh,
-      tabId: activeTabId
+      tabId: activeTabId,
+      positionReliable
     }).catch(() => {});
   }
 

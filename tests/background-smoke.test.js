@@ -128,7 +128,8 @@ function send(message) {
     fen: '8/8/8/8/8/8/4K3/6kR w - - 0 1',
     playerColor: 'w',
     multiPv: 3,
-    hintLevel: 3
+    hintLevel: 3,
+    positionReliable: true
   });
   const tablebaseUpdate = await waitForMessage('analysis_update', tablebaseUpdates);
   assert.equal(tablebaseUpdate.data.source, 'tablebase');
@@ -146,7 +147,8 @@ function send(message) {
     fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
     playerColor: 'w',
     multiPv: 3,
-    hintLevel: 3
+    hintLevel: 3,
+    positionReliable: true
   });
   const openingUpdate = await waitForMessage('analysis_update', openingUpdates);
   assert.equal(openingUpdate.data.source, 'masters-explorer');

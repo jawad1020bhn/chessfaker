@@ -37,19 +37,6 @@
       "128": "icons/icon-128.png"
     }
   },
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "sidepanel/*",
-        "icons/*",
-        "engine/eco.json"
-      ],
-      "matches": [
-        "https://*.chess.com/*",
-        "https://*.lichess.org/*"
-      ]
-    }
-  ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src https://lichess.org https://explorer.lichess.ovh https://tablebase.lichess.ovh https://chess-api.com;"
   },

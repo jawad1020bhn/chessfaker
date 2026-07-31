@@ -76,6 +76,26 @@ const DEFAULT_SETTINGS = {
   useMastersExplorer: true
 };
 
+function normalizeSettings(value = {}) {
+  const candidate = value && typeof value === 'object' ? value : {};
+  const booleanKeys = [
+    'humanLikeMode', 'autoAnalyze', 'showThreats', 'showAssessment',
+    'showContinuation', 'showEvalHistory', 'showOpeningExplorer',
+    'showTablebase', 'showEndgameCoach', 'showCriticalMoments',
+    'showCandidateMoves', 'useChessApi', 'useLichessCloud', 'useMastersExplorer'
+  ];
+  const normalized = { ...DEFAULT_SETTINGS };
+  normalized.cloudDepth = ChessCore.clampNumber(candidate.cloudDepth, 1, 10, DEFAULT_SETTINGS.cloudDepth);
+  normalized.depthTarget = ChessCore.clampNumber(candidate.depthTarget, 0, 40, DEFAULT_SETTINGS.depthTarget);
+  normalized.style = ['normal', 'aggressive', 'super_ultra_aggressive'].includes(candidate.style)
+    ? candidate.style
+    : DEFAULT_SETTINGS.style;
+  normalized.whiteRepertoire = typeof candidate.whiteRepertoire === 'string' ? candidate.whiteRepertoire : DEFAULT_SETTINGS.whiteRepertoire;
+  normalized.blackRepertoire = typeof candidate.blackRepertoire === 'string' ? candidate.blackRepertoire : DEFAULT_SETTINGS.blackRepertoire;
+  for (const key of booleanKeys) normalized[key] = typeof candidate[key] === 'boolean' ? candidate[key] : DEFAULT_SETTINGS[key];
+  return normalized;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // ─── Turn-Based Analysis State Machine ────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
@@ -995,14 +1015,18 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
     };
   }
   const settings = await new Promise(resolve =>
-    chrome.storage.local.get('settings', result => resolve({ ...DEFAULT_SETTINGS, ...(result.settings || {}) }))
+    chrome.storage.local.get('settings', result => resolve(normalizeSettings(result.settings)))
   );
   const priority = options.refresh ? 'manual-current-position' : 'current-player-turn';
   const context = { positionToken, refresh: Boolean(options.refresh), priority };
+  // A board-placement snapshot cannot reliably encode castling, en-passant, or
+  // move counters. Keep regular engine analysis available, but never use it
+  // for state-sensitive databases until the site supplied an authoritative FEN.
+  const hasReliablePositionMetadata = options.positionReliable === true;
 
   // Deterministic tablebases are the sole remote workflow for eligible
   // endgames. A successful tablebase lookup always stops engine routing.
-  if (settings.showTablebase !== false && countFenPieces(fen) <= 7) {
+  if (hasReliablePositionMetadata && settings.showTablebase !== false && countFenPieces(fen) <= 7) {
     const tbResult = await lichessTablebase(fen, {
       ...context,
       priority: options.refresh ? 'manual-current-position' : 'current-position-tablebase'
@@ -1021,7 +1045,9 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
     }
   }
 
-  const sourceOrder = semanticSourceOrder(fen, settings);
+  const sourceOrder = semanticSourceOrder(fen, hasReliablePositionMetadata
+    ? settings
+    : { ...settings, useMastersExplorer: false });
   if (sourceOrder.length === 0) {
     return {
       error: true,
@@ -1044,7 +1070,7 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
     for (const source of sourceOrder) {
       // In openings, a cached player-explorer result is useful human move data
       // and is checked after Masters but before any engine cache or remote call.
-      if (source === 'lichess-cloud' && isPlausibleOpening(fen)) {
+      if (hasReliablePositionMetadata && source === 'lichess-cloud' && isPlausibleOpening(fen)) {
         const cachedOpening = await apiCoordinator.getCached(openingCacheKey(fen), 'openingExplorer');
         if (cachedOpening?.ok) {
           bestResult = analysisFromOpeningData(cachedOpening.data, fen, multiPv);
@@ -1126,7 +1152,7 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
   // Use cached opening data immediately. A remote enrichment is allowed only
   // for a current, plausible opening while the panel feature is enabled and
   // the low-priority budget still has capacity.
-  if (settings.showOpeningExplorer === true && isPlausibleOpening(fen)) {
+  if (hasReliablePositionMetadata && settings.showOpeningExplorer === true && isPlausibleOpening(fen)) {
     if (usedSource === 'masters-explorer') bestResult.openingData = openingDataFromMastersResult(bestResult);
     const cachedOpening = bestResult.openingData ? null : await apiCoordinator.getCached(openingCacheKey(fen), 'openingExplorer');
     if (cachedOpening?.ok) bestResult.openingData = cachedOpening.data;
@@ -1309,7 +1335,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
     chrome.storage.local.get(['settings', 'assistedPlayerColor'], (result) => {
-      const settings = { ...DEFAULT_SETTINGS, ...(result.settings || {}) };
+      const settings = normalizeSettings(result.settings);
       const assistedPlayerColor = message.playerColor || result.assistedPlayerColor || 'w';
       const tabId = message.tabId ?? sender.tab?.id ?? 'active';
       notePanelActivity(tabId, true);
@@ -1360,7 +1386,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         moveHistory: message.gameInfo?.moveHistory || [],
         refresh: Boolean(message.refresh),
         positionToken,
-        tabId
+        tabId,
+        positionReliable: message.positionReliable === true
       }).then(cloudResult => {
         turnState.analysisInProgress = false;
         if (!apiCoordinator.isPositionCurrent(positionToken) || cloudResult?.stalePosition) return;
@@ -1422,20 +1449,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       moveHistory: message.moveHistory || [],
       refresh: Boolean(message.refresh),
       positionToken,
-      tabId
+      tabId,
+      positionReliable: message.positionReliable === true
     }).then(result => sendResponse(result)).catch(() => sendResponse(null));
     return true;
   }
 
   if (msgType === 'request_opening_data') {
-    if (!ChessCore.parseFen(message.fen) || !isPlausibleOpening(message.fen)) {
+    if (message.positionReliable !== true || !ChessCore.parseFen(message.fen) || !isPlausibleOpening(message.fen)) {
       sendResponse(null);
       return false;
     }
     const tabId = message.tabId ?? sender.tab?.id ?? 'active';
     const positionToken = registerPosition(message.fen, tabId);
     chrome.storage.local.get('settings').then(result => {
-      const settings = { ...DEFAULT_SETTINGS, ...(result.settings || {}) };
+      const settings = normalizeSettings(result.settings);
       if (!settings.showOpeningExplorer) return null;
       return lichessOpeningExplorer(message.fen, { positionToken, priority: 'opening-enrichment' });
     }).then(data => sendResponse(data)).catch(() => sendResponse(null));
@@ -1443,7 +1471,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (msgType === 'request_tablebase_data') {
-    if (!ChessCore.parseFen(message.fen) || countFenPieces(message.fen) > 7) {
+    if (message.positionReliable !== true || !ChessCore.parseFen(message.fen) || countFenPieces(message.fen) > 7) {
       sendResponse(null);
       return false;
     }

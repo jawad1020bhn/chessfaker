@@ -187,7 +187,7 @@
           ? boardEl.game.getPlayingAs()
           : null;
         const playerColor = playingAs === 1 ? 'w' : (playingAs === 2 ? 'b' : 'w');
-        return { fen, playerColor };
+        return { fen, playerColor, positionReliable: true, fenSource: 'site-api' };
       }
     } catch (e) { /* Not accessible from isolated world */ }
 
@@ -331,7 +331,7 @@
         if (lichess.analysis && lichess.analysis.node && lichess.analysis.node.fen) {
           const fen = lichess.analysis.node.fen;
           const isFlipped = cgContainer.classList.contains('orientation-black');
-          return { fen, playerColor: isFlipped ? 'b' : 'w' };
+          return { fen, playerColor: isFlipped ? 'b' : 'w', positionReliable: true, fenSource: 'site-api' };
         }
       }
     } catch (e) {
@@ -384,6 +384,10 @@
     return {
       fen: result.fen,
       playerColor: result.playerColor,
+      // DOM placement cannot establish castling, en-passant, or move counters.
+      // Consumers must gate state-sensitive features on this signal.
+      positionReliable: result.positionReliable === true,
+      fenSource: result.fenSource || 'dom-placement',
       site: site,
       url: window.location.href,
       timestamp: Date.now()
