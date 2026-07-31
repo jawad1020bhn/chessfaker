@@ -1264,16 +1264,35 @@ async function readBoardFromActiveTab() {
     const isChessSite = host === 'chess.com' || host.endsWith('.chess.com') ||
       host === 'lichess.org' || host.endsWith('.lichess.org');
     if (!isChessSite) return null;
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ['content.js']
-    });
+    // Run in the page's main world first. This is required to read the
+    // sites' own game objects, whose full FEN includes castling, en-passant,
+    // and move counters. The content reader still falls back to DOM placement
+    // when no site API is exposed.
+    let results;
+    try {
+      results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['content.js'],
+        world: 'MAIN'
+      });
+    } catch (_) {
+      // Older Chromium builds or hardened pages can reject MAIN-world
+      // injection; retain the isolated-world DOM-reader fallback.
+      results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['content.js']
+      });
+    }
     const result = results?.[0]?.result;
     if (!result || !ChessCore.parseFen(result.fen)) return null;
     result.tabId = tab.id;
 
     const previousFen = lastObservedFenByTab.get(tab.id) || null;
-    if (previousFen && previousFen.split(' ')[0] === result.fen.split(' ')[0]) {
+    if (result.positionReliable === true) {
+      // A site API FEN is authoritative, including its counters, castling and
+      // en-passant fields. Never overwrite it with locally inferred metadata.
+      lastObservedFenByTab.set(tab.id, result.fen);
+    } else if (previousFen && previousFen.split(' ')[0] === result.fen.split(' ')[0]) {
       result.fen = previousFen;
     } else {
       result.fen = ChessCore.reconcileFen(previousFen, result.fen) || result.fen;
@@ -1332,6 +1351,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (msgType === 'request_analysis') {
     if (!ChessCore.parseFen(message.fen)) {
       sendResponse({ ok: false, error: 'Invalid board position' });
+      return false;
+    }
+    if (message.turnReliable !== true) {
+      chrome.runtime.sendMessage({
+        type: 'turn_status_update',
+        data: { isPlayerTurn: false, waitingForOpponent: false, reason: 'turn_unknown', fen: message.fen }
+      }).catch(() => {});
+      sendResponse({ ok: true, turnStatus: 'turn_unknown' });
       return false;
     }
     chrome.storage.local.get(['settings', 'assistedPlayerColor'], (result) => {

@@ -62,6 +62,7 @@
   let assistedPlayerColor = null;  // User-selected: which player to assist (null = not yet set)
   let activeTabId = 'active';       // Included in position-generation tokens
   let positionReliable = false;     // True only when the site supplied a complete FEN
+  let turnReliable = false;         // True only when the site supplied an active color
   const EXACT_HINT_LEVEL = 5;
   let lastAnalysis = null;
   let prevEval = null;
@@ -226,6 +227,7 @@
           fen: result.fen,
           playerColor: result.playerColor,
           positionReliable: result.positionReliable === true,
+          turnReliable: result.turnReliable === true,
           fenSource: result.fenSource || 'dom-placement',
           gameInfo: { site: result.site, url: result.url, timestamp: result.timestamp, moveHistory: [], tabId: activeTabId }
         });
@@ -742,6 +744,7 @@
     const positionChanged = !prevFen || prevFen.split(' ').slice(0, 4).join(' ') !== currentFen.split(' ').slice(0, 4).join(' ');
     playerColor = message.playerColor || 'w';
     positionReliable = message.positionReliable === true;
+    turnReliable = message.turnReliable === true;
     if (assistedPlayerColor === null) {
       assistedPlayerColor = playerColor;
       updatePlayerSelectorUI();
@@ -782,6 +785,14 @@
       tryReportPlayerMove(lastEngineRecommendationFen, lastEngineRecommendationUci, currentFen);
       lastEngineRecommendationFen = null;
       lastEngineRecommendationUci = null;
+    }
+
+    if (!turnReliable) {
+      isPlayerTurn = false;
+      waitingForOpponent = false;
+      updateEngineStatus('unknown', 'Turn unavailable — waiting for a verified position');
+      if (dom.hintText) dom.hintText.textContent = 'Turn information is unavailable for this board.';
+      return;
     }
 
     if (isPlayerTurn) {
@@ -850,6 +861,12 @@
     if (!data) return;
     isPlayerTurn = data.isPlayerTurn;
     waitingForOpponent = data.waitingForOpponent;
+
+    if (data.reason === 'turn_unknown') {
+      updateEngineStatus('unknown', 'Turn unavailable — waiting for a verified position');
+      if (dom.hintText) dom.hintText.textContent = 'Turn information is unavailable for this board.';
+      return;
+    }
 
     if (isPlayerTurn) {
       updateEngineStatus('analyzing', 'Your turn — analyzing...');
@@ -1007,7 +1024,8 @@
       hintLevel: EXACT_HINT_LEVEL,
       refresh: refresh,
       tabId: activeTabId,
-      positionReliable
+      positionReliable,
+      turnReliable
     }).catch(() => {});
   }
 

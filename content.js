@@ -68,12 +68,15 @@
     }
 
     const activeColor = getChesscomActiveColor(boardEl);
+    const turnReliable = activeColor === 'w' || activeColor === 'b';
     const castling = getChesscomCastling(board);
     const epSquare = getChesscomEnPassant(board);
-    const fen = `${fenPlacement} ${activeColor} ${castling} ${epSquare} 0 1`;
+    // Keep a syntactically valid FEN for display/reconciliation, but mark an
+    // unavailable clock/turn indicator explicitly rather than guessing White.
+    const fen = `${fenPlacement} ${turnReliable ? activeColor : 'w'} ${castling} ${epSquare} 0 1`;
     const playerColor = getChesscomPlayerColor(boardEl);
 
-    return { fen, playerColor };
+    return { fen, playerColor, turnReliable };
   }
 
   function parseChesscomPiece(el) {
@@ -134,7 +137,7 @@
       }
     }
 
-    return 'w';
+    return null;
   }
 
   function getChesscomBottomColor(boardEl) {
@@ -187,7 +190,7 @@
           ? boardEl.game.getPlayingAs()
           : null;
         const playerColor = playingAs === 1 ? 'w' : (playingAs === 2 ? 'b' : 'w');
-        return { fen, playerColor, positionReliable: true, fenSource: 'site-api' };
+        return { fen, playerColor, positionReliable: true, turnReliable: true, fenSource: 'site-api' };
       }
     } catch (e) { /* Not accessible from isolated world */ }
 
@@ -242,12 +245,13 @@
     }
 
     const activeColor = getLichessActiveColor();
+    const turnReliable = activeColor === 'w' || activeColor === 'b';
     const castling = getLichessCastling(board);
     const epSquare = getLichessEnPassant(board);
-    const fen = `${fenPlacement} ${activeColor} ${castling} ${epSquare} 0 1`;
+    const fen = `${fenPlacement} ${turnReliable ? activeColor : 'w'} ${castling} ${epSquare} 0 1`;
     const playerColor = getLichessPlayerColor(isFlipped);
 
-    return { fen, playerColor };
+    return { fen, playerColor, turnReliable };
   }
 
   function parseLichessPiece(el, squareSize, isFlipped) {
@@ -316,7 +320,7 @@
       }
     }
 
-    return 'w';
+    return null;
   }
 
   function tryLichessInternalFen() {
@@ -331,7 +335,7 @@
         if (lichess.analysis && lichess.analysis.node && lichess.analysis.node.fen) {
           const fen = lichess.analysis.node.fen;
           const isFlipped = cgContainer.classList.contains('orientation-black');
-          return { fen, playerColor: isFlipped ? 'b' : 'w', positionReliable: true, fenSource: 'site-api' };
+          return { fen, playerColor: isFlipped ? 'b' : 'w', positionReliable: true, turnReliable: true, fenSource: 'site-api' };
         }
       }
     } catch (e) {
@@ -387,6 +391,7 @@
       // DOM placement cannot establish castling, en-passant, or move counters.
       // Consumers must gate state-sensitive features on this signal.
       positionReliable: result.positionReliable === true,
+      turnReliable: result.turnReliable === true,
       fenSource: result.fenSource || 'dom-placement',
       site: site,
       url: window.location.href,
