@@ -6,7 +6,7 @@
  * Modes:
  *  - Normal: objective best play and reliable conversion.
  *  - Aggressive: fastest sound win through forcing play and initiative.
- *  - Super Ultra Aggressive: validated sacrifices and maximum concrete pressure.
+ *  - Chaos Attack: bold sacrifices, penetration, pawn storms, and maximum concrete pressure.
  *
  * Candidate selection is mate-safe, evaluation-budgeted, stateless, and based
  * on before/after board features plus the supplied principal variation.
@@ -64,27 +64,34 @@
     },
     super_ultra_aggressive: {
       id: 'super_ultra_aggressive',
-      name: 'Super Ultra Aggressive',
-      desc: 'Kamikaze-level pressure: validated sacrifices, mating nets, and maximum practical complications.',
-      riskBudget: { winning: 80, equal: 190, worse: 360 },
-      sacrificeTolerance: 360,
-      kingHuntBonus: 130,
+      name: 'Chaos Attack',
+      desc: 'Bold, attack-first play: seek king hunts, penetration, pawn storms, and concrete sacrifices while never discarding a forced mate.',
+      // These are objective-evaluation budgets in centipawns, not a claim that
+      // every sacrificed pawn is compensated. They widen as a position worsens.
+      riskBudget: { winning: 100, advantage: 200, equal: 350, worse: 550, desperate: 800 },
+      sacrificeTolerance: 1000,
+      kingHuntBonus: 180,
       diversity: 0.16,
       weights: {
-        check: 125,
-        forcingPly: 38,
-        kingPressure: 38,
-        defenderRemoval: 48,
-        tempo: 34,
-        development: 20,
-        openKingFile: 58,
-        sustainedAttack: 75,
-        soundSacrifice: 145,
-        speculativeSacrifice: 42,
-        complexity: 28,
-        simplification: -35,
-        ownKingDanger: -24,
-        unsupportedAttack: -45
+        check: 210,
+        doubleCheck: 145,
+        forcingPly: 62,
+        kingPressure: 82,
+        defenderRemoval: 90,
+        tempo: 58,
+        development: 32,
+        openKingFile: 120,
+        sustainedAttack: 145,
+        soundSacrifice: 230,
+        speculativeSacrifice: 115,
+        penetration: 66,
+        deepPenetration: 115,
+        pawnStorm: 85,
+        passedPawnPush: 45,
+        complexity: 58,
+        simplification: -105,
+        ownKingDanger: -18,
+        unsupportedAttack: -18
       }
     }
   };
@@ -779,9 +786,9 @@
       return 'Create active counterplay immediately — checks, threats, and tempo are more valuable than passive defense.';
     }
     if (currentStyle.id === 'super_ultra_aggressive') {
-      if (evalScore > 100) return 'Accelerate the win: open the king, reject sterile simplification, and calculate every forcing sacrifice.';
-      if (evalScore > -100) return 'Create maximum concrete chaos: expose the king, open lines, and accept material risk for sustained forcing play.';
-      return 'Fight through complications: seek checks, asymmetric material, and validated sacrifices that maximize practical resistance.';
+      if (evalScore > 100) return 'Accelerate the win: invade the king zone, keep major pieces active, and calculate every forcing sacrifice.';
+      if (evalScore > -100) return 'Create concrete chaos: open lines, drive a pawn storm, and accept material risk only when it creates immediate attacking pressure.';
+      return 'Fight for practical chances: seek checks, deep penetration, asymmetric material, and forcing sacrifices that keep the opponent under pressure.';
     }
 
     if (evalScore > 300) {
@@ -853,6 +860,17 @@
       pressure += ({ p: 1, n: 2, b: 2, r: 3, q: 5, k: 1 })[board[row][col].toLowerCase()] || 0;
     }
     return { attackers: attackingPieces.size, pressure, attackedSquares: attackedZone.size };
+  }
+
+  function attackersToSquare(board, target, attackerIsWhite) {
+    if (!target) return 0;
+    let count = 0;
+    for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
+      const piece = board[row][col];
+      if (piece && (piece === piece.toUpperCase()) === attackerIsWhite &&
+          pieceAttacksSquare(board, row, col, target.row, target.col)) count++;
+    }
+    return count;
   }
 
   function countPieces(board) {
@@ -937,10 +955,31 @@
     const closeToKing = opponentKingAfter
       ? Math.max(Math.abs(destination.row - opponentKingAfter.row), Math.abs(destination.col - opponentKingAfter.col)) <= 2
       : false;
+    const attackersOnKing = attackersToSquare(after, opponentKingAfter, playerIsWhite);
+    const isEnemyHalf = (row) => playerIsWhite ? row <= 3 : row >= 4;
+    const isDeepEnemyHalf = (row) => playerIsWhite ? row <= 1 : row >= 6;
+    let penetration = 0, deepPenetration = 0, pawnStorm = 0, passedPawnPush = false;
+    const attackFiles = opponentKingAfter?.col >= 4 ? [5, 6, 7] : [0, 1, 2];
+    for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
+      const candidatePiece = after[row][col];
+      if (!candidatePiece || (candidatePiece === candidatePiece.toUpperCase()) !== playerIsWhite || candidatePiece.toLowerCase() === 'k') continue;
+      if (isEnemyHalf(row)) penetration++;
+      if (isDeepEnemyHalf(row)) deepPenetration++;
+      if (candidatePiece.toLowerCase() === 'p') {
+        if (attackFiles.includes(col) && isEnemyHalf(row)) pawnStorm++;
+        if (playerIsWhite ? row <= 2 : row >= 5) passedPawnPush = true;
+      }
+    }
 
     const features = {
       rawScore, scoreType, depth, first, from, to, piece, captured,
       givesCheck,
+      doubleCheck: givesCheck && attackersOnKing >= 2,
+      attackersOnKing,
+      penetration,
+      deepPenetration,
+      pawnStorm,
+      passedPawnPush,
       winningMate: scoreType === 'mate' && rawScore > 0,
       losingMate: scoreType === 'mate' && rawScore < 0,
       forcingPly,
@@ -956,6 +995,9 @@
       opensKingFile,
       sustainedAttack: playerForcingMoves >= 2 || (pressureAfter.attackers >= 3 && pressureAfter.pressure > pressureBefore.pressure),
       sacrifice,
+      // A speculative sacrifice must create an immediate attacking fact, not
+      // merely lose material. This is a gate for Chaos Attack's bonus.
+      chaosSacrificeTrigger: sacrifice && (givesCheck || opensKingFile || defenderRemoval || pawnStorm >= 2 || penetration >= 4),
       materialDelta,
       movingPieceSurvives,
       simplification: piecesBefore - countPieces(boardAfterReply),
@@ -991,6 +1033,7 @@
       if (amount < 0 && reason) candidate.risks.push(reason);
     };
     add(candidate.givesCheck, 'check', weights.check, 'forces a check');
+    add(candidate.doubleCheck, 'doubleCheck', weights.doubleCheck, 'forces a double check');
     add(candidate.forcingPly > 0, 'forcingPly', weights.forcingPly * Math.min(candidate.forcingPly, 4), `${candidate.forcingPly}-ply forcing sequence`);
     add(candidate.kingPressureDelta > 0, 'kingPressure', weights.kingPressure * Math.min(candidate.kingPressureDelta, 6), 'increases concrete king pressure');
     add(candidate.defenderRemoval, 'defenderRemoval', weights.defenderRemoval, 'removes a king defender');
@@ -998,13 +1041,20 @@
     add(candidate.development, 'development', weights.development, 'develops with attacking purpose');
     add(candidate.opensKingFile, 'openKingFile', weights.openKingFile, 'opens a direct line to the king');
     add(candidate.sustainedAttack, 'sustainedAttack', weights.sustainedAttack, 'keeps the attack forcing');
+    add(candidate.penetration > 0, 'penetration', weights.penetration * Math.min(candidate.penetration, 4), 'penetrates the opponent half');
+    add(candidate.deepPenetration > 0, 'deepPenetration', weights.deepPenetration * Math.min(candidate.deepPenetration, 2), 'establishes a deep invading piece');
+    add(candidate.pawnStorm > 0, 'pawnStorm', weights.pawnStorm * Math.min(candidate.pawnStorm, 3), 'drives a pawn storm toward the king');
+    add(candidate.passedPawnPush, 'passedPawnPush', weights.passedPawnPush, 'creates a dangerous advanced pawn');
     if (candidate.sacrifice) {
       // Up to one pawn of objective cost is treated as sound compensation;
       // larger eligible sacrifices are explicitly speculative.
       const sound = candidate.winningMate || candidate.evalLoss <= 100;
+      const withinSacrificeTolerance = Math.abs(candidate.materialDelta || 0) <= (style.sacrificeTolerance || 0);
       add(sound, 'soundSacrifice', weights.soundSacrifice, 'offers material with concrete compensation');
-      add(!sound, 'speculativeSacrifice', weights.speculativeSacrifice, sound ? '' : 'sacrifice has limited objective compensation');
-      candidate.sacrificeSoundness = sound ? 'sound' : 'speculative';
+      add(!sound && withinSacrificeTolerance && candidate.chaosSacrificeTrigger, 'speculativeSacrifice', weights.speculativeSacrifice, 'opens immediate chaos around the king');
+      add(!sound && (!withinSacrificeTolerance || !candidate.chaosSacrificeTrigger), 'speculativeSacrifice', -Math.abs(weights.speculativeSacrifice || 0),
+        withinSacrificeTolerance ? 'sacrifice lacks an immediate attacking trigger' : 'sacrifice exceeds the Chaos Attack material limit');
+      candidate.sacrificeSoundness = sound ? 'sound' : (withinSacrificeTolerance && candidate.chaosSacrificeTrigger ? 'speculative' : 'unsound');
     }
     add(candidate.complexity > 0, 'complexity', weights.complexity * Math.min(candidate.complexity, 4), 'creates practical complexity');
     add(candidate.simplification > 1, 'simplification', weights.simplification * Math.min(candidate.simplification - 1, 3), 'simplifies the attack');
@@ -1088,6 +1138,15 @@
   }
 
   function riskBudgetFor(style, bestScore) {
+    // Chaos Attack deliberately scales risk by the practical need to create
+    // chances. The other profiles retain their original compact policy.
+    if (style.id === 'super_ultra_aggressive') {
+      if (bestScore > 200) return style.riskBudget.winning;
+      if (bestScore > 50) return style.riskBudget.advantage;
+      if (bestScore > -50) return style.riskBudget.equal;
+      if (bestScore > -200) return style.riskBudget.worse;
+      return style.riskBudget.desperate;
+    }
     if (bestScore > 150) return style.riskBudget.winning;
     if (bestScore < -100) return style.riskBudget.worse;
     return style.riskBudget.equal;
@@ -1130,12 +1189,21 @@
     if (profile.id === 'normal' && !humanLikeMode) {
       const repertoireMoves = new Set(context.repertoire?.nextMoves || []);
       const bestScore = objectiveBest.score;
+      const bestIsWinningMate = objectiveBest.pv.scoreType === 'mate' && bestScore > 0;
       // Repertoire moves are a soft preference only when they remain within
-      // half a pawn of the engine choice; mate and evaluation safety win.
+      // half a pawn of the engine choice. A repertoire can never displace a
+      // forced mate with a centipawn line; among mating lines, keep the fastest.
+      const isSafeRepertoireMove = (entry) => {
+        if (!repertoireMoves.has(entry.pv.pv?.[0])) return false;
+        if (bestIsWinningMate) {
+          return entry.pv.scoreType === 'mate' && entry.score > 0 && Math.abs(entry.score) <= Math.abs(bestScore);
+        }
+        return bestScore - entry.score <= 50;
+      };
       const ordered = repertoireMoves.size
         ? [...objective].sort((left, right) => {
-            const leftPreferred = repertoireMoves.has(left.pv.pv?.[0]) && bestScore - left.score <= 50;
-            const rightPreferred = repertoireMoves.has(right.pv.pv?.[0]) && bestScore - right.score <= 50;
+            const leftPreferred = isSafeRepertoireMove(left);
+            const rightPreferred = isSafeRepertoireMove(right);
             return Number(rightPreferred) - Number(leftPreferred) || right.utility - left.utility;
           })
         : objective;
@@ -1201,7 +1269,7 @@
     }
 
 
-    // Stable, tightly controlled variety for Super Ultra only. It never applies
+    // Stable, tightly controlled variety for Chaos Attack only. It never applies
     // to mate lines and only considers a near-tied second attacking candidate.
     if (!humanLikeMode && profile.diversity > 0 && !bestIsWinningMate && eligible.length > 1 &&
         eligible[0].styleScore - eligible[1].styleScore <= 18 &&
@@ -1238,8 +1306,8 @@
     if (analysis.tempo) annotations.push('tempo');
     if (analysis.development) annotations.push('active development');
     if (analysis.opensKingFile) annotations.push('open king line');
-    if (analysis.sacrifice) annotations.push(analysis.sacrificeSoundness === 'sound' ? 'sound sacrifice' : 'speculative sacrifice');
-    if (profile.id === 'super_ultra_aggressive') annotations.push('super ultra');
+    if (analysis.sacrifice) annotations.push(analysis.sacrificeSoundness === 'sound' ? 'sound sacrifice' : (analysis.sacrificeSoundness === 'speculative' ? 'speculative sacrifice' : 'unsound sacrifice'));
+    if (profile.id === 'super_ultra_aggressive') annotations.push('chaos attack');
     else annotations.push('aggressive');
     return [...new Set(annotations)];
   }
@@ -1351,7 +1419,7 @@
         if (hintLevel === EXACT_HINT_LEVEL) {
           hints.main = hints.main.replace(/^Best:/, 'Human choice:')
             .replace(/^Aggressive choice:/, 'Human Aggressive choice:')
-            .replace(/^Super Ultra Aggressive choice:/, 'Human Super Ultra choice:');
+            .replace(/^Chaos Attack choice:/, 'Human Chaos Attack choice:');
         }
         const humanReasons = (meta.humanReasons || []).slice(0, 3);
         const humanRisks = [...(meta.humanRisks || []), ...(meta.risks || [])].slice(0, 2);
@@ -1519,7 +1587,7 @@
       // Sacrifice annotation comes from PV-validated material loss.
       if (isOppPiece) {
         if (bestPV._styleAnalysis?.sacrifice) {
-          hint += ` | ${bestPV._styleAnalysis.sacrificeSoundness === 'sound' ? 'Sound' : 'Speculative'} sacrifice: takes opponent's ${capturedName}`;
+          hint += ` | ${bestPV._styleAnalysis.sacrificeSoundness === 'sound' ? 'Sound' : (bestPV._styleAnalysis.sacrificeSoundness === 'speculative' ? 'Speculative' : 'Unsound')} sacrifice: takes opponent's ${capturedName}`;
         } else {
           hint += ` | Captures opponent's ${capturedName}`;
         }
