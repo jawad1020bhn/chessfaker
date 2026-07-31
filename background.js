@@ -1,8 +1,13 @@
 importScripts('engine/core-utils.js', 'engine/api-coordinator.js');
 
 /**
- * Chess Hint Assistant — Background Service Worker v9.2.0
+ * Chess Hint Assistant — Background Service Worker v9.2.1
  * Centralized API reliability, cache, quota, and cooldown protection
+ *
+ * v9.2.1 — Chaos Attack gains the Berserker aggression vocabulary (attack units,
+ *          practical chances, structural complexity, Greek gift, draw contempt,
+ *          overload, develop-with-attack, phase-aware scaling, bonus cap) while
+ *          keeping its mate-safety gate and risk budget authoritative.
  *
  * v9.2.0 — Chaos Attack release: authoritative-position metadata,
  *          attack-first candidate ranking, and verified turn handling.

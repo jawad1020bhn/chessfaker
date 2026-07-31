@@ -1,8 +1,9 @@
 /**
- * Chess Hint Assistant — Cloud Engine v9.2.0
+ * Chess Hint Assistant — Cloud Engine v9.2.1
  *
  * Cloud Provider Metadata
  *
+ * v9.2.1: Release metadata aligned with Chaos Attack Berserker vocabulary.
  * v9.2.0: Release metadata aligned with Chaos Attack and verified-position handling.
  * v9.1.0: Updated version metadata for the DGT Slate & Tournament Obsidian redesign.
  * v9.0.0: Metadata retained for the rebuilt Standard/Human-like style pipeline.
