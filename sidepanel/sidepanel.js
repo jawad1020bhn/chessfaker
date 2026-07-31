@@ -1,6 +1,10 @@
 /**
- * Chess Hint Assistant — Side Panel Controller v9.0.0
+ * Chess Hint Assistant — Side Panel Controller v9.1.0
  * Turn-Based Analysis Engine. No local Stockfish.
+ *
+ * v9.1.0 — DGT Slate & Tournament Obsidian Minimalist UI/UX redesign,
+ *          synchronized horizontal evaluation gauge, enhanced analytical
+ *          chart canvas rendering, and improved source indicator badges.
  *
  * v9.0.0 — Three playing styles with Standard/Human-like modes, synchronized
  *            candidate views, natural plan continuity, and human coaching hints.

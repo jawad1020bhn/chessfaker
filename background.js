@@ -1,8 +1,12 @@
 importScripts('engine/core-utils.js', 'engine/api-coordinator.js');
 
 /**
- * Chess Hint Assistant — Background Service Worker v9.0.0
+ * Chess Hint Assistant — Background Service Worker v9.1.0
  * Centralized API reliability, cache, quota, and cooldown protection
+ *
+ * v9.1.0 — DGT Slate & Tournament Obsidian Minimalist UI/UX redesign,
+ *          synchronized horizontal evaluation gauge, enhanced analytical
+ *          chart canvas rendering, and updated extension metadata.
  *
  * v9.0.0 — Three-mode style engine, Human-like selection setting,
  *            stateful FEN reconciliation, safer rendering, and regression coverage.
