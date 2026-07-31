@@ -144,5 +144,21 @@ const pawnStormAdvance = engine.analyzeCandidate('6k1/8/8/8/6P1/8/8/6K1 w - - 0 
 assert.equal(pawnStormAdvance.pawnStormDelta, 1, 'only a new pawn-storm advance receives the style bonus');
 const invade = engine.analyzeCandidate('6k1/8/8/8/8/5N2/8/6K1 w - - 0 1', ['f3g5'], 'w', 10, 'cp', 20);
 assert.equal(invade.penetrationDelta, 1, 'only a move entering enemy territory receives penetration credit');
+
+// Human-like Chaos prefers strong attacks over merely natural quiet moves.
+const chaosRefFen = '6k1/7p/8/8/8/3Q4/8/6K1 w - - 0 1';
+const safeQuietMove = { score: 100, scoreType: 'cp', depth: 24, pv: ['d3d2'] };
+const attackSacMove = { score: 90, scoreType: 'cp', depth: 24, pv: ['d3h7', 'g8h7'] };
+const humanChaosResult = engine.selectPVForStyle(
+  [safeQuietMove, attackSacMove],
+  chaosRefFen,
+  'super_ultra_aggressive',
+  'w',
+  true
+);
+assert.equal(humanChaosResult[0].pv[0], 'd3h7', 'Human-like Chaos prefers strong attacks over merely natural quiet moves');
+assert.ok(humanChaosResult[0]._styleAnalysis.penetrationDelta > 0, 'recognizes penetration feature');
+assert.ok(humanChaosResult[0]._styleAnalysis.kingPressureDelta > 0, 'recognizes king-pressure delta feature');
+
 console.log('hint-engine tests passed');
 console.log('chaos-style regression tests passed');

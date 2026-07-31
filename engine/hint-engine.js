@@ -1127,8 +1127,14 @@
       reward(candidate.development && candidate.kingPressureDelta > 0, 20, 'develops directly into the attack');
       penalize(candidate.sacrificeSoundness === 'speculative', 35, 'the fastest-looking attack is not fully forced');
     } else {
-      reward(candidate.sacrifice, candidate.sacrificeSoundness === 'sound' ? 42 : 22,
-        candidate.sacrificeSoundness === 'sound' ? 'uses a thematic sacrifice with concrete compensation' : 'creates a dangerous speculative sacrifice');
+      reward(candidate.doubleCheck, 35, 'delivers a devastating double check');
+      reward(candidate.givesCheck && candidate.forcingPly >= 1, 24, 'executes an understandable forcing attack');
+      reward(candidate.kingPressureDelta > 0, Math.min(30, Math.round(candidate.kingPressureDelta * 12)), 'increases concrete king pressure');
+      reward(candidate.penetrationDelta > 0, Math.min(25, candidate.penetrationDelta * 14), 'invades enemy territory');
+      reward(candidate.deepPenetrationDelta > 0, Math.min(35, candidate.deepPenetrationDelta * 18), 'establishes a deep invading piece');
+      reward(candidate.pawnStormDelta > 0, Math.min(30, candidate.pawnStormDelta * 16), 'drives a threatening pawn storm');
+      reward(candidate.sacrifice, candidate.sacrificeSoundness === 'sound' ? 45 : (candidate.chaosSacrificeTrigger ? 28 : 0),
+        candidate.sacrificeSoundness === 'sound' ? 'makes a sound sacrifice with concrete compensation' : (candidate.chaosSacrificeTrigger ? 'creates an immediate chaos-inducing sacrifice' : ''));
       reward(candidate.complexity >= 3, 20, 'creates difficult practical choices');
       reward(candidate.opensKingFile, 24, 'opens a recognizable attacking route to the king');
     }
@@ -1272,7 +1278,7 @@
     eligible.sort((a, b) => b.styleScore - a.styleScore || b.utility - a.utility);
     if (humanLikeMode && eligible.length > 0 && !bestIsWinningMate) {
       const standardBest = eligible[0].styleScore;
-      const shortlistMargin = profile.id === 'normal' ? 32 : (profile.id === 'aggressive' ? 70 : 130);
+      const shortlistMargin = profile.id === 'normal' ? 32 : (profile.id === 'aggressive' ? 70 : 90);
       const shortlist = eligible.filter(candidate => standardBest - candidate.styleScore <= shortlistMargin);
       for (const candidate of shortlist) {
         const naturalness = humanNaturalness(candidate.analysis, profile, context, objectiveBest.score);
