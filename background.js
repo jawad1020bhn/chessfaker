@@ -67,7 +67,11 @@ const DEFAULT_SETTINGS = {
   coachModeMaxHints: 3,
   // v8.5.0 enhancements
   depthTarget: 0,                  // 0 = no minimum; otherwise min depth for exact hints
-  correlationThreshold: 100        // 100 = off; otherwise blocks exact hints when exceeded
+  correlationThreshold: 100,       // 100 = off; otherwise blocks exact hints when exceeded
+  // Individual analysis providers can be excluded without bypassing safeguards.
+  useChessApi: true,
+  useLichessCloud: true,
+  useMastersExplorer: true
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -300,8 +304,8 @@ function tablebaseCacheKey(fen) {
   return `tablebase:${ApiReliability.canonicalAnalysisFen(fen)}`;
 }
 
-function semanticSourceOrder(fen) {
-  return ApiReliability.planPositionWorkflow(fen, { showOpeningExplorer: true }).analysisSources;
+function semanticSourceOrder(fen, settings = DEFAULT_SETTINGS) {
+  return ApiReliability.planPositionWorkflow(fen, settings).analysisSources;
 }
 
 
@@ -1018,7 +1022,20 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
     }
   }
 
-  const sourceOrder = semanticSourceOrder(fen);
+  const sourceOrder = semanticSourceOrder(fen, settings);
+  if (sourceOrder.length === 0) {
+    return {
+      error: true,
+      fen,
+      playerColor,
+      errorDetail: {
+        type: 'no_sources_enabled',
+        message: 'All analysis sources are disabled in Settings. Enable at least one source to analyze this position.',
+        suggestion: 'none'
+      },
+      moveHistory: options.moveHistory || []
+    };
+  }
   let bestResult = null;
   let usedSource = null;
 
@@ -1577,6 +1594,9 @@ chrome.runtime.onInstalled.addListener(() => {
       // v8.5.0: ensure new fields exist on migrated settings
       if (s.depthTarget === undefined) { s.depthTarget = 0; updated = true; }
       if (s.correlationThreshold === undefined) { s.correlationThreshold = 100; updated = true; }
+      if (s.useChessApi === undefined) { s.useChessApi = true; updated = true; }
+      if (s.useLichessCloud === undefined) { s.useLichessCloud = true; updated = true; }
+      if (s.useMastersExplorer === undefined) { s.useMastersExplorer = true; updated = true; }
 
       if (updated) {
         chrome.storage.local.set({ settings: s });

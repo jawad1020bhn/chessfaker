@@ -399,6 +399,28 @@
       </div>
 
       <div class="setting-divider"></div>
+      <div class="setting-section-title">Analysis Sources</div>
+      <div class="setting-group">
+        <label class="toggle-label">
+          <input type="checkbox" id="setting-use-chess-api" checked>
+          <span>Use Chess-API.com</span>
+        </label>
+      </div>
+      <div class="setting-group">
+        <label class="toggle-label">
+          <input type="checkbox" id="setting-use-lichess-cloud" checked>
+          <span>Use Lichess Cloud Evaluation</span>
+        </label>
+      </div>
+      <div class="setting-group">
+        <label class="toggle-label">
+          <input type="checkbox" id="setting-use-masters-explorer" checked>
+          <span>Use Lichess Masters Database</span>
+        </label>
+        <div class="setting-hint">After the first five moves, engine sources are preferred: Chess-API, then Lichess Cloud, then Masters. Disabled sources are excluded from cache lookup and failover.</div>
+      </div>
+
+      <div class="setting-divider"></div>
       <div class="setting-section-title">Cloud API Status</div>
 
       <div class="setting-group">

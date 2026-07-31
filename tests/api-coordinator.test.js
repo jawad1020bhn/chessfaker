@@ -99,9 +99,13 @@ function requestSpec(overrides = {}) {
   assert.equal(openingPlan.openingEligible, true);
   assert.equal(openingPlan.tablebaseEligible, false);
   const middlePlan = planPositionWorkflow('4k3/8/8/3p4/3P4/8/8/4K2R w - - 0 30', { showOpeningExplorer: true, showTablebase: true });
-  assert.deepEqual(middlePlan.analysisSources, ['lichess-cloud', 'chess-api'], 'middlegames skip Masters and Opening Explorer');
+  assert.deepEqual(middlePlan.analysisSources, ['chess-api', 'lichess-cloud', 'masters-explorer'], 'after the first five moves, Chess-API leads, then Lichess Cloud, then Masters');
   assert.equal(middlePlan.openingEligible, false);
   assert.equal(middlePlan.tablebaseEligible, true, 'seven-or-fewer-piece positions route to tablebase first');
+  const disabledSourcePlan = planPositionWorkflow('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', {
+    useChessApi: false, useLichessCloud: true, useMastersExplorer: false
+  });
+  assert.deepEqual(disabledSourcePlan.analysisSources, ['lichess-cloud'], 'disabled providers are excluded from routing');
 
   // Coalescing occurs before queue insertion and one provider never overlaps itself.
   {

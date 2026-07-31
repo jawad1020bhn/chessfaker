@@ -60,15 +60,37 @@
     return fullmove <= 10 && countFenPieces(fen) >= 24;
   }
 
+  function isEarlyOpeningFen(fen) {
+    const parts = String(fen || '').trim().split(/\s+/);
+    const fullmove = Number(parts[5]) || 1;
+    // A fullmove number of 5 covers the first five moves by White/Black.
+    return fullmove <= 5 && countFenPieces(fen) >= 24;
+  }
+
   function planPositionWorkflow(fen, settings = {}) {
     const tablebaseEligible = settings.showTablebase !== false && countFenPieces(fen) <= 7;
     const openingEligible = settings.showOpeningExplorer === true && isPlausibleOpeningFen(fen);
+    const earlyOpening = isEarlyOpeningFen(fen);
+    const enabled = {
+      chessApi: settings.useChessApi !== false,
+      lichessCloud: settings.useLichessCloud !== false,
+      mastersExplorer: settings.useMastersExplorer !== false
+    };
+    // Opening theory benefits from the Masters database. From move six onward,
+    // prefer engine analysis: Chess-API, then Lichess Cloud, then Masters.
+    const preferredSources = earlyOpening
+      ? ['masters-explorer', 'lichess-cloud', 'chess-api']
+      : ['chess-api', 'lichess-cloud', 'masters-explorer'];
+    const providerEnabled = {
+      'chess-api': enabled.chessApi,
+      'lichess-cloud': enabled.lichessCloud,
+      'masters-explorer': enabled.mastersExplorer
+    };
     return {
       tablebaseEligible,
       openingEligible,
-      analysisSources: isPlausibleOpeningFen(fen)
-        ? ['masters-explorer', 'lichess-cloud', 'chess-api']
-        : ['lichess-cloud', 'chess-api']
+      earlyOpening,
+      analysisSources: preferredSources.filter(source => providerEnabled[source])
     };
   }
 
@@ -1092,6 +1114,7 @@
     canonicalAnalysisFen,
     countFenPieces,
     isPlausibleOpeningFen,
+    isEarlyOpeningFen,
     planPositionWorkflow,
     parseRetryAfter,
     PRIORITIES,

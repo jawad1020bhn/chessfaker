@@ -97,7 +97,10 @@
     coachModeMaxHints: 3,
     // v8.5.0 enhancements
     depthTarget: 0,                 // 0 = no minimum; otherwise min depth for exact hints
-    correlationThreshold: 100       // 100 = off; otherwise blocks exact hints when exceeded
+    correlationThreshold: 100,      // 100 = off; otherwise blocks exact hints when exceeded
+    useChessApi: true,
+    useLichessCloud: true,
+    useMastersExplorer: true
   };
 
   // ─── DOM References ─────────────────────────────────────────────────
@@ -464,8 +467,10 @@
   }
 
   function saveSettings() {
-    chrome.storage.local.set({ settings });
-    chrome.storage.local.set({ assistedPlayerColor });
+    return Promise.all([
+      chrome.storage.local.set({ settings }),
+      chrome.storage.local.set({ assistedPlayerColor })
+    ]);
   }
 
   function applySettingsToUI() {
@@ -488,6 +493,9 @@
       'setting-coach-mode': settings.coachModeEnabled,
       'setting-coach-max-hints': settings.coachModeMaxHints,
       'setting-correlation-threshold': settings.correlationThreshold,  // v8.5.0
+      'setting-use-chess-api': settings.useChessApi,
+      'setting-use-lichess-cloud': settings.useLichessCloud,
+      'setting-use-masters-explorer': settings.useMastersExplorer,
     };
     Object.entries(mapping).forEach(([id, val]) => {
       const el = $(`#${id}`);
@@ -609,6 +617,9 @@
       'setting-coach-mode': (v) => { settings.coachModeEnabled = v; updateCoachModeInfo(); },
       'setting-coach-max-hints': (v) => { settings.coachModeMaxHints = parseInt(v); updateCoachModeInfo(); },
       'setting-correlation-threshold': (v) => { settings.correlationThreshold = parseInt(v); },  // v8.5.0
+      'setting-use-chess-api': (v) => { settings.useChessApi = v; },
+      'setting-use-lichess-cloud': (v) => { settings.useLichessCloud = v; },
+      'setting-use-masters-explorer': (v) => { settings.useMastersExplorer = v; },
     };
 
     Object.entries(settingEls).forEach(([id, handler]) => {
@@ -617,11 +628,15 @@
       el.addEventListener('change', () => {
         const val = el.type === 'checkbox' ? el.checked : el.value;
         handler(val);
-        saveSettings();
+        const savePromise = saveSettings();
         applySettingsToUI();
         if ((id === 'setting-style' || id === 'setting-human-like-mode') && lastAnalysis) {
           humanPlanState = null;
           renderAnalysis(lastAnalysis);
+        }
+        if (['setting-use-chess-api', 'setting-use-lichess-cloud', 'setting-use-masters-explorer'].includes(id) && currentFen) {
+          // Ensure the worker sees the new source policy before it routes.
+          savePromise.finally(() => requestAnalysis(true));
         }
       });
     });
