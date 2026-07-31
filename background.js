@@ -13,7 +13,7 @@ importScripts('engine/core-utils.js', 'engine/api-coordinator.js');
  *  - FIX: Masters Explorer score now correctly normalised to White's perspective
  *  - FIX: Masters Explorer multiPv now respects user setting instead of hardcoded 3
  *  - FIX: Fallback loop no longer re-calls sources that failed non-fatally (e.g. 404)
- *  - FIX: hintUsageTracker now resets on player_color_changed (was only reset on new game)
+ *  - FIX: Per-game analysis state resets when the assisted player changes
  *  - FIX: inFlightRequests rejection-safe (no orphan entries on unexpected throw)
  *  - FIX: memoryCache LRU eviction when over cap (was only TTL-based)
  *  - FIX: Consolidated keep-alive into a single chrome.alarms-based mechanism
@@ -36,7 +36,7 @@ importScripts('engine/core-utils.js', 'engine/api-coordinator.js');
  *  - Adaptive circuit breaker with per-error-type recovery
  *  - Request coalescing (singleflight pattern)
  *  - Persistent cache across service worker restarts
- *  - Coach Mode & Fair Play warnings
+ *  - Exact-move fair-play warnings
  *  - Berserker/Kamikaze/Ultra Aggressive playing styles
  *  - Lichess 429 = 60s+ cooldown, 404 = not a failure
  */
@@ -63,8 +63,6 @@ const DEFAULT_SETTINGS = {
   showEndgameCoach: true,
   showCriticalMoments: true,
   showCandidateMoves: true,
-  coachModeEnabled: true,
-  coachModeMaxHints: 3,
   // v8.5.0 enhancements
   depthTarget: 0,                  // 0 = no minimum; otherwise min depth for exact hints
   // Individual analysis providers can be excluded without bypassing safeguards.
@@ -87,6 +85,8 @@ const turnState = {
   consecutiveFailures: 0,
   analysisDebounceTimer: null
 };
+
+let lastAnalysisGameId = null;
 
 function shouldAnalyzePosition(fen, playerColor) {
   if (!fen || !playerColor) {
@@ -307,11 +307,6 @@ function semanticSourceOrder(fen, settings = DEFAULT_SETTINGS) {
   return ApiReliability.planPositionWorkflow(fen, settings).analysisSources;
 }
 
-
-// ─── Coach Mode & Hint Tracking ──────────────────────────────────────
-let hintUsageTracker = { gameId: null, exactHintCount: 0 };
-let lastExactHintTime = 0;
-const EXACT_HINT_COOLDOWN_MS = 5000;
 
 // v8.5.0 — Real engine-correlation guard (Enhancement I)
 // Stores the engine's first-choice UCI move keyed by FEN-of-side-to-move.
@@ -1315,23 +1310,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       notePanelActivity(tabId, true);
       const positionToken = registerPosition(message.fen, tabId);
 
-      if (positionToken && hintUsageTracker.gameId !== positionToken.gameId) {
-        hintUsageTracker = { gameId: positionToken.gameId, exactHintCount: 0 };
-        lastExactHintTime = 0;
+      if (positionToken && lastAnalysisGameId !== positionToken.gameId) {
+        lastAnalysisGameId = positionToken.gameId;
         resetAnalysisState();
         resetCorrelationTracker();
       }
 
       const effectiveHintLevel = 5;
       let exactHintBlocked = null;
-      if (settings.coachModeEnabled) {
-        const now = Date.now();
-        if (now - lastExactHintTime < EXACT_HINT_COOLDOWN_MS) {
-          exactHintBlocked = { reason: 'cooldown', message: 'Please wait a few seconds before requesting another exact-move hint.' };
-        } else if (hintUsageTracker.exactHintCount >= (settings.coachModeMaxHints || 3)) {
-          exactHintBlocked = { reason: 'coach_limit', message: `You have used this game’s ${settings.coachModeMaxHints || 3} exact-move hints.` };
-        }
-      }
 
       // Refresh is deliberately non-destructive: caches, cooldowns, quotas and
       // passive health remain intact. The coordinator decides whether the
@@ -1390,15 +1376,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
           }
 
-          if (!exactHintBlocked && settings.coachModeEnabled) {
-            hintUsageTracker.exactHintCount++;
-            lastExactHintTime = Date.now();
-          }
           cloudResult.exactHintBlocked = exactHintBlocked;
-          cloudResult.hintUsage = {
-            exactHintCount: hintUsageTracker.exactHintCount,
-            maxExactHints: settings.coachModeMaxHints || 3
-          };
 
           // v8.5.0: Record the engine's first-choice move so that when the
           // player makes their move, we can update the correlation tracker.
@@ -1513,8 +1491,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (msgType === 'player_color_changed') {
     // v8.5.0: Reset all per-game/per-color trackers, not just turnState.
     resetAnalysisState();
-    hintUsageTracker = { gameId: null, exactHintCount: 0 };
-    lastExactHintTime = 0;
+    lastAnalysisGameId = null;
     resetCorrelationTracker();
     sendResponse({ ok: true });
     return false;
@@ -1542,8 +1519,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // v8.5.0 (Enhancement I): Side panel signals a new game so the tracker resets.
   if (msgType === 'reset_correlation') {
     resetCorrelationTracker();
-    hintUsageTracker = { gameId: null, exactHintCount: 0 };
-    lastExactHintTime = 0;
+    lastAnalysisGameId = null;
     sendResponse({ ok: true });
     return false;
   }
@@ -1582,6 +1558,9 @@ chrome.runtime.onInstalled.addListener(() => {
 
       if (s.humanLikeMode === undefined) { s.humanLikeMode = false; updated = true; }
       if (s.hintLevel !== undefined) { delete s.hintLevel; updated = true; }
+      for (const obsolete of ['coachModeEnabled', 'coachModeMaxHints']) {
+        if (s[obsolete] !== undefined) { delete s[obsolete]; updated = true; }
+      }
 
       // v8.5.0: ensure new fields exist on migrated settings
       if (s.depthTarget === undefined) { s.depthTarget = 0; updated = true; }

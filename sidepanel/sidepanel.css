@@ -577,35 +577,6 @@ button:focus-visible, select:focus-visible {
 
 .warning-text { line-height: 1.4; }
 
-/* ─── Coach Mode Info ─── */
-.coach-mode-info {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 8px;
-  padding: 6px 10px;
-  background: rgba(168, 85, 247, 0.06);
-  border-radius: var(--radius-sm);
-  border: 1px solid rgba(168, 85, 247, 0.12);
-}
-
-.coach-badge {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: var(--fs-xs);
-  font-weight: 800;
-  color: var(--accent-purple);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.hint-usage-counter {
-  font-size: var(--fs-xs);
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-}
-
 /* ─── Winning Plan ─── */
 .winning-plan {
   display: flex;

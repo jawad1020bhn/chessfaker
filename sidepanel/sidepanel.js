@@ -18,8 +18,6 @@
  *  - FIX: Removed dead message handlers 'position_update' & 'analysis_info'
  *  - FIX: source-badge now properly mapped for masters-explorer ('HUMAN')
  *  - FIX: Settings panel now has a focus trap (Tab can't escape to underlying UI)
- *  - FIX: isNewGame() first-load no longer leaves coachModeHintCount at 0/null
- *         until next new-game — initialised on first position_update
  *  - FIX: sacrificeHistory reset on new game (via ChessHintEngine.resetSacrificeHistory)
  *  - ENH (C): depth target and fair-play controls can withhold exact hints
  *             shown as a clear withheld-hint message
@@ -44,7 +42,7 @@
  *  - "Your turn" indicator when analysis is ready
  *
  * v6.0.0/v6.2.0/v6.1.0 preserved features:
- *  - Coach Mode & Fair Play warnings for exact-move hints
+ *  - Fair Play warnings for exact-move hints
  *  - Player Selection (White/Black assist)
  *  - Style-aware hints (Normal → Berserker)
  *  - Cloud API health status display
@@ -67,8 +65,6 @@
   let lastCriticalAlert = null;
   let isRefreshing = false;
   let refreshSafetyTimer = null;
-  let coachModeHintCount = 0;
-  let coachModeGameId = null;
   let humanPlanState = null;
 
   const normalizeStyle = (style) => {
@@ -93,8 +89,6 @@
     showEndgameCoach: true,
     showCriticalMoments: true,
     showCandidateMoves: true,
-    coachModeEnabled: true,
-    coachModeMaxHints: 3,
     // v8.5.0 enhancements
     depthTarget: 0,                 // 0 = no minimum; otherwise min depth for exact hints
     useChessApi: true,
@@ -489,8 +483,6 @@
       'setting-show-endgame-coach': settings.showEndgameCoach,
       'setting-show-critical-moments': settings.showCriticalMoments,
       'setting-show-candidate-moves': settings.showCandidateMoves,
-      'setting-coach-mode': settings.coachModeEnabled,
-      'setting-coach-max-hints': settings.coachModeMaxHints,
       'setting-use-chess-api': settings.useChessApi,
       'setting-use-lichess-cloud': settings.useLichessCloud,
       'setting-use-masters-explorer': settings.useMastersExplorer,
@@ -612,8 +604,6 @@
       'setting-show-endgame-coach': (v) => { settings.showEndgameCoach = v; },
       'setting-show-critical-moments': (v) => { settings.showCriticalMoments = v; },
       'setting-show-candidate-moves': (v) => { settings.showCandidateMoves = v; },
-      'setting-coach-mode': (v) => { settings.coachModeEnabled = v; updateCoachModeInfo(); },
-      'setting-coach-max-hints': (v) => { settings.coachModeMaxHints = parseInt(v); updateCoachModeInfo(); },
       'setting-use-chess-api': (v) => { settings.useChessApi = v; },
       'setting-use-lichess-cloud': (v) => { settings.useLichessCloud = v; },
       'setting-use-masters-explorer': (v) => { settings.useMastersExplorer = v; },
@@ -744,18 +734,10 @@
       updatePlayerSelectorUI();
       saveSettings();
     }
-    // v8.5.0 (fix #14): Initialise coach-mode game state on the very first
-    // position update so it isn't left at 0/null until the next new-game.
-    if (coachModeGameId === null) {
-      coachModeGameId = Date.now();
-      coachModeHintCount = 0;
-    }
     if (prevFen && currentFen && isNewGame(prevFen, currentFen)) {
       evalHistory = [];
       prevEval = null;
       lastCriticalAlert = null;
-      coachModeHintCount = 0;
-      coachModeGameId = Date.now();
       isPlayerTurn = true;
       waitingForOpponent = false;
       // v8.5.0: Reset the engine-side correlation tracker + sacrifice history.
@@ -887,9 +869,6 @@
     if (!resultKey || resultKey !== currentKey) return;
     const wasUserRefresh = isRefreshing;
     lastAnalysis = data;
-    if (data.hintUsage && Number.isFinite(data.hintUsage.exactHintCount)) {
-      coachModeHintCount = data.hintUsage.exactHintCount;
-    }
 
     const source = data.source || 'unknown';
     currentSource = source;
@@ -1434,7 +1413,6 @@
       const warningText = document.getElementById('fair-play-warning-text');
       if (warningEl) warningEl.style.display = 'flex';
       if (warningText) warningText.textContent = data.exactHintBlocked.message;
-      updateCoachModeInfo();
       return;
     }
     if (!data.pvs || data.pvs.length === 0) {
@@ -1574,24 +1552,6 @@
       if (warningEl) warningEl.style.display = 'none';
     }
 
-    // Coach mode info
-    updateCoachModeInfo();
-  }
-
-  // ─── Coach Mode Info ──────────────────────────────────────────────
-  function updateCoachModeInfo() {
-    const coachInfoEl = document.getElementById('coach-mode-info');
-    const counterEl = document.getElementById('hint-usage-counter');
-    if (!coachInfoEl) return;
-
-    if (settings.coachModeEnabled) {
-      coachInfoEl.style.display = 'flex';
-      if (counterEl) {
-        counterEl.textContent = `${coachModeHintCount}/${settings.coachModeMaxHints} exact hints used`;
-      }
-    } else {
-      coachInfoEl.style.display = 'none';
-    }
   }
 
   function renderPVLines(pvs, effectiveColor) {

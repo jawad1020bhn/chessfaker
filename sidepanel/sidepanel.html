@@ -120,13 +120,6 @@
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
               <span id="fair-play-warning-text" class="warning-text"></span>
             </div>
-            <div id="coach-mode-info" class="coach-mode-info" style="display:none">
-              <span class="coach-badge">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                Coach Mode
-              </span>
-              <span id="hint-usage-counter" class="hint-usage-counter">0/3 exact hints used</span>
-            </div>
           </div>
           <div id="winning-plan" class="winning-plan" style="display:none">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent-purple)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
@@ -533,28 +526,6 @@
           <input type="checkbox" id="setting-show-eval-history" checked>
           <span>Show eval history chart</span>
         </label>
-      </div>
-
-      <div class="setting-divider"></div>
-      <div class="setting-section-title">Coach Mode</div>
-
-      <div class="setting-group">
-        <label class="toggle-label">
-          <input type="checkbox" id="setting-coach-mode" checked>
-          <span>Coach Mode</span>
-        </label>
-        <div class="setting-hint">Limits exact-move hints per game to prevent engine correlation</div>
-      </div>
-
-      <div class="setting-group">
-        <label for="setting-coach-max-hints">Max exact hints per game</label>
-        <select id="setting-coach-max-hints">
-          <option value="1">1 hint</option>
-          <option value="2">2 hints</option>
-          <option value="3" selected>3 hints</option>
-          <option value="5">5 hints</option>
-          <option value="10">10 hints</option>
-        </select>
       </div>
 
       <div class="setting-divider"></div>
