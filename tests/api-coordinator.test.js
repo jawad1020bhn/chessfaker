@@ -180,6 +180,20 @@ function requestSpec(overrides = {}) {
     await restarted.flush();
   }
 
+  // Router preflight identifies a hard game budget without issuing another call.
+  {
+    const clock = new FakeClock();
+    const coordinator = makeCoordinator({ clock, globalPolicy: { maxRemoteCallsPerGame: 1 } });
+    const token = { tabId: 'tab-1', gameId: 'game-1', sequence: 1, canonicalFen: 'position-1' };
+    coordinator.updatePosition(token);
+    await coordinator.request(requestSpec({ cacheKey: 'budgeted', positionToken: token }));
+    const status = coordinator.getScheduleStatus('test', { priority: 'current-player-turn', endpointClass: 'analysis', positionToken: token });
+    assert.equal(status.allowed, false);
+    assert.equal(status.hard, true);
+    assert.equal(status.errorType, 'game_budget');
+    await coordinator.flush();
+  }
+
   // Negative caching prevents repeated known-404 traffic.
   {
     const clock = new FakeClock();

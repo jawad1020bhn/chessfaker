@@ -936,13 +936,9 @@
     // v7.9.0: Show toast for errors
     showToast(errorMsg, 'error', 4000);
     if (dom.hintText) {
-      let msg = errorMsg;
-      if (msg.includes('temporarily unavailable')) {
-        msg += ' Click Refresh to retry.';
-      } else {
-        msg += ' Check your connection and try Refresh.';
-      }
-      dom.hintText.textContent = msg;
+      // The background already classifies retry, wait, and hard-budget states.
+      // Do not suggest Refresh for a state where it cannot help.
+      dom.hintText.textContent = errorMsg;
     }
   }
 

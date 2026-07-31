@@ -869,6 +869,36 @@ function providerForAnalysisSource(source) {
   return 'mastersExplorer';
 }
 
+// Choose a source at request time, not from a fixed list. This keeps the
+// preferred semantic source first while immediately failing over around a
+// provider that is unavailable or would impose a material queue delay.
+function rankAnalysisSources(sourceOrder, context) {
+  const diagnostics = apiCoordinator.getDiagnostics();
+  const healthPenalty = { healthy: 0, unknown: 0, slow: 4, 'half-open': 12, degraded: 24, cooldown: 100, 'rate-limited': 100, disabled: 100 };
+  return sourceOrder.map((source, semanticIndex) => {
+    const provider = providerForAnalysisSource(source);
+    const schedule = apiCoordinator.getScheduleStatus(provider, {
+      priority: context.priority,
+      endpointClass: 'analysis',
+      positionToken: context.positionToken
+    });
+    const health = diagnostics.providers?.[provider]?.state || 'unknown';
+    // 250 ms units let an immediately available fallback win over a source
+    // that is merely spacing-limited, without preferring a degraded source.
+    const queuePenalty = Math.min(40, Math.ceil((schedule.waitMs || 0) / 250));
+    return { source, provider, schedule, health, semanticIndex, score: semanticIndex * 10 + (healthPenalty[health] ?? 16) + queuePenalty };
+  }).filter(candidate => candidate.schedule.allowed)
+    .sort((left, right) => left.score - right.score || left.semanticIndex - right.semanticIndex);
+}
+
+async function findCachedAnalysisFallback(sourceOrder, fen, multiPv) {
+  for (const source of sourceOrder) {
+    const cached = await getCachedAnalysisSource(source, fen, multiPv);
+    if (cached) return { result: cached, source };
+  }
+  return null;
+}
+
 function analysisFromOpeningData(openingData, fen, multiPv) {
   if (!openingData?.moves?.length) return null;
   const pvs = openingData.moves.slice(0, multiPv).map((move, index) => {
@@ -1019,22 +1049,45 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
     }
   }
 
+  let routing = null;
   if (!bestResult) {
-    const eligibleSources = sourceOrder.filter(source =>
-      apiCoordinator.canSchedule(providerForAnalysisSource(source), priority)
-    );
-    // One primary plus at most one genuine fallback. Permanent 4xx responses,
-    // cooldowns and disabled providers never trigger repeated calls.
-    for (const source of eligibleSources.slice(0, 2)) {
-      const result = await callAnalysisSource(source, fen, multiPv, context);
+    const candidates = rankAnalysisSources(sourceOrder, context);
+    routing = {
+      attempted: [],
+      skipped: sourceOrder.filter(source => !candidates.some(candidate => candidate.source === source)).map(source => ({
+        source,
+        provider: providerForAnalysisSource(source),
+        schedule: apiCoordinator.getScheduleStatus(providerForAnalysisSource(source), {
+          priority, endpointClass: 'analysis', positionToken
+        })
+      }))
+    };
+
+    // Try every semantically valid provider at most once. Providers enforce
+    // their own spacing, quota, cooldown, and retry rules; this is compliant
+    // failover rather than retrying or bypassing a provider limit.
+    for (const candidate of candidates) {
+      routing.attempted.push(candidate.source);
+      const result = await callAnalysisSource(candidate.source, fen, multiPv, context);
       if (!apiCoordinator.isPositionCurrent(positionToken)) {
         return { error: true, stalePosition: true, fen, errorDetail: { type: 'stale_position', message: 'Position changed', suggestion: 'none' } };
       }
       if (result) {
         bestResult = result;
-        usedSource = source;
+        usedSource = candidate.source;
         break;
       }
+    }
+  }
+
+  if (!bestResult) {
+    // Refresh is advisory: if every compliant provider path failed, preserve
+    // continuity with any usable fresh or stale result before surfacing error.
+    const fallback = await findCachedAnalysisFallback(sourceOrder, fen, multiPv);
+    if (fallback) {
+      bestResult = fallback.result;
+      usedSource = fallback.source;
+      bestResult.refreshFailed = Boolean(options.refresh);
     }
   }
 
@@ -1043,7 +1096,8 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
       error: true,
       fen,
       playerColor,
-      errorDetail: classifyError(),
+      errorDetail: classifyError(routing),
+      routing,
       moveHistory: options.moveHistory || []
     };
   }
@@ -1079,9 +1133,29 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
 }
 
 // ─── Error Classification for User-Friendly Messages ─────────────────
-function classifyError() {
+function classifyError(routing = null) {
   const diagnostics = apiCoordinator.getDiagnostics();
   const statuses = Object.values(diagnostics.providers || {});
+  const skipped = routing?.skipped || [];
+  const skippedTypes = skipped.map(entry => entry.schedule?.errorType).filter(Boolean);
+  const waitMs = Math.max(0, ...skipped.map(entry => entry.schedule?.waitMs || 0));
+
+  if (skippedTypes.includes('game_budget') || skippedTypes.includes('position_budget')) {
+    return {
+      type: 'budget_exhausted',
+      message: skippedTypes.includes('game_budget')
+        ? 'Analysis request budget for this game has been reached. Existing cached analysis remains available.'
+        : 'This position has already used its analysis request budget. Make a move or use the cached analysis.',
+      suggestion: 'none'
+    };
+  }
+  if (waitMs > 0) {
+    return {
+      type: 'queued',
+      message: `Analysis is queued to respect provider pacing; retry in about ${Math.max(1, Math.ceil(waitMs / 1000))} seconds.`,
+      suggestion: 'wait'
+    };
+  }
   if (statuses.some(status => status.state === 'rate-limited' || status.state === 'cooldown')) {
     return {
       type: 'rate_limited',
@@ -1098,7 +1172,7 @@ function classifyError() {
   }
   return {
     type: 'transient',
-    message: 'No eligible cloud result is available within the current request budget.',
+    message: 'No cloud provider returned analysis for this position. Cached results will be used when available.',
     suggestion: 'retry'
   };
 }
@@ -1333,7 +1407,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           let errorMsg = detail.message || 'Cloud analysis unavailable';
           if (detail.suggestion === 'retry') errorMsg += ' Try Refresh.';
           else if (detail.suggestion === 'wait') errorMsg += ' Will retry on your next turn.';
-          else errorMsg += ' Check your connection and try Refresh.';
+          else if (detail.suggestion !== 'none') errorMsg += ' Check your connection and try Refresh.';
           chrome.runtime.sendMessage({
             type: 'analysis_error',
             data: { error: errorMsg, fen: message.fen, detail }
