@@ -52,7 +52,8 @@ const DEFAULT_SETTINGS = {
   cloudDepth: 5,
   style: 'normal',
   humanLikeMode: false,
-  repertoire: 'none',
+  whiteRepertoire: 'none',
+  blackRepertoire: 'none',
   autoAnalyze: true,
   showThreats: true,
   showAssessment: true,
@@ -1558,6 +1559,14 @@ chrome.runtime.onInstalled.addListener(() => {
 
       if (s.humanLikeMode === undefined) { s.humanLikeMode = false; updated = true; }
       if (s.hintLevel !== undefined) { delete s.hintLevel; updated = true; }
+      if (s.repertoire !== undefined) {
+        // Preserve a legacy repertoire as the equivalent White selection.
+        if (s.whiteRepertoire === undefined) s.whiteRepertoire = s.repertoire;
+        delete s.repertoire;
+        updated = true;
+      }
+      if (s.whiteRepertoire === undefined) { s.whiteRepertoire = 'none'; updated = true; }
+      if (s.blackRepertoire === undefined) { s.blackRepertoire = 'none'; updated = true; }
       for (const obsolete of ['coachModeEnabled', 'coachModeMaxHints']) {
         if (s[obsolete] !== undefined) { delete s[obsolete]; updated = true; }
       }

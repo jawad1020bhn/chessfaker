@@ -87,13 +87,66 @@
     }
   };
 
-  // ─── Opening Repertoires ───────────────────────────────────────────
+  // ─── Attacking Opening Repertoires ───────────────────────────────────
+  // Every module is a curated, side-specific move tree. A repertoire is a
+  // preference inside the engine/style safety budget, never a forced move.
   const OPENING_REPERTOIRES = {
-    none: { name: 'No Preference', desc: 'Engine picks the best move regardless of opening theory' },
-    e4_player: { name: '1.e4 Player', desc: 'Favors e4 openings: Italian, Ruy Lopez, Sicilian defenses as Black', preferredFirstMove: 'e2e4' },
-    d4_player: { name: '1.d4 Player', desc: 'Favors d4 openings: QGD, Nimzo, King\'s Indian as Black', preferredFirstMove: 'd2d4' },
-    c4_player: { name: '1.c4 / English', desc: 'Favors English/Reti flank approaches', preferredFirstMove: 'c2c4' },
+    none: { id: 'none', name: 'No Preference', side: null, risk: 'none', lines: [], plan: '' },
+    white_scotch_evans: { id: 'white_scotch_evans', name: 'Scotch / Evans Gambit', side: 'w', risk: 'sharp', plan: 'Develop rapidly, open the centre, and pressure f7 before Black completes development.', lines: [
+      ['e2e4','e7e5','g1f3','b8c6','d2d4','e5d4','f1c4'],
+      ['e2e4','e7e5','g1f3','b8c6','f1c4','f8c5','b2b4']
+    ]},
+    white_smith_morra: { id: 'white_smith_morra', name: 'Smith–Morra Gambit', side: 'w', risk: 'sharp', plan: 'Open the d-file, finish development quickly, and attack d6 and f7 with active pieces.', lines: [
+      ['e2e4','c7c5','d2d4','c5d4','c2c3']
+    ]},
+    white_milner_barry: { id: 'white_milner_barry', name: 'Milner–Barry Gambit', side: 'w', risk: 'sharp', plan: 'Use the advanced centre to gain tempi, mobilise the kingside, and attack before Black can unwind.', lines: [
+      ['e2e4','e7e6','d2d4','d7d5','b1c3','g8f6','e4e5','f6d7','f2f4']
+    ]},
+    white_panov: { id: 'white_panov', name: 'Panov Attack', side: 'w', risk: 'sound-aggressive', plan: 'Create active isolated-queen-pawn play: develop fast, pressure d5, and use e4 breaks.', lines: [
+      ['e2e4','c7c6','d2d4','d7d5','e4d5','c6d5','c2c4']
+    ]},
+    white_austrian: { id: 'white_austrian', name: 'Austrian Attack', side: 'w', risk: 'sound-aggressive', plan: 'Claim kingside space with f4, restrict central counterplay, then build toward f5 and a direct attack.', lines: [
+      ['e2e4','d7d6','d2d4','g8f6','b1c3','g7g6','f2f4'],
+      ['e2e4','g7g6','d2d4','f8g7','b1c3','d7d6','f2f4']
+    ]},
+    black_najdorf: { id: 'black_najdorf', name: 'Sicilian Najdorf', side: 'b', risk: 'sharp', plan: 'Counterattack with ...a6 and ...b5, retain central flexibility, and challenge White’s kingside initiative.', lines: [
+      ['e2e4','c7c5','g1f3','d7d6','d2d4','c5d4','f3d4','g8f6','b1c3','a7a6']
+    ]},
+    black_dragon: { id: 'black_dragon', name: 'Sicilian Dragon', side: 'b', risk: 'sharp', plan: 'Fianchetto the dark bishop, prepare ...d5, and generate counterplay against White’s attack.', lines: [
+      ['e2e4','c7c5','g1f3','d7d6','d2d4','c5d4','f3d4','g8f6','b1c3','g7g6']
+    ]},
+    black_kings_indian: { id: 'black_kings_indian', name: 'King’s Indian Defense', side: 'b', risk: 'sharp', plan: 'Let White build a centre, then strike with ...e5 and a prepared kingside ...f5 break.', lines: [
+      ['d2d4','g8f6','c2c4','g7g6','b1c3','f8g7']
+    ]},
+    black_benoni: { id: 'black_benoni', name: 'Modern Benoni', side: 'b', risk: 'sharp', plan: 'Use an asymmetric structure, pressure White’s centre, and create counterplay with ...b5 or ...f5.', lines: [
+      ['d2d4','g8f6','c2c4','c7c5','d4d5','e7e6']
+    ]},
+    black_dutch: { id: 'black_dutch', name: 'Dutch Leningrad', side: 'b', risk: 'sharp', plan: 'Build the Leningrad structure, contest e4, and develop kingside pressure with ...e5 and ...f4 ideas.', lines: [
+      ['d2d4','f7f5'], ['c2c4','f7f5']
+    ]}
   };
+  const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+
+  function repertoireState(fen, repertoire, playerColor) {
+    if (!repertoire || repertoire.id === 'none' || repertoire.side !== playerColor || !fen) return null;
+    const target = fen.split(' ').slice(0, 4).join(' ');
+    const nextMoves = new Set();
+    let matchedPly = 0;
+    for (const line of repertoire.lines || []) {
+      let cursor = START_FEN;
+      if (cursor.split(' ').slice(0, 4).join(' ') === target && line[0]) nextMoves.add(line[0]);
+      for (let index = 0; index < line.length; index++) {
+        cursor = applyMoveToFen(cursor, line[index]);
+        if (!cursor) break;
+        if (cursor.split(' ').slice(0, 4).join(' ') === target) {
+          matchedPly = Math.max(matchedPly, index + 1);
+          const next = line[index + 1];
+          if (next) nextMoves.add(next);
+        }
+      }
+    }
+    return matchedPly || nextMoves.size ? { id: repertoire.id, name: repertoire.name, plan: repertoire.plan, risk: repertoire.risk, matchedPly, nextMoves: [...nextMoves] } : null;
+  }
 
   // ─── ECO Opening Database (v8.5.0 Enhancement J — externalised) ────
   // Loaded asynchronously from engine/eco.json. Falls back to a minimal
@@ -1073,9 +1126,27 @@
     const objectiveBest = objective[0];
 
     if (profile.id === 'normal' && !humanLikeMode) {
-      return objective.map((entry, rank) => ({
+      const repertoireMoves = new Set(context.repertoire?.nextMoves || []);
+      const bestScore = objectiveBest.score;
+      // Repertoire moves are a soft preference only when they remain within
+      // half a pawn of the engine choice; mate and evaluation safety win.
+      const ordered = repertoireMoves.size
+        ? [...objective].sort((left, right) => {
+            const leftPreferred = repertoireMoves.has(left.pv.pv?.[0]) && bestScore - left.score <= 50;
+            const rightPreferred = repertoireMoves.has(right.pv.pv?.[0]) && bestScore - right.score <= 50;
+            return Number(rightPreferred) - Number(leftPreferred) || right.utility - left.utility;
+          })
+        : objective;
+      return ordered.map((entry, rank) => ({
         ...entry.pv,
-        _styleAnalysis: { objectiveRank: rank + 1, styleRank: rank + 1, evalLoss: 0, reasons: ['objective best play'], risks: [], mode: profile.id }
+        _styleAnalysis: {
+          objectiveRank: objective.findIndex(candidate => candidate.index === entry.index) + 1,
+          styleRank: rank + 1,
+          evalLoss: Math.max(0, bestScore - entry.score),
+          reasons: repertoireMoves.has(entry.pv.pv?.[0]) ? ['matches the active repertoire'] : ['objective best play'],
+          risks: [], mode: profile.id,
+          repertoireMove: repertoireMoves.has(entry.pv.pv?.[0])
+        }
       }));
     }
 
@@ -1104,8 +1175,10 @@
       // Aggressive is especially focused on converting quickly: objective cost
       // remains expensive, while checks and sustained forcing play can overcome it.
       const lossWeight = profile.id === 'normal' ? 1.5 : (profile.id === 'aggressive' ? 1.25 : 0.62);
-      const styleScore = eligible ? bonus - evalLoss * lossWeight : -Infinity;
-      return { ...entry, analysis, eligible, bonus, styleScore };
+      const repertoireBonus = context.repertoire?.nextMoves?.includes(firstMove) ? 45 : 0;
+      const styleScore = eligible ? bonus - evalLoss * lossWeight + repertoireBonus : -Infinity;
+      analysis.repertoireMove = repertoireBonus > 0;
+      return { ...entry, analysis, eligible, bonus: bonus + repertoireBonus, styleScore };
     });
 
     let eligible = candidates.filter(candidate => candidate.eligible);
@@ -1182,7 +1255,7 @@
     // metadata, while one-PV sources remain unchanged and are explained honestly.
     let rankedPVs = pvs?.[0]?._styleAnalysis
       ? pvs
-      : (pvs && pvs.length > 1 ? selectPVForStyle(pvs, fen, style, playerColor, humanLikeMode, { ...humanContext, openingData }) : (pvs || []));
+      : (pvs && pvs.length > 1 ? selectPVForStyle(pvs, fen, style, playerColor, humanLikeMode, { ...humanContext, openingData, repertoire: repertoireState(fen, currentRepertoire, playerColor) }) : (pvs || []));
     if (humanLikeMode && rankedPVs.length === 1 && !rankedPVs[0]._styleAnalysis) {
       const only = rankedPVs[0];
       const score = playerScore(only, playerColor);
@@ -1194,7 +1267,7 @@
       meta.humanLikeMode = true;
       meta.limitedCandidates = true;
       candidateStyleBonus(meta, currentStyle);
-      humanNaturalness(meta, currentStyle, { ...humanContext, openingData }, score);
+      humanNaturalness(meta, currentStyle, { ...humanContext, openingData, repertoire: repertoireState(fen, currentRepertoire, playerColor) }, score);
       rankedPVs = [{ ...only, _styleAnalysis: meta }];
     }
     const bestPV = rankedPVs.length > 0 ? rankedPVs[0] : null;
@@ -1467,12 +1540,10 @@
       }
     }
 
-    // Opening repertoire check
-    if (moveHistory && moveHistory.length === 0 && repertoire.preferredFirstMove) {
-      if (uci !== repertoire.preferredFirstMove) {
-        const prefSan = uciToSan(repertoire.preferredFirstMove, fen);
-        hint += ` | Your repertoire prefers ${prefSan} (${repertoire.preferredFirstMove.substring(0,2)} \u2192 ${repertoire.preferredFirstMove.substring(2,4)})`;
-      }
+    const state = repertoireState(fen, repertoire, playerColor);
+    if (state) {
+      const inBook = state.nextMoves.includes(uci);
+      hint += ` | ${inBook ? state.name + ' move' : state.name + ' plan'}: ${state.plan}`;
     }
 
     return hint;
@@ -2183,6 +2254,7 @@
     analyzeCandidate,
     PLAYING_STYLES,
     OPENING_REPERTOIRES,
+    repertoireState,
     HINT_LEVELS,
     EXACT_HINT_LEVEL,
     // v8.5.0

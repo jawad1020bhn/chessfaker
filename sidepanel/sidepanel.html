@@ -382,13 +382,27 @@
       </div>
 
       <div class="setting-group">
-        <label for="setting-repertoire">Opening Repertoire</label>
-        <select id="setting-repertoire">
-          <option value="none" selected>No Preference</option>
-          <option value="e4_player">1.e4 Player</option>
-          <option value="d4_player">1.d4 Player</option>
-          <option value="c4_player">1.c4 / English</option>
+        <label for="setting-white-repertoire">White Attacking Repertoire</label>
+        <select id="setting-white-repertoire">
+          <option value="none" selected>No preference</option>
+          <option value="white_scotch_evans">Scotch / Evans Gambit — Sharp</option>
+          <option value="white_smith_morra">Smith–Morra Gambit — Sharp</option>
+          <option value="white_milner_barry">Milner–Barry Gambit — Sharp</option>
+          <option value="white_panov">Panov Attack — Sound aggressive</option>
+          <option value="white_austrian">Austrian Attack — Sound aggressive</option>
         </select>
+      </div>
+      <div class="setting-group">
+        <label for="setting-black-repertoire">Black Attacking Repertoire</label>
+        <select id="setting-black-repertoire">
+          <option value="none" selected>No preference</option>
+          <option value="black_najdorf">Sicilian Najdorf — Sharp</option>
+          <option value="black_dragon">Sicilian Dragon — Sharp</option>
+          <option value="black_kings_indian">King’s Indian Defense — Sharp</option>
+          <option value="black_benoni">Modern Benoni — Sharp</option>
+          <option value="black_dutch">Dutch Leningrad — Sharp</option>
+        </select>
+        <div class="setting-hint">Your selected side’s repertoire is a soft preference: the engine keeps mate safety and will not force a move that loses more than half a pawn.</div>
       </div>
 
       <div class="setting-divider"></div>

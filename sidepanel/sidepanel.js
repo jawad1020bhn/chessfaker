@@ -78,7 +78,8 @@
     cloudDepth: 5,
     style: 'normal',
     humanLikeMode: false,
-    repertoire: 'none',
+    whiteRepertoire: 'none',
+    blackRepertoire: 'none',
     autoAnalyze: true,
     showThreats: true,
     showAssessment: true,
@@ -472,7 +473,8 @@
       'setting-depth-target': settings.depthTarget,         // v8.5.0
       'setting-style': settings.style,
       'setting-human-like-mode': settings.humanLikeMode,
-      'setting-repertoire': settings.repertoire,
+      'setting-white-repertoire': settings.whiteRepertoire,
+      'setting-black-repertoire': settings.blackRepertoire,
       'setting-auto-analyze': settings.autoAnalyze,
       'setting-show-threats': settings.showThreats,
       'setting-show-assessment': settings.showAssessment,
@@ -593,7 +595,8 @@
       'setting-depth-target': (v) => { settings.depthTarget = parseInt(v); },          // v8.5.0
       'setting-style': (v) => { settings.style = v; },
       'setting-human-like-mode': (v) => { settings.humanLikeMode = v; },
-      'setting-repertoire': (v) => { settings.repertoire = v; },
+      'setting-white-repertoire': (v) => { settings.whiteRepertoire = v; },
+      'setting-black-repertoire': (v) => { settings.blackRepertoire = v; },
       'setting-auto-analyze': (v) => { settings.autoAnalyze = v; },
       'setting-show-threats': (v) => { settings.showThreats = v; },
       'setting-show-assessment': (v) => { settings.showAssessment = v; },
@@ -1431,9 +1434,9 @@
     const hints = window.ChessHintEngine.generateHints(
       { ...data, prevEval, currEval: currEvalPlayerPerspective },
       effectiveHintLevel,
-      assistedPlayerColor,
+      effectiveColor,
       settings.style,
-      settings.repertoire,
+      effectiveColor === 'w' ? settings.whiteRepertoire : settings.blackRepertoire,
       settings.humanLikeMode,
       { activePlan: humanPlanState?.activePlan || null }
     );
