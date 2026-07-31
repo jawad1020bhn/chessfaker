@@ -113,6 +113,9 @@
     engineStatus: $('#engine-status'),
     statusDot: $('.status-dot'),
     statusText: $('.status-text'),
+    positionContext: $('#position-context'),
+    positionSource: $('#position-source'),
+    positionTurn: $('#position-turn'),
     evalBarBlack: $('#eval-bar-black'),
     evalBarWhite: $('#eval-bar-white'),
     evalWhiteLabel: $('#eval-white-label'),
@@ -524,7 +527,12 @@
         const newColor = btn.dataset.color;
         if (newColor === assistedPlayerColor) return;
         assistedPlayerColor = newColor;
+        if (currentFen && turnReliable) {
+          isPlayerTurn = (currentFen.split(' ')[1] || 'w') === assistedPlayerColor;
+          waitingForOpponent = !isPlayerTurn;
+        }
         updatePlayerSelectorUI();
+        updatePositionContext();
         // v7.9.0: Update ARIA
         $$('.player-btn').forEach(b => b.setAttribute('aria-checked', b.dataset.color === assistedPlayerColor ? 'true' : 'false'));
         saveSettings();
@@ -738,6 +746,19 @@
     return false;
   }
 
+  function updatePositionContext() {
+    if (!dom.positionContext || !dom.positionSource || !dom.positionTurn) return;
+    const verified = positionReliable && turnReliable;
+    dom.positionContext.classList.toggle('verified', verified);
+    dom.positionContext.classList.toggle('partial', !positionReliable && turnReliable);
+    dom.positionContext.classList.toggle('pending', !turnReliable);
+    dom.positionSource.className = `context-chip ${positionReliable ? 'verified' : 'partial'}`;
+    dom.positionSource.textContent = positionReliable ? 'VERIFIED FEN' : 'BOARD SNAPSHOT';
+    dom.positionTurn.textContent = !turnReliable
+      ? 'Turn unavailable'
+      : (isPlayerTurn ? 'Your turn' : 'Opponent turn');
+  }
+
   function handlePositionUpdate(message) {
     const prevFen = currentFen;
     currentFen = message.fen;
@@ -774,6 +795,7 @@
     isPlayerTurn = activeColor === effectiveColor;
     waitingForOpponent = !isPlayerTurn;
     turnJustChanged = !wasPlayerTurn && isPlayerTurn; // Turn just changed to player's turn
+    updatePositionContext();
 
     // v8.5.0 (Enhancement I): Detect that the player just moved (transition
     // from "player's turn" to "opponent's turn" while we had a stored engine
@@ -861,6 +883,8 @@
     if (!data) return;
     isPlayerTurn = data.isPlayerTurn;
     waitingForOpponent = data.waitingForOpponent;
+    if (data.reason === 'turn_unknown') turnReliable = false;
+    updatePositionContext();
 
     if (data.reason === 'turn_unknown') {
       updateEngineStatus('unknown', 'Turn unavailable — waiting for a verified position');
