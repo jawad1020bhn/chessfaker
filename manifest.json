@@ -3,7 +3,7 @@
   "name": "Chess Hint Assistant",
   "version": "9.0.0",
   "minimum_chrome_version": "114",
-  "description": "Cloud chess coach with L1-L5 hints, three playing styles, Human-like mode, multi-source analysis, opening explorer, and tablebases.",
+  "description": "Cloud chess coach with exact-move hints, three playing styles, Human-like mode, multi-source analysis, opening explorer, and tablebases.",
   "permissions": [
     "sidePanel",
     "activeTab",

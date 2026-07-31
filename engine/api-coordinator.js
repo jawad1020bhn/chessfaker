@@ -60,15 +60,37 @@
     return fullmove <= 10 && countFenPieces(fen) >= 24;
   }
 
+  function isEarlyOpeningFen(fen) {
+    const parts = String(fen || '').trim().split(/\s+/);
+    const fullmove = Number(parts[5]) || 1;
+    // A fullmove number of 5 covers the first five moves by White/Black.
+    return fullmove <= 5 && countFenPieces(fen) >= 24;
+  }
+
   function planPositionWorkflow(fen, settings = {}) {
     const tablebaseEligible = settings.showTablebase !== false && countFenPieces(fen) <= 7;
     const openingEligible = settings.showOpeningExplorer === true && isPlausibleOpeningFen(fen);
+    const earlyOpening = isEarlyOpeningFen(fen);
+    const enabled = {
+      chessApi: settings.useChessApi !== false,
+      lichessCloud: settings.useLichessCloud !== false,
+      mastersExplorer: settings.useMastersExplorer !== false
+    };
+    // Opening theory benefits from the Masters database. From move six onward,
+    // prefer engine analysis: Chess-API, then Lichess Cloud, then Masters.
+    const preferredSources = earlyOpening
+      ? ['masters-explorer', 'lichess-cloud', 'chess-api']
+      : ['chess-api', 'lichess-cloud', 'masters-explorer'];
+    const providerEnabled = {
+      'chess-api': enabled.chessApi,
+      'lichess-cloud': enabled.lichessCloud,
+      'masters-explorer': enabled.mastersExplorer
+    };
     return {
       tablebaseEligible,
       openingEligible,
-      analysisSources: isPlausibleOpeningFen(fen)
-        ? ['masters-explorer', 'lichess-cloud', 'chess-api']
-        : ['lichess-cloud', 'chess-api']
+      earlyOpening,
+      analysisSources: preferredSources.filter(source => providerEnabled[source])
     };
   }
 
@@ -989,17 +1011,37 @@
       queue.splice(0, queue.length, ...retained);
     }
 
-    canSchedule(provider, priority = 'current-player-turn') {
+    // Returns a non-mutating scheduling decision for a prospective request.
+    // Routing uses this to fail over before it spends a request on a provider
+    // that is cooling down, disabled, or blocked by a hard budget.
+    getScheduleStatus(provider, options = {}) {
       const policy = this.policies[provider];
-      if (!policy) return false;
+      if (!policy) return { allowed: false, hard: true, errorType: 'unknown_provider', waitMs: 0 };
       const now = this.now();
-      if (!this._availability(provider, now).allowed) return false;
+      const availability = this._availability(provider, now);
+      if (!availability.allowed) {
+        return { allowed: false, hard: true, errorType: availability.errorType, until: availability.until || 0, waitMs: 0 };
+      }
       this._pruneState(now);
       const queue = this.queues.get(provider) || [];
-      if (queue.length >= this.globalPolicy.maxQueueLengthPerProvider) return false;
-      if (isLowPriority(priority) &&
-          this.globalState.recentRequests.length >= this.globalPolicy.maxRemoteCallsPerMinute - this.globalPolicy.reservedCurrentPositionCalls) return false;
-      return true;
+      const totalQueued = [...this.queues.values()].reduce((sum, entries) => sum + entries.length, 0);
+      if (queue.length >= this.globalPolicy.maxQueueLengthPerProvider || totalQueued >= this.globalPolicy.maxTotalQueueLength) {
+        return { allowed: false, hard: true, errorType: 'queue_full', waitMs: 0 };
+      }
+      const spec = {
+        provider,
+        priority: options.priority || 'current-player-turn',
+        endpointClass: options.endpointClass || 'analysis',
+        positionToken: options.positionToken || null
+      };
+      const budget = this._budgetStatus({ spec, policy }, now);
+      // A current-position request may wait for ordinary spacing/window quota;
+      // only hard budgets mean that routing must skip this provider entirely.
+      return { ...budget, allowed: !budget.hard, until: 0 };
+    }
+
+    canSchedule(provider, priority = 'current-player-turn', options = {}) {
+      return this.getScheduleStatus(provider, { ...options, priority }).allowed;
     }
 
     providerStatus(provider) {
@@ -1072,6 +1114,7 @@
     canonicalAnalysisFen,
     countFenPieces,
     isPlausibleOpeningFen,
+    isEarlyOpeningFen,
     planPositionWorkflow,
     parseRetryAfter,
     PRIORITIES,

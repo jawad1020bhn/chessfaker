@@ -132,6 +132,8 @@ function send(message) {
   });
   const tablebaseUpdate = await waitForMessage('analysis_update', tablebaseUpdates);
   assert.equal(tablebaseUpdate.data.source, 'tablebase');
+  assert.equal(tablebaseUpdate.data.hintLevel, 5, 'all requests produce exact-move hints regardless of legacy requested level');
+  assert.equal(tablebaseUpdate.data.exactHintBlocked, null);
   assert.equal(remoteUrls.filter(url => url.includes('tablebase.lichess.ovh')).length, 1);
   assert.equal(remoteUrls.filter(url => url.includes('cloud-eval') || url.includes('chess-api.com')).length, 0,
     'a successful tablebase result prevents engine analysis');
@@ -148,6 +150,7 @@ function send(message) {
   });
   const openingUpdate = await waitForMessage('analysis_update', openingUpdates);
   assert.equal(openingUpdate.data.source, 'masters-explorer');
+  assert.equal(openingUpdate.data.exactHintBlocked, null, 'a new game resets exact-hint cooldown state');
   assert.equal(remoteUrls.filter(url => url.includes('/master?')).length, 1);
   assert.equal(remoteUrls.filter(url => url.includes('/lichess?')).length, 0,
     'Masters success does not trigger unconditional opening enrichment');

@@ -18,11 +18,9 @@
  *  - FIX: Removed dead message handlers 'position_update' & 'analysis_info'
  *  - FIX: source-badge now properly mapped for masters-explorer ('HUMAN')
  *  - FIX: Settings panel now has a focus trap (Tab can't escape to underlying UI)
- *  - FIX: isNewGame() first-load no longer leaves coachModeHintCount at 0/null
- *         until next new-game — initialised on first position_update
  *  - FIX: sacrificeHistory reset on new game (via ChessHintEngine.resetSacrificeHistory)
- *  - ENH (C): depthTarget setting forwarded to background; L4/L5 downgrades
- *             shown as a "depth < target" hint tag
+ *  - ENH (C): depth target and fair-play controls can withhold exact hints
+ *             shown as a clear withheld-hint message
  *  - ENH (D): Candidate moves & eval labels now use formatScorePlayerPerspective
  *             for "+1.5 (you)" style displays
  *  - ENH (H): "Open on Lichess" button — opens lichess.org/analysis/<fen> in new tab
@@ -44,7 +42,7 @@
  *  - "Your turn" indicator when analysis is ready
  *
  * v6.0.0/v6.2.0/v6.1.0 preserved features:
- *  - Coach Mode & Fair Play warnings, L1-L5 hint levels
+ *  - Fair Play warnings for exact-move hints
  *  - Player Selection (White/Black assist)
  *  - Style-aware hints (Normal → Berserker)
  *  - Cloud API health status display
@@ -59,7 +57,7 @@
   let playerColor = null;          // Auto-detected from board orientation
   let assistedPlayerColor = null;  // User-selected: which player to assist (null = not yet set)
   let activeTabId = 'active';       // Included in position-generation tokens
-  let hintLevel = 3;
+  const EXACT_HINT_LEVEL = 5;
   let lastAnalysis = null;
   let prevEval = null;
   let evalHistory = [];
@@ -67,8 +65,6 @@
   let lastCriticalAlert = null;
   let isRefreshing = false;
   let refreshSafetyTimer = null;
-  let coachModeHintCount = 0;
-  let coachModeGameId = null;
   let humanPlanState = null;
 
   const normalizeStyle = (style) => {
@@ -82,7 +78,8 @@
     cloudDepth: 5,
     style: 'normal',
     humanLikeMode: false,
-    repertoire: 'none',
+    whiteRepertoire: 'none',
+    blackRepertoire: 'none',
     autoAnalyze: true,
     showThreats: true,
     showAssessment: true,
@@ -93,11 +90,11 @@
     showEndgameCoach: true,
     showCriticalMoments: true,
     showCandidateMoves: true,
-    coachModeEnabled: true,
-    coachModeMaxHints: 3,
     // v8.5.0 enhancements
-    depthTarget: 0,                 // 0 = no minimum; otherwise min depth for L4/L5
-    correlationThreshold: 100       // 100 = off; otherwise % cap that downgrades L5→L3
+    depthTarget: 0,                 // 0 = no minimum; otherwise min depth for exact hints
+    useChessApi: true,
+    useLichessCloud: true,
+    useMastersExplorer: true
   };
 
   // ─── DOM References ─────────────────────────────────────────────────
@@ -378,13 +375,6 @@
           }
           break;
         default:
-          // Number keys 1-5 for hint levels
-          if (key >= '1' && key <= '5') {
-            e.preventDefault();
-            const level = parseInt(key);
-            const btn = document.querySelector(`.level-btn[data-level="${level}"]`);
-            if (btn) btn.click();
-          }
           break;
       }
     });
@@ -471,8 +461,10 @@
   }
 
   function saveSettings() {
-    chrome.storage.local.set({ settings });
-    chrome.storage.local.set({ assistedPlayerColor });
+    return Promise.all([
+      chrome.storage.local.set({ settings }),
+      chrome.storage.local.set({ assistedPlayerColor })
+    ]);
   }
 
   function applySettingsToUI() {
@@ -481,7 +473,8 @@
       'setting-depth-target': settings.depthTarget,         // v8.5.0
       'setting-style': settings.style,
       'setting-human-like-mode': settings.humanLikeMode,
-      'setting-repertoire': settings.repertoire,
+      'setting-white-repertoire': settings.whiteRepertoire,
+      'setting-black-repertoire': settings.blackRepertoire,
       'setting-auto-analyze': settings.autoAnalyze,
       'setting-show-threats': settings.showThreats,
       'setting-show-assessment': settings.showAssessment,
@@ -492,9 +485,9 @@
       'setting-show-endgame-coach': settings.showEndgameCoach,
       'setting-show-critical-moments': settings.showCriticalMoments,
       'setting-show-candidate-moves': settings.showCandidateMoves,
-      'setting-coach-mode': settings.coachModeEnabled,
-      'setting-coach-max-hints': settings.coachModeMaxHints,
-      'setting-correlation-threshold': settings.correlationThreshold,  // v8.5.0
+      'setting-use-chess-api': settings.useChessApi,
+      'setting-use-lichess-cloud': settings.useLichessCloud,
+      'setting-use-masters-explorer': settings.useMastersExplorer,
     };
     Object.entries(mapping).forEach(([id, val]) => {
       const el = $(`#${id}`);
@@ -514,18 +507,6 @@
 
   // ─── Event Binding ─────────────────────────────────────────────────
   function bindEvents() {
-    // Hint level buttons (L1-L5)
-    $$('.level-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        $$('.level-btn').forEach(b => { b.classList.remove('active'); b.setAttribute('aria-checked', 'false'); });
-        btn.classList.add('active');
-        btn.setAttribute('aria-checked', 'true');
-        hintLevel = parseInt(btn.dataset.level);
-        if (lastAnalysis) renderHints(lastAnalysis);
-        updateCoachModeInfo();
-      });
-    });
-
     // Player selector buttons
     $$('.player-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -614,7 +595,8 @@
       'setting-depth-target': (v) => { settings.depthTarget = parseInt(v); },          // v8.5.0
       'setting-style': (v) => { settings.style = v; },
       'setting-human-like-mode': (v) => { settings.humanLikeMode = v; },
-      'setting-repertoire': (v) => { settings.repertoire = v; },
+      'setting-white-repertoire': (v) => { settings.whiteRepertoire = v; },
+      'setting-black-repertoire': (v) => { settings.blackRepertoire = v; },
       'setting-auto-analyze': (v) => { settings.autoAnalyze = v; },
       'setting-show-threats': (v) => { settings.showThreats = v; },
       'setting-show-assessment': (v) => { settings.showAssessment = v; },
@@ -625,9 +607,9 @@
       'setting-show-endgame-coach': (v) => { settings.showEndgameCoach = v; },
       'setting-show-critical-moments': (v) => { settings.showCriticalMoments = v; },
       'setting-show-candidate-moves': (v) => { settings.showCandidateMoves = v; },
-      'setting-coach-mode': (v) => { settings.coachModeEnabled = v; updateCoachModeInfo(); },
-      'setting-coach-max-hints': (v) => { settings.coachModeMaxHints = parseInt(v); updateCoachModeInfo(); },
-      'setting-correlation-threshold': (v) => { settings.correlationThreshold = parseInt(v); },  // v8.5.0
+      'setting-use-chess-api': (v) => { settings.useChessApi = v; },
+      'setting-use-lichess-cloud': (v) => { settings.useLichessCloud = v; },
+      'setting-use-masters-explorer': (v) => { settings.useMastersExplorer = v; },
     };
 
     Object.entries(settingEls).forEach(([id, handler]) => {
@@ -636,11 +618,15 @@
       el.addEventListener('change', () => {
         const val = el.type === 'checkbox' ? el.checked : el.value;
         handler(val);
-        saveSettings();
+        const savePromise = saveSettings();
         applySettingsToUI();
         if ((id === 'setting-style' || id === 'setting-human-like-mode') && lastAnalysis) {
           humanPlanState = null;
           renderAnalysis(lastAnalysis);
+        }
+        if (['setting-use-chess-api', 'setting-use-lichess-cloud', 'setting-use-masters-explorer'].includes(id) && currentFen) {
+          // Ensure the worker sees the new source policy before it routes.
+          savePromise.finally(() => requestAnalysis(true));
         }
       });
     });
@@ -751,18 +737,10 @@
       updatePlayerSelectorUI();
       saveSettings();
     }
-    // v8.5.0 (fix #14): Initialise coach-mode game state on the very first
-    // position update so it isn't left at 0/null until the next new-game.
-    if (coachModeGameId === null) {
-      coachModeGameId = Date.now();
-      coachModeHintCount = 0;
-    }
     if (prevFen && currentFen && isNewGame(prevFen, currentFen)) {
       evalHistory = [];
       prevEval = null;
       lastCriticalAlert = null;
-      coachModeHintCount = 0;
-      coachModeGameId = Date.now();
       isPlayerTurn = true;
       waitingForOpponent = false;
       // v8.5.0: Reset the engine-side correlation tracker + sacrifice history.
@@ -894,9 +872,6 @@
     if (!resultKey || resultKey !== currentKey) return;
     const wasUserRefresh = isRefreshing;
     lastAnalysis = data;
-    if (data.hintUsage && Number.isFinite(data.hintUsage.l5Count)) {
-      coachModeHintCount = data.hintUsage.l5Count;
-    }
 
     const source = data.source || 'unknown';
     currentSource = source;
@@ -937,12 +912,8 @@
       showToast(`Analysis ready via ${sourceNames[data.source] || data.source}`, 'success', 2000);
     }
 
-    // v8.5.0 (Enhancement C): Surface downgrade reasons as info toasts.
-    if (data.depthDowngrade) {
-      showToast(`L${data.depthDowngrade.from} → L3 (${data.depthDowngrade.reason})`, 'warning', 3000);
-    }
-    if (data.correlationDowngrade) {
-      showToast(`Engine-match ${data.correlationDowngrade.recentPct}% ≥ ${data.correlationDowngrade.threshold}% — L5 → L3`, 'warning', 3500);
+    if (data.exactHintBlocked) {
+      showToast(data.exactHintBlocked.message, 'warning', 3500);
     }
 
     // v8.5.0 (Enhancement I): Refresh the correlation stat in the UI.
@@ -959,13 +930,9 @@
     // v7.9.0: Show toast for errors
     showToast(errorMsg, 'error', 4000);
     if (dom.hintText) {
-      let msg = errorMsg;
-      if (msg.includes('temporarily unavailable')) {
-        msg += ' Click Refresh to retry.';
-      } else {
-        msg += ' Check your connection and try Refresh.';
-      }
-      dom.hintText.textContent = msg;
+      // The background already classifies retry, wait, and hard-budget states.
+      // Do not suggest Refresh for a state where it cannot help.
+      dom.hintText.textContent = errorMsg;
     }
   }
 
@@ -1027,7 +994,7 @@
       fen: currentFen,
       playerColor: colorToSend,
       multiPv: settings.cloudDepth || 3,
-      hintLevel,
+      hintLevel: EXACT_HINT_LEVEL,
       refresh: refresh,
       tabId: activeTabId
     }).catch(() => {});
@@ -1058,6 +1025,16 @@
     }
     renderPositionInfo(viewData);
     renderHints(viewData);
+
+    if (data.exactHintBlocked) {
+      if (dom.candidateSection) dom.candidateSection.style.display = 'none';
+      if (dom.pvLines) dom.pvLines.parentElement.style.display = 'none';
+      if (dom.continuationSection) dom.continuationSection.style.display = 'none';
+      if (dom.tablebaseSection) dom.tablebaseSection.style.display = 'none';
+      if (dom.openingExplorerSection) dom.openingExplorerSection.style.display = 'none';
+      if (dom.endgameCoachSection) dom.endgameCoachSection.style.display = 'none';
+      return;
+    }
 
     if (settings.showCandidateMoves && styledPvs) {
       renderCandidateMoves(styledPvs, effectiveColor, data.fen);
@@ -1430,6 +1407,17 @@
 
   // ─── Hint Rendering ────────────────────────────────────────────────
   function renderHints(data) {
+    if (data.exactHintBlocked) {
+      if (dom.hintText) dom.hintText.textContent = data.exactHintBlocked.message;
+      if (dom.hintFromTo) dom.hintFromTo.style.display = 'none';
+      if (dom.hintTags) dom.hintTags.innerHTML = '<span class="hint-tag">Exact hint withheld</span>';
+      if (dom.hintCard) dom.hintCard.className = 'hint-card exact-move blocked';
+      const warningEl = document.getElementById('fair-play-warning');
+      const warningText = document.getElementById('fair-play-warning-text');
+      if (warningEl) warningEl.style.display = 'flex';
+      if (warningText) warningText.textContent = data.exactHintBlocked.message;
+      return;
+    }
     if (!data.pvs || data.pvs.length === 0) {
       if (dom.hintText) dom.hintText.textContent = 'Waiting for analysis...';
       return;
@@ -1442,13 +1430,13 @@
       ? (data.pvs[0]?.score || 0)
       : -(data.pvs[0]?.score || 0);
 
-    const effectiveHintLevel = Number.isInteger(data.hintLevel) ? data.hintLevel : hintLevel;
+    const effectiveHintLevel = EXACT_HINT_LEVEL;
     const hints = window.ChessHintEngine.generateHints(
       { ...data, prevEval, currEval: currEvalPlayerPerspective },
       effectiveHintLevel,
-      assistedPlayerColor,
+      effectiveColor,
       settings.style,
-      settings.repertoire,
+      effectiveColor === 'w' ? settings.whiteRepertoire : settings.blackRepertoire,
       settings.humanLikeMode,
       { activePlan: humanPlanState?.activePlan || null }
     );
@@ -1472,16 +1460,17 @@
     }
 
     if (dom.hintCard) {
-      const colors = { 1: 'var(--accent-green)', 2: 'var(--accent-blue)', 3: 'var(--accent-purple)', 4: 'var(--accent-purple)', 5: 'var(--accent-cyan)' };
-      let borderColor = colors[effectiveHintLevel] || 'var(--accent-cyan)';
+      let borderColor = 'var(--accent-red)';
       if (settings.style === 'aggressive') borderColor = 'var(--accent-aggressive)';
       if (settings.style === 'super_ultra_aggressive') borderColor = 'var(--accent-super-ultra)';
       dom.hintCard.style.borderLeftColor = borderColor;
       const styleClass = settings.style === 'super_ultra_aggressive' ? ' super-ultra-mode' : '';
-      dom.hintCard.className = `hint-card level-${effectiveHintLevel}` + styleClass;
+      dom.hintCard.className = 'hint-card exact-move' + styleClass;
     }
 
     if (dom.hintTags) {
+      // Keep this compact: only persistent position warnings belong beside an
+      // exact hint. Source, style, depth, and mode labels add noise.
       const tags = [];
       if (hints.positionAssessment) {
         const pa = hints.positionAssessment;
@@ -1491,53 +1480,9 @@
         else if (playerBalance < -2) tags.push('Material-');
         if (pa.kingSafety.issues.some(i => i.severity === 'high' && i.color === ec)) tags.push('King Danger');
         if (pa.pawnStructure.issues.some(i => i.issue && i.issue.includes('passed') && i.color === ec)) tags.push('Passed Pawn');
-        if (pa.threats.some(t => t.type === 'hanging-piece')) tags.push('Tactic');
       }
-      if (hints.styleAnnotation) tags.push(hints.styleAnnotation);
-      // v8.5.0: Distinguish masters-explorer ('Human') from cloud sources.
-      const sourceTag = currentSource === 'chess-api' ? 'API'
-        : (currentSource === 'lichess-cloud' ? 'Cloud'
-        : (currentSource === 'masters-explorer' ? 'Human'
-        : (currentSource === 'opening-explorer' ? 'Human'
-        : (currentSource === 'tablebase' ? 'Tablebase' : 'Cloud'))));
-      tags.push(sourceTag);
-
-      // v6.0.0: Depth quality indicator
-      if (hints.depthQuality) {
-        const depthLabels = { deep: 'Deep Analysis', standard: 'Standard', basic: 'Basic' };
-        const depthClass = hints.depthQuality === 'deep' ? 'tag-depth-deep' : (hints.depthQuality === 'standard' ? 'tag-depth-standard' : 'tag-depth-basic');
-        tags.push(depthLabels[hints.depthQuality]);
-      }
-      const effectiveColor = assistedPlayerColor || 'w';
-      const playerLabel = effectiveColor === 'w' ? 'White' : 'Black';
-      tags.push(`Assisting ${playerLabel}`);
-      if (hints.isAssistedPlayerTurn === false) {
-        tags.push('Waiting for Opponent');
-      }
-      if (settings.style === 'aggressive') tags.push('Aggressive');
-      if (settings.style === 'super_ultra_aggressive') tags.push('Super Ultra');
-      if (settings.humanLikeMode) {
-        tags.push('Human-like');
-        if (hints.styleAnalysis?.planContinuity) tags.push('Plan continuity');
-        if (hints.styleAnalysis?.masterGames > 0) tags.push('Master choice');
-      }
-
-      dom.hintTags.innerHTML = tags.map(t => {
-        let tagClass = 'hint-tag';
-        if (t === 'Aggressive') tagClass += ' tag-aggressive';
-        if (t === 'Super Ultra') tagClass += ' tag-super-ultra';
-        if (t === 'Human-like' || t === 'Plan continuity' || t === 'Master choice') tagClass += ' tag-human-like';
-        if (t === 'queen sac') tagClass += ' tag-queen-sac';
-        if (t === 'mate attack') tagClass += ' tag-mate-attack';
-        if (t === 'Cloud' || t === 'API') tagClass += ' tag-cloud';
-        if (t === 'Human') tagClass += ' tag-human';  // v8.5.0: masters-explorer
-        if (t === 'CDB') tagClass += ' tag-cdb';
-        if (t === 'Tablebase') tagClass += ' tag-tb';
-        if (t === 'Deep Analysis') tagClass += ' tag-depth-deep';
-        if (t === 'Standard') tagClass += ' tag-depth-standard';
-        if (t === 'Basic') tagClass += ' tag-depth-basic';
-        return `<span class="${tagClass}">${h(t)}</span>`;
-      }).join('');
+      if (hints.isAssistedPlayerTurn === false) tags.push('Waiting for Opponent');
+      dom.hintTags.innerHTML = tags.map(t => `<span class="hint-tag">${h(t)}</span>`).join('');
     }
 
     if (dom.winningPlan && dom.planText) {
@@ -1561,31 +1506,13 @@
     // Fair play warning
     const warningEl = document.getElementById('fair-play-warning');
     const warningText = document.getElementById('fair-play-warning-text');
-    if (hints.fairPlayWarning && effectiveHintLevel >= 4) {
+    if (hints.fairPlayWarning) {
       if (warningEl) warningEl.style.display = 'flex';
       if (warningText) warningText.textContent = hints.fairPlayWarning;
     } else {
       if (warningEl) warningEl.style.display = 'none';
     }
 
-    // Coach mode info
-    updateCoachModeInfo();
-  }
-
-  // ─── Coach Mode Info ──────────────────────────────────────────────
-  function updateCoachModeInfo() {
-    const coachInfoEl = document.getElementById('coach-mode-info');
-    const counterEl = document.getElementById('hint-usage-counter');
-    if (!coachInfoEl) return;
-
-    if (settings.coachModeEnabled && hintLevel >= 4) {
-      coachInfoEl.style.display = 'flex';
-      if (counterEl) {
-        counterEl.textContent = `${coachModeHintCount}/${settings.coachModeMaxHints} L5 hints used`;
-      }
-    } else {
-      coachInfoEl.style.display = 'none';
-    }
   }
 
   function renderPVLines(pvs, effectiveColor) {
@@ -1599,7 +1526,7 @@
     const activeColor = fenParts[1] || 'w';
     const isOpponentTurn = activeColor !== effectiveColor;
 
-    const formatted = window.ChessHintEngine.formatPVs(pvs, effectiveColor === 'w', hintLevel, currentFen);
+    const formatted = window.ChessHintEngine.formatPVs(pvs, effectiveColor === 'w', EXACT_HINT_LEVEL, currentFen);
     dom.pvLines.innerHTML = formatted.map(pv => {
       const scoreClass = pv.score > 30 ? 'positive' : (pv.score < -30 ? 'negative' : 'neutral');
       const depthLabel = pv.depth >= 100 ? 'TB' : `depth ${pv.depth}`;
@@ -1633,7 +1560,7 @@
     }
 
     dom.continuationSection.style.display = 'block';
-    const formatted = window.ChessHintEngine.formatContinuation(pvs[0].pv, hintLevel, effectiveColor === 'w', currentFen);
+    const formatted = window.ChessHintEngine.formatContinuation(pvs[0].pv, EXACT_HINT_LEVEL, effectiveColor === 'w', currentFen);
 
     dom.continuationMoves.innerHTML = formatted.map(m => {
       const moveNumStr = m.moveNumber ? `<span class="cont-move-number">${h(m.moveNumber)}.</span>` : (m.isWhiteMove ? '' : '<span class="cont-move-number">...</span>');

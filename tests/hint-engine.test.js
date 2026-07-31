@@ -17,6 +17,19 @@ const engine = sandbox.window.ChessHintEngine;
 const start = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 assert.equal(engine.uciToSan('e2e4', start), 'e4');
 assert.equal(engine.applyMoveToFen(start, 'e2e4'), 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1');
+const morra = engine.OPENING_REPERTOIRES.white_smith_morra;
+const morraStart = engine.repertoireState(start, morra, 'w');
+assert.deepEqual(JSON.parse(JSON.stringify(morraStart.nextMoves)), ['e2e4']);
+const afterSicilian = engine.applyMoveToFen(engine.applyMoveToFen(start, 'e2e4'), 'c7c5');
+const morraReply = engine.repertoireState(afterSicilian, morra, 'w');
+assert.ok(morraReply.nextMoves.includes('d2d4'), 'repertoire matches a known branch from the current FEN');
+assert.equal(engine.repertoireState(afterSicilian, morra, 'b'), null, 'a White repertoire never activates for Black');
+const repertoirePvs = [
+  { score: 30, scoreType: 'cp', depth: 20, pv: ['d2d4'] },
+  { score: 10, scoreType: 'cp', depth: 20, pv: ['e2e4'] }
+];
+const repertoireRanked = engine.selectPVForStyle(repertoirePvs, start, 'normal', 'w', false, { repertoire: morraStart });
+assert.equal(repertoireRanked[0].pv[0], 'e2e4', 'a repertoire move within the half-pawn safety budget is preferred');
 
 const castleCheck = '5k2/8/8/8/8/8/8/4K2R w K - 0 1';
 assert.equal(engine.uciToSan('e1g1', castleCheck), 'O-O+');
@@ -72,6 +85,11 @@ const aggressiveHint = engine.generateHints({ fen: attackFen, pvs: [quiet, forci
 assert.match(aggressiveHint.main, /Aggressive choice: Qh5\+/);
 assert.match(aggressiveHint.main, /Fast-win idea:/);
 assert.equal(aggressiveHint.pvs[0].pv[0], 'd1h5');
+
+const legacyLevelHint = engine.generateHints({ fen: attackFen, pvs: [quiet], moveHistory: [] }, 1, 'w', 'normal', 'none');
+assert.equal(legacyLevelHint.level, 5, 'exact-only mode normalizes legacy level requests');
+assert.match(legacyLevelHint.main, /^Best:/, 'legacy level requests still receive the exact move');
+assert.ok(legacyLevelHint.bestMoveFromTo?.includes('d1 → d2'));
 
 // Human-like mode stays inside objective/style budgets but prefers natural plans.
 const naturalFen = '4k3/8/8/8/8/8/8/3QK1N1 w - - 0 1';

@@ -13,13 +13,13 @@ importScripts('engine/core-utils.js', 'engine/api-coordinator.js');
  *  - FIX: Masters Explorer score now correctly normalised to White's perspective
  *  - FIX: Masters Explorer multiPv now respects user setting instead of hardcoded 3
  *  - FIX: Fallback loop no longer re-calls sources that failed non-fatally (e.g. 404)
- *  - FIX: hintUsageTracker now resets on player_color_changed (was only reset on new game)
+ *  - FIX: Per-game analysis state resets when the assisted player changes
  *  - FIX: inFlightRequests rejection-safe (no orphan entries on unexpected throw)
  *  - FIX: memoryCache LRU eviction when over cap (was only TTL-based)
  *  - FIX: Consolidated keep-alive into a single chrome.alarms-based mechanism
  *         (removed the redundant setInterval + platform-info leak)
  *  - ENH (G): Replaced setInterval keep-alive with chrome.alarms (MV3 best practice)
- *  - ENH (C): Forwards depthTarget setting to sidepanel for L4/L5 gating
+ *  - ENH (C): Enforces the minimum depth target before showing exact hints
  *  - ENH (I): Tracks player-move / engine-recommendation correlation; sidepanel reads it
  *  - ENH (J): ECO openings now loaded from engine/eco.json (with inline fallback)
  *
@@ -36,7 +36,7 @@ importScripts('engine/core-utils.js', 'engine/api-coordinator.js');
  *  - Adaptive circuit breaker with per-error-type recovery
  *  - Request coalescing (singleflight pattern)
  *  - Persistent cache across service worker restarts
- *  - Coach Mode & Fair Play warnings
+ *  - Exact-move fair-play warnings
  *  - Berserker/Kamikaze/Ultra Aggressive playing styles
  *  - Lichess 429 = 60s+ cooldown, 404 = not a failure
  */
@@ -52,8 +52,8 @@ const DEFAULT_SETTINGS = {
   cloudDepth: 5,
   style: 'normal',
   humanLikeMode: false,
-  repertoire: 'none',
-  hintLevel: 3,
+  whiteRepertoire: 'none',
+  blackRepertoire: 'none',
   autoAnalyze: true,
   showThreats: true,
   showAssessment: true,
@@ -64,11 +64,12 @@ const DEFAULT_SETTINGS = {
   showEndgameCoach: true,
   showCriticalMoments: true,
   showCandidateMoves: true,
-  coachModeEnabled: true,
-  coachModeMaxHints: 3,
   // v8.5.0 enhancements
-  depthTarget: 0,                  // 0 = no minimum; otherwise min depth for L4/L5
-  correlationThreshold: 100        // 100 = off; otherwise % cap that downgrades L5→L3
+  depthTarget: 0,                  // 0 = no minimum; otherwise min depth for exact hints
+  // Individual analysis providers can be excluded without bypassing safeguards.
+  useChessApi: true,
+  useLichessCloud: true,
+  useMastersExplorer: true
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -85,6 +86,8 @@ const turnState = {
   consecutiveFailures: 0,
   analysisDebounceTimer: null
 };
+
+let lastAnalysisGameId = null;
 
 function shouldAnalyzePosition(fen, playerColor) {
   if (!fen || !playerColor) {
@@ -301,15 +304,10 @@ function tablebaseCacheKey(fen) {
   return `tablebase:${ApiReliability.canonicalAnalysisFen(fen)}`;
 }
 
-function semanticSourceOrder(fen) {
-  return ApiReliability.planPositionWorkflow(fen, { showOpeningExplorer: true }).analysisSources;
+function semanticSourceOrder(fen, settings = DEFAULT_SETTINGS) {
+  return ApiReliability.planPositionWorkflow(fen, settings).analysisSources;
 }
 
-
-// ─── Coach Mode & Hint Tracking ──────────────────────────────────────
-let hintUsageTracker = { gameId: null, l5Count: 0, l4Count: 0, lastWarnLevel: 0 };
-let lastL5HintTime = 0;
-const L5_COOLDOWN_MS = 5000;
 
 // v8.5.0 — Real engine-correlation guard (Enhancement I)
 // Stores the engine's first-choice UCI move keyed by FEN-of-side-to-move.
@@ -870,6 +868,36 @@ function providerForAnalysisSource(source) {
   return 'mastersExplorer';
 }
 
+// Choose a source at request time, not from a fixed list. This keeps the
+// preferred semantic source first while immediately failing over around a
+// provider that is unavailable or would impose a material queue delay.
+function rankAnalysisSources(sourceOrder, context) {
+  const diagnostics = apiCoordinator.getDiagnostics();
+  const healthPenalty = { healthy: 0, unknown: 0, slow: 4, 'half-open': 12, degraded: 24, cooldown: 100, 'rate-limited': 100, disabled: 100 };
+  return sourceOrder.map((source, semanticIndex) => {
+    const provider = providerForAnalysisSource(source);
+    const schedule = apiCoordinator.getScheduleStatus(provider, {
+      priority: context.priority,
+      endpointClass: 'analysis',
+      positionToken: context.positionToken
+    });
+    const health = diagnostics.providers?.[provider]?.state || 'unknown';
+    // 250 ms units let an immediately available fallback win over a source
+    // that is merely spacing-limited, without preferring a degraded source.
+    const queuePenalty = Math.min(40, Math.ceil((schedule.waitMs || 0) / 250));
+    return { source, provider, schedule, health, semanticIndex, score: semanticIndex * 10 + (healthPenalty[health] ?? 16) + queuePenalty };
+  }).filter(candidate => candidate.schedule.allowed)
+    .sort((left, right) => left.score - right.score || left.semanticIndex - right.semanticIndex);
+}
+
+async function findCachedAnalysisFallback(sourceOrder, fen, multiPv) {
+  for (const source of sourceOrder) {
+    const cached = await getCachedAnalysisSource(source, fen, multiPv);
+    if (cached) return { result: cached, source };
+  }
+  return null;
+}
+
 function analysisFromOpeningData(openingData, fen, multiPv) {
   if (!openingData?.moves?.length) return null;
   const pvs = openingData.moves.slice(0, multiPv).map((move, index) => {
@@ -989,7 +1017,20 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
     }
   }
 
-  const sourceOrder = semanticSourceOrder(fen);
+  const sourceOrder = semanticSourceOrder(fen, settings);
+  if (sourceOrder.length === 0) {
+    return {
+      error: true,
+      fen,
+      playerColor,
+      errorDetail: {
+        type: 'no_sources_enabled',
+        message: 'All analysis sources are disabled in Settings. Enable at least one source to analyze this position.',
+        suggestion: 'none'
+      },
+      moveHistory: options.moveHistory || []
+    };
+  }
   let bestResult = null;
   let usedSource = null;
 
@@ -1020,22 +1061,45 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
     }
   }
 
+  let routing = null;
   if (!bestResult) {
-    const eligibleSources = sourceOrder.filter(source =>
-      apiCoordinator.canSchedule(providerForAnalysisSource(source), priority)
-    );
-    // One primary plus at most one genuine fallback. Permanent 4xx responses,
-    // cooldowns and disabled providers never trigger repeated calls.
-    for (const source of eligibleSources.slice(0, 2)) {
-      const result = await callAnalysisSource(source, fen, multiPv, context);
+    const candidates = rankAnalysisSources(sourceOrder, context);
+    routing = {
+      attempted: [],
+      skipped: sourceOrder.filter(source => !candidates.some(candidate => candidate.source === source)).map(source => ({
+        source,
+        provider: providerForAnalysisSource(source),
+        schedule: apiCoordinator.getScheduleStatus(providerForAnalysisSource(source), {
+          priority, endpointClass: 'analysis', positionToken
+        })
+      }))
+    };
+
+    // Try every semantically valid provider at most once. Providers enforce
+    // their own spacing, quota, cooldown, and retry rules; this is compliant
+    // failover rather than retrying or bypassing a provider limit.
+    for (const candidate of candidates) {
+      routing.attempted.push(candidate.source);
+      const result = await callAnalysisSource(candidate.source, fen, multiPv, context);
       if (!apiCoordinator.isPositionCurrent(positionToken)) {
         return { error: true, stalePosition: true, fen, errorDetail: { type: 'stale_position', message: 'Position changed', suggestion: 'none' } };
       }
       if (result) {
         bestResult = result;
-        usedSource = source;
+        usedSource = candidate.source;
         break;
       }
+    }
+  }
+
+  if (!bestResult) {
+    // Refresh is advisory: if every compliant provider path failed, preserve
+    // continuity with any usable fresh or stale result before surfacing error.
+    const fallback = await findCachedAnalysisFallback(sourceOrder, fen, multiPv);
+    if (fallback) {
+      bestResult = fallback.result;
+      usedSource = fallback.source;
+      bestResult.refreshFailed = Boolean(options.refresh);
     }
   }
 
@@ -1044,7 +1108,8 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
       error: true,
       fen,
       playerColor,
-      errorDetail: classifyError(),
+      errorDetail: classifyError(routing),
+      routing,
       moveHistory: options.moveHistory || []
     };
   }
@@ -1080,9 +1145,29 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
 }
 
 // ─── Error Classification for User-Friendly Messages ─────────────────
-function classifyError() {
+function classifyError(routing = null) {
   const diagnostics = apiCoordinator.getDiagnostics();
   const statuses = Object.values(diagnostics.providers || {});
+  const skipped = routing?.skipped || [];
+  const skippedTypes = skipped.map(entry => entry.schedule?.errorType).filter(Boolean);
+  const waitMs = Math.max(0, ...skipped.map(entry => entry.schedule?.waitMs || 0));
+
+  if (skippedTypes.includes('game_budget') || skippedTypes.includes('position_budget')) {
+    return {
+      type: 'budget_exhausted',
+      message: skippedTypes.includes('game_budget')
+        ? 'Analysis request budget for this game has been reached. Existing cached analysis remains available.'
+        : 'This position has already used its analysis request budget. Make a move or use the cached analysis.',
+      suggestion: 'none'
+    };
+  }
+  if (waitMs > 0) {
+    return {
+      type: 'queued',
+      message: `Analysis is queued to respect provider pacing; retry in about ${Math.max(1, Math.ceil(waitMs / 1000))} seconds.`,
+      suggestion: 'wait'
+    };
+  }
   if (statuses.some(status => status.state === 'rate-limited' || status.state === 'cooldown')) {
     return {
       type: 'rate_limited',
@@ -1099,7 +1184,7 @@ function classifyError() {
   }
   return {
     type: 'transient',
-    message: 'No eligible cloud result is available within the current request budget.',
+    message: 'No cloud provider returned analysis for this position. Cached results will be used when available.',
     suggestion: 'retry'
   };
 }
@@ -1226,29 +1311,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       notePanelActivity(tabId, true);
       const positionToken = registerPosition(message.fen, tabId);
 
-      if (positionToken && hintUsageTracker.gameId !== positionToken.gameId) {
-        hintUsageTracker = { gameId: positionToken.gameId, l5Count: 0, l4Count: 0, lastWarnLevel: 0 };
+      if (positionToken && lastAnalysisGameId !== positionToken.gameId) {
+        lastAnalysisGameId = positionToken.gameId;
         resetAnalysisState();
         resetCorrelationTracker();
       }
 
-      let effectiveHintLevel = message.hintLevel || settings.hintLevel || 3;
-      let coachModeDowngrade = false;
-      if (settings.coachModeEnabled && effectiveHintLevel === 5) {
-        const now = Date.now();
-        if (now - lastL5HintTime < L5_COOLDOWN_MS) {
-          effectiveHintLevel = 3;
-          coachModeDowngrade = true;
-        } else if (hintUsageTracker.l5Count >= (settings.coachModeMaxHints || 3)) {
-          effectiveHintLevel = 3;
-          coachModeDowngrade = true;
-        } else {
-          hintUsageTracker.l5Count++;
-          lastL5HintTime = now;
-        }
-      } else if (effectiveHintLevel === 4) {
-        hintUsageTracker.l4Count++;
-      }
+      const effectiveHintLevel = 5;
+      let exactHintBlocked = null;
 
       // Refresh is deliberately non-destructive: caches, cooldowns, quotas and
       // passive health remain intact. The coordinator decides whether the
@@ -1296,39 +1366,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           turnState.consecutiveFailures = 0;
 
           cloudResult.hintLevel = effectiveHintLevel;
-          cloudResult.coachModeDowngrade = coachModeDowngrade;
-          cloudResult.hintUsage = {
-            l5Count: hintUsageTracker.l5Count,
-            l4Count: hintUsageTracker.l4Count,
-            maxL5: settings.coachModeMaxHints || 3
-          };
 
-          // v8.5.0: Apply depth-target gating (Enhancement C) — if the engine's
-          // depth is below the user's configured minimum AND hint level is L4/L5,
-          // downgrade to L3 so we don't reveal specific moves on shallow analysis.
+          // Exact-only mode has no lower-detail fallback. Guards withhold the
+          // move rather than leaking it through a downgraded hint level.
           const depthTarget = settings.depthTarget || 0;
-          if (depthTarget > 0 && effectiveHintLevel >= 4) {
+          if (!exactHintBlocked && depthTarget > 0) {
             const actualDepth = cloudResult.depth || 0;
-            // Tablebase (depth 999) always passes.
             if (actualDepth < depthTarget && actualDepth < 100) {
-              cloudResult.depthDowngrade = { from: effectiveHintLevel, to: 3, reason: `depth ${actualDepth} < target ${depthTarget}` };
-              effectiveHintLevel = 3;
-              cloudResult.hintLevel = 3;
+              exactHintBlocked = { reason: 'depth_target', message: `Exact-move hints require depth ${depthTarget}; current depth is ${actualDepth}.` };
             }
           }
 
-          // v8.5.0: Apply correlation cap (Enhancement I) — if recent
-          // engine-match rate over the last 8 moves exceeds the user's
-          // threshold, downgrade L5 → L3.
-          const corrThreshold = settings.correlationThreshold || 100;
-          if (effectiveHintLevel === 5 && corrThreshold < 100) {
-            const stats = getCorrelationStats();
-            if (stats.recentSize >= 3 && stats.recentPct >= corrThreshold) {
-              cloudResult.correlationDowngrade = { from: 5, to: 3, recentPct: stats.recentPct, threshold: corrThreshold };
-              effectiveHintLevel = 3;
-              cloudResult.hintLevel = 3;
-            }
-          }
+          cloudResult.exactHintBlocked = exactHintBlocked;
 
           // v8.5.0: Record the engine's first-choice move so that when the
           // player makes their move, we can update the correlation tracker.
@@ -1346,7 +1395,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           let errorMsg = detail.message || 'Cloud analysis unavailable';
           if (detail.suggestion === 'retry') errorMsg += ' Try Refresh.';
           else if (detail.suggestion === 'wait') errorMsg += ' Will retry on your next turn.';
-          else errorMsg += ' Check your connection and try Refresh.';
+          else if (detail.suggestion !== 'none') errorMsg += ' Check your connection and try Refresh.';
           chrome.runtime.sendMessage({
             type: 'analysis_error',
             data: { error: errorMsg, fen: message.fen, detail }
@@ -1443,7 +1492,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (msgType === 'player_color_changed') {
     // v8.5.0: Reset all per-game/per-color trackers, not just turnState.
     resetAnalysisState();
-    hintUsageTracker = { gameId: null, l5Count: 0, l4Count: 0, lastWarnLevel: 0 };
+    lastAnalysisGameId = null;
     resetCorrelationTracker();
     sendResponse({ ok: true });
     return false;
@@ -1471,7 +1520,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // v8.5.0 (Enhancement I): Side panel signals a new game so the tracker resets.
   if (msgType === 'reset_correlation') {
     resetCorrelationTracker();
-    hintUsageTracker = { gameId: null, l5Count: 0, l4Count: 0, lastWarnLevel: 0 };
+    lastAnalysisGameId = null;
     sendResponse({ ok: true });
     return false;
   }
@@ -1509,10 +1558,25 @@ chrome.runtime.onInstalled.addListener(() => {
       }
 
       if (s.humanLikeMode === undefined) { s.humanLikeMode = false; updated = true; }
+      if (s.hintLevel !== undefined) { delete s.hintLevel; updated = true; }
+      if (s.repertoire !== undefined) {
+        // Preserve a legacy repertoire as the equivalent White selection.
+        if (s.whiteRepertoire === undefined) s.whiteRepertoire = s.repertoire;
+        delete s.repertoire;
+        updated = true;
+      }
+      if (s.whiteRepertoire === undefined) { s.whiteRepertoire = 'none'; updated = true; }
+      if (s.blackRepertoire === undefined) { s.blackRepertoire = 'none'; updated = true; }
+      for (const obsolete of ['coachModeEnabled', 'coachModeMaxHints']) {
+        if (s[obsolete] !== undefined) { delete s[obsolete]; updated = true; }
+      }
 
       // v8.5.0: ensure new fields exist on migrated settings
       if (s.depthTarget === undefined) { s.depthTarget = 0; updated = true; }
-      if (s.correlationThreshold === undefined) { s.correlationThreshold = 100; updated = true; }
+      if (s.correlationThreshold !== undefined) { delete s.correlationThreshold; updated = true; }
+      if (s.useChessApi === undefined) { s.useChessApi = true; updated = true; }
+      if (s.useLichessCloud === undefined) { s.useLichessCloud = true; updated = true; }
+      if (s.useMastersExplorer === undefined) { s.useMastersExplorer = true; updated = true; }
 
       if (updated) {
         chrome.storage.local.set({ settings: s });
