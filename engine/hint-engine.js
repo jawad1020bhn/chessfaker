@@ -1,6 +1,7 @@
 /**
- * Chess Hint Assistant — Three-Mode Hint Engine v9.1.0
+ * Chess Hint Assistant — Three-Mode Hint Engine v9.2.0
  *
+ * v9.2.0: Chaos Attack redesign with feature-delta scoring, attack explanations, and Safe/Bold/Wild comparison metadata.
  * v9.1.0: Updated version metadata for the DGT Slate & Tournament Obsidian redesign.
  *
  * Modes:
