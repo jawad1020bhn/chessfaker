@@ -65,34 +65,34 @@
     },
     super_ultra_aggressive: {
       id: 'super_ultra_aggressive',
-      name: 'Chaos Attack',
-      desc: 'Bold, attack-first play: seek king hunts, penetration, pawn storms, and concrete sacrifices while never discarding a forced mate.',
+      name: 'Chaos Attack (vs <=1100)',
+      desc: 'Fearless direct attack tailored for <=1100 opponents: hunt the king, launch pawn storms, sacrifice fearlessly, and overwhelm the defense with relentless tactical pressure.',
       // These are objective-evaluation budgets in centipawns, not a claim that
       // every sacrificed pawn is compensated. They widen as a position worsens.
-      riskBudget: { winning: 100, advantage: 200, equal: 350, worse: 550, desperate: 800 },
-      sacrificeTolerance: 1000,
-      kingHuntBonus: 180,
-      diversity: 0.16,
+      riskBudget: { winning: 200, advantage: 350, equal: 600, worse: 850, desperate: 1200 },
+      sacrificeTolerance: 1500,
+      kingHuntBonus: 260,
+      diversity: 0.18,
       weights: {
-        check: 210,
-        doubleCheck: 145,
-        forcingPly: 62,
-        kingPressure: 82,
-        defenderRemoval: 90,
-        tempo: 58,
-        development: 32,
-        openKingFile: 120,
-        sustainedAttack: 145,
-        soundSacrifice: 230,
-        speculativeSacrifice: 115,
-        penetration: 66,
-        deepPenetration: 115,
-        pawnStorm: 85,
-        passedPawnPush: 45,
-        complexity: 58,
-        simplification: -105,
-        ownKingDanger: -18,
-        unsupportedAttack: -18
+        check: 280,
+        doubleCheck: 190,
+        forcingPly: 80,
+        kingPressure: 120,
+        defenderRemoval: 130,
+        tempo: 80,
+        development: 35,
+        openKingFile: 160,
+        sustainedAttack: 190,
+        soundSacrifice: 300,
+        speculativeSacrifice: 180,
+        penetration: 95,
+        deepPenetration: 140,
+        pawnStorm: 120,
+        passedPawnPush: 60,
+        complexity: 80,
+        simplification: -160,
+        ownKingDanger: -5,
+        unsupportedAttack: -5
       }
     }
   };
@@ -787,9 +787,9 @@
       return 'Create active counterplay immediately — checks, threats, and tempo are more valuable than passive defense.';
     }
     if (currentStyle.id === 'super_ultra_aggressive') {
-      if (evalScore > 100) return 'Accelerate the win: invade the king zone, keep major pieces active, and calculate every forcing sacrifice.';
-      if (evalScore > -100) return 'Create concrete chaos: open lines, drive a pawn storm, and accept material risk only when it creates immediate attacking pressure.';
-      return 'Fight for practical chances: seek checks, deep penetration, asymmetric material, and forcing sacrifices that keep the opponent under pressure.';
+      if (evalScore > 100) return 'Finish fast: swarm the enemy king, maintain relentless attack, and force immediate tactical collapse.';
+      if (evalScore > -100) return 'Direct attack vs <=1100: open lines, launch pawn storms, and sacrifice material fearlessly to overwhelm their defense.';
+      return 'Fearless counter-attack: launch checks, deep invasions, and aggressive sacrifices. Apply maximum pressure until they crack!';
     }
 
     if (evalScore > 300) {
@@ -1113,11 +1113,13 @@
       reward(true, popularity, `has practical master-game experience (${candidate.masterGames} games)`);
     }
 
-    penalize(candidate.earlyQueenMove && !candidate.givesCheck && !candidate.tempo, 28, 'moves the queen early without a forcing gain');
-    penalize(candidate.edgePawnMove && candidate.kingPressureDelta <= 0, 16, 'pushes an edge pawn without immediate purpose');
-    penalize(candidate.unsupportedAttack, 30, 'leaves the attacking piece hard to support');
-    penalize(candidate.ownKingDangerDelta > 1.5, Math.min(30, candidate.ownKingDangerDelta * 5), 'makes your own king harder to handle');
-    penalize(candidate.calculationBurden > 7, Math.min(24, (candidate.calculationBurden - 7) * 3), 'requires a long precise continuation');
+    if (profile.id !== 'super_ultra_aggressive') {
+      penalize(candidate.earlyQueenMove && !candidate.givesCheck && !candidate.tempo, 28, 'moves the queen early without a forcing gain');
+      penalize(candidate.edgePawnMove && candidate.kingPressureDelta <= 0, 16, 'pushes an edge pawn without immediate purpose');
+      penalize(candidate.unsupportedAttack, 30, 'leaves the attacking piece hard to support');
+      penalize(candidate.ownKingDangerDelta > 1.5, Math.min(30, candidate.ownKingDangerDelta * 5), 'makes your own king harder to handle');
+      penalize(candidate.calculationBurden > 7, Math.min(24, (candidate.calculationBurden - 7) * 3), 'requires a long precise continuation');
+    }
 
     if (profile.id === 'normal') {
       reward(bestScore > 180 && candidate.simplification > 1, 18, 'converts the advantage with a simpler position');
@@ -1127,16 +1129,16 @@
       reward(candidate.development && candidate.kingPressureDelta > 0, 20, 'develops directly into the attack');
       penalize(candidate.sacrificeSoundness === 'speculative', 35, 'the fastest-looking attack is not fully forced');
     } else {
-      reward(candidate.doubleCheck, 35, 'delivers a devastating double check');
-      reward(candidate.givesCheck && candidate.forcingPly >= 1, 24, 'executes an understandable forcing attack');
-      reward(candidate.kingPressureDelta > 0, Math.min(30, Math.round(candidate.kingPressureDelta * 12)), 'increases concrete king pressure');
-      reward(candidate.penetrationDelta > 0, Math.min(25, candidate.penetrationDelta * 14), 'invades enemy territory');
-      reward(candidate.deepPenetrationDelta > 0, Math.min(35, candidate.deepPenetrationDelta * 18), 'establishes a deep invading piece');
-      reward(candidate.pawnStormDelta > 0, Math.min(30, candidate.pawnStormDelta * 16), 'drives a threatening pawn storm');
-      reward(candidate.sacrifice, candidate.sacrificeSoundness === 'sound' ? 45 : (candidate.chaosSacrificeTrigger ? 28 : 0),
-        candidate.sacrificeSoundness === 'sound' ? 'makes a sound sacrifice with concrete compensation' : (candidate.chaosSacrificeTrigger ? 'creates an immediate chaos-inducing sacrifice' : ''));
-      reward(candidate.complexity >= 3, 20, 'creates difficult practical choices');
-      reward(candidate.opensKingFile, 24, 'opens a recognizable attacking route to the king');
+      reward(candidate.doubleCheck, 55, 'delivers a devastating double check');
+      reward(candidate.givesCheck && candidate.forcingPly >= 1, 45, 'launches a direct, relentless attack');
+      reward(candidate.kingPressureDelta > 0, Math.min(70, Math.round(candidate.kingPressureDelta * 22)), 'swarms the enemy king with relentless pressure');
+      reward(candidate.penetrationDelta > 0, Math.min(60, candidate.penetrationDelta * 25), 'invades deep into enemy territory');
+      reward(candidate.deepPenetrationDelta > 0, Math.min(70, candidate.deepPenetrationDelta * 30), 'establishes a terrifying deep-invasion attacking piece');
+      reward(candidate.pawnStormDelta > 0, Math.min(65, candidate.pawnStormDelta * 28), 'drives a ruthless pawn storm straight at the enemy king');
+      reward(candidate.sacrifice, candidate.sacrificeSoundness === 'sound' ? 80 : 50,
+        candidate.sacrificeSoundness === 'sound' ? 'executes a sound, game-ending sacrifice' : 'launches a fearless speculative sacrifice to shatter the defense');
+      reward(candidate.complexity >= 2, 40, 'creates maximum tactical chaos');
+      reward(candidate.opensKingFile, 45, 'rips open direct attack lines straight at the king');
     }
 
     candidate.naturalnessScore = Math.round(score);
