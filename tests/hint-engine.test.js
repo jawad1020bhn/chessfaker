@@ -160,5 +160,46 @@ assert.equal(humanChaosResult[0].pv[0], 'd3h7', 'Human-like Chaos prefers strong
 assert.ok(humanChaosResult[0]._styleAnalysis.penetrationDelta > 0, 'recognizes penetration feature');
 assert.ok(humanChaosResult[0]._styleAnalysis.kingPressureDelta > 0, 'recognizes king-pressure delta feature');
 
+// ── Grafted Berserker-vocabulary features (Chaos Attack additions) ──
+const chaosWeights = engine.PLAYING_STYLES.super_ultra_aggressive.weights;
+for (const key of ['attackUnits', 'practicalChances', 'complexityStructural', 'greekGift', 'drawContempt', 'overload', 'developmentWithAttack']) {
+  assert.ok(Number.isFinite(chaosWeights[key]), `Chaos weights expose ${key}`);
+}
+assert.equal(engine.PLAYING_STYLES.super_ultra_aggressive.phaseAggressionScale, 1.5, 'Chaos exposes a phase aggression scale');
+
+const featureKeys = ['attackUnits', 'attackUnitDelta', 'practicalChancesScore', 'structuralComplexity', 'isGreekGift', 'drawContemptScore', 'overloadScore', 'tempoThreatCount', 'developmentWithAttack', 'fen'];
+const e4Features = engine.analyzeCandidate(start, ['e2e4'], 'w', 20, 'cp');
+for (const key of featureKeys) {
+  assert.ok(key in e4Features, `analyzeCandidate exposes ${key}`);
+}
+
+// A4 — Greek gift: bishop takes h7 with the enemy king on g8 (castled).
+const greekGiftFen = 'r1bq1rk1/pppp1p1p/2n2n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQ - 4 5';
+const greekGiftMove = engine.analyzeCandidate(greekGiftFen, ['c4h7'], 'w', 40, 'cp');
+assert.equal(greekGiftMove.isGreekGift, true, 'bishop takes h7 with a castled king is a Greek gift');
+const nonGreek = engine.analyzeCandidate(greekGiftFen, ['c4d5'], 'w', 20, 'cp');
+assert.equal(nonGreek.isGreekGift, false, 'a non-h7 bishop move is not a Greek gift');
+// Black Greek gift: bishop captures the h2 pawn with the White king castled on g1.
+const blackGreekFen = '4k3/8/8/8/8/6b1/7P/6K1 b - - 0 1';
+assert.equal(engine.analyzeCandidate(blackGreekFen, ['g3h2'], 'b', 50, 'cp').isGreekGift, true, 'bishop takes h2 with a castled White king is a Black Greek gift');
+const blackNonGreekFen = '4k3/8/8/8/8/6b1/8/6K1 b - - 0 1';
+assert.equal(engine.analyzeCandidate(blackNonGreekFen, ['g3h2'], 'b', 50, 'cp').isGreekGift, false, 'a bishop move that captures nothing is not a Greek gift');
+
+// A5 — Draw contempt: near-equal quiet positions are penalized.
+const drawContemptNearEqual = engine.analyzeCandidate('6k1/8/8/8/8/8/8/6K1 w - - 0 1', ['g1f2'], 'w', 20, 'cp');
+assert.ok(drawContemptNearEqual.drawContemptScore < 0, 'near-equal quiet position gets negative draw-contempt score');
+const drawContemptClear = engine.analyzeCandidate('6k1/8/8/8/8/8/8/6K1 w - - 0 1', ['g1f2'], 'w', 250, 'cp');
+assert.equal(drawContemptClear.drawContemptScore, 0, 'clear advantage is not draw-contempted');
+// Draw contempt must actually be applied as a penalty inside style scoring.
+const drawContemptPick = engine.selectPVForStyle(
+  [{ score: 20, scoreType: 'cp', depth: 20, pv: ['d1d2'] }, { score: 15, scoreType: 'cp', depth: 20, pv: ['d1d3'] }],
+  '4k3/8/8/8/8/8/8/3QK3 w - - 0 1', 'super_ultra_aggressive', 'w');
+assert.ok(drawContemptPick[0]._styleAnalysis.risks.includes('rejects a near-equal calm position'), 'near-equal quiet Chaos move is draw-contempted');
+
+// A1 — Attack units respond to the moving piece joining the king-zone attack.
+assert.ok(e4Features.attackUnitDelta >= 0, 'attack unit delta is defined and non-negative from the start position');
+// C1 — attack sub-total is exposed for the two-phase re-rank.
+assert.ok(Number.isFinite(humanChaosResult[0]._styleAnalysis.attackSubTotal), 'style analysis exposes the attack sub-total tiebreaker');
+
 console.log('hint-engine tests passed');
 console.log('chaos-style regression tests passed');

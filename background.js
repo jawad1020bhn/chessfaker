@@ -1,8 +1,13 @@
 importScripts('engine/core-utils.js', 'engine/api-coordinator.js');
 
 /**
- * Chess Hint Assistant — Background Service Worker v9.2.0
+ * Chess Hint Assistant — Background Service Worker v9.2.1
  * Centralized API reliability, cache, quota, and cooldown protection
+ *
+ * v9.2.1 — Chaos Attack gains the Berserker aggression vocabulary (attack units,
+ *          practical chances, structural complexity, Greek gift, draw contempt,
+ *          overload, develop-with-attack, phase-aware scaling, bonus cap) while
+ *          keeping its mate-safety gate and risk budget authoritative.
  *
  * v9.2.0 — Chaos Attack release: authoritative-position metadata,
  *          attack-first candidate ranking, and verified turn handling.
@@ -497,8 +502,11 @@ async function chessApiEval(fen, multiPv = 3, depth = 12, context = {}) {
 
 function normalizeChessApi(data, fen) {
   const pvs = [];
+  // chess-api.com reports eval/centipawns/mate from White's perspective
+  // (positive = White is better; "Negative value means that black is winning").
+  // So scores are used verbatim — no side-to-move flip — to match the pipeline's
+  // white-relative contract (pv.score > 0 = White winning).
   const activeColor = fen ? (fen.split(' ')[1] || 'w') : 'w';
-  const isBlackToMove = activeColor === 'b';
 
   if (data.move) {
     const isMate = data.mate !== null && data.mate !== undefined && data.mate !== '';
@@ -506,8 +514,7 @@ function normalizeChessApi(data, fen) {
 
     if (isMate) {
       scoreType = 'mate';
-      const mateScore = parseInt(String(data.mate)) || 0;
-      score = isBlackToMove ? -mateScore : mateScore;
+      score = parseInt(String(data.mate)) || 0;
     } else {
       scoreType = 'cp';
       if (data.centipawns) {
@@ -535,8 +542,7 @@ function normalizeChessApi(data, fen) {
         let scoreType, score;
         if (isMate) {
           scoreType = 'mate';
-          const mateScore = parseInt(String(v.mate)) || 0;
-          score = isBlackToMove ? -mateScore : mateScore;
+          score = parseInt(String(v.mate)) || 0;
         } else {
           scoreType = 'cp';
           score = Math.round((v.eval || 0) * 100);
@@ -604,12 +610,20 @@ async function lichessCloudEval(fen, multiPv = 5, context = {}) {
 }
 
 function normalizeLichessCloudEval(data, fen) {
+  // Lichess cloud-eval reports cp/mate relative to the side to move (UCI
+  // convention: positive = side to move is better). The rest of the pipeline
+  // treats every pv.score as White-relative (pv.score > 0 = White winning), so
+  // black-to-move positions must be flipped here or evaluations, the eval bar,
+  // move ranking and move classification are all inverted for Black.
+  const activeColor = fen ? (fen.split(' ')[1] || 'w') : 'w';
+  const isBlackToMove = activeColor === 'b';
   const pvs = (data.pvs || []).map((pv, idx) => {
     const pvMoves = (pv.moves || '').split(/\s+/).filter(Boolean);
+    const rawScore = pv.mate !== undefined ? pv.mate : (pv.cp || 0);
     return {
       multipv: idx + 1,
       scoreType: pv.mate !== undefined ? 'mate' : 'cp',
-      score: pv.mate !== undefined ? pv.mate : (pv.cp || 0),
+      score: isBlackToMove ? -rawScore : rawScore,
       depth: data.depth || 0,
       seldepth: data.knodes ? Math.round(data.knodes / 10) : 0,
       pv: pvMoves,

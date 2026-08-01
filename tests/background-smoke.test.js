@@ -80,6 +80,31 @@ const context = {
         topGames: []
       });
     }
+    // Lichess cloud-eval reports cp/mate relative to the side to move. For a
+    // black-to-move position, +120cp means Black is better and must be stored
+    // as -120 (White-relative) for the eval bar / ranking / classification.
+    // Non-target providers return a benign "empty" so the fallback chain moves
+    // on quickly without network-retry backoff sleeps.
+    if (remoteMode === 'cloud') {
+      if (url.includes('cloud-eval')) {
+        return makeResponse({
+          depth: 30, knodes: 500,
+          pvs: [{ cp: 120, moves: 'e7e5 g1f3 g8f6' }, { cp: 90, moves: 'f8e7 g1f3 g8f6' }]
+        });
+      }
+      return makeResponse({ type: 'error', error: 'empty' });
+    }
+    // chess-api.com reports eval/centipawns/mate from White's perspective, so a
+    // white-relative mate score must NOT be re-flipped for black-to-move.
+    if (remoteMode === 'chessapi') {
+      if (url.includes('chess-api.com')) {
+        return makeResponse({
+          depth: 18, move: 'f7f5', mate: -3, san: 'f5',
+          continuationArr: ['g1f3', 'g8f6'], fen: '4k3/8/8/8/8/8/8/4K3 b - - 0 1'
+        });
+      }
+      return makeResponse({ type: 'error', error: 'empty' });
+    }
     throw new Error(`Unexpected remote call: ${url}`);
   }
 };
@@ -111,10 +136,12 @@ function send(message) {
   assert.equal(diagnostics.remoteCallsAvoidedByCache, 0);
 
   const waitForMessage = async (type, previousCount) => {
-    for (let attempt = 0; attempt < 100; attempt++) {
+    // Poll for up to ~5s with real delays so slow async workflows (coalesced
+    // provider retries, backoff sleeps) are not missed by a tight microtask loop.
+    for (let attempt = 0; attempt < 250; attempt++) {
       const matches = sentMessages.filter(message => message?.type === type);
       if (matches.length > previousCount) return matches.at(-1);
-      await new Promise(resolve => setTimeout(resolve, 0));
+      await new Promise(resolve => setTimeout(resolve, 20));
     }
     throw new Error(`Timed out waiting for ${type}`);
   };
@@ -169,6 +196,47 @@ function send(message) {
     'Masters success does not trigger unconditional opening enrichment');
   assert.equal(remoteUrls.filter(url => url.includes('cloud-eval') || url.includes('chess-api.com')).length, 0,
     'one successful opening source stops the fallback chain');
+
+  // ── Score normalization regression tests ──────────────────────────
+  // Black-to-move, midgame position (not tablebase-eligible, not opening).
+  const midgameBlackFen = 'r1bq1rk1/ppp2ppp/2np1n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R1BQ1RK1 b - - 0 12';
+
+  remoteMode = 'cloud';
+  const cloudUpdates = sentMessages.filter(message => message?.type === 'analysis_update').length;
+  await send({
+    type: 'request_analysis',
+    tabId: 7,
+    fen: midgameBlackFen,
+    playerColor: 'b',
+    multiPv: 3,
+    positionReliable: true,
+    turnReliable: true
+  });
+  const cloudUpdate = await waitForMessage('analysis_update', cloudUpdates);
+  assert.equal(cloudUpdate.data.source, 'lichess-cloud');
+  // Mock returns +120cp (Black better, side-to-move-relative); the pipeline must
+  // store it White-relative, i.e. negative, so Black's advantage is not inverted.
+  assert.ok(cloudUpdate.data.pvs[0].score < 0,
+    `lichess cloud cp must be normalized to White's perspective for a black-to-move position (got ${cloudUpdate.data.pvs[0].score})`);
+
+  // chess-api mate is white-relative: -3 means White is mated in 3. For a
+  // black-to-move position the score must stay negative (not re-flipped).
+  remoteMode = 'chessapi';
+  const chessApiUpdates = sentMessages.filter(message => message?.type === 'analysis_update').length;
+  await send({
+    type: 'request_analysis',
+    tabId: 7,
+    fen: '4k3/8/8/8/8/8/8/4K3 b - - 0 1',
+    playerColor: 'b',
+    multiPv: 3,
+    positionReliable: true,
+    turnReliable: true
+  });
+  const chessApiUpdate = await waitForMessage('analysis_update', chessApiUpdates);
+  assert.equal(chessApiUpdate.data.source, 'chess-api');
+  assert.equal(chessApiUpdate.data.pvs[0].scoreType, 'mate');
+  assert.equal(chessApiUpdate.data.pvs[0].score, -3,
+    'chess-api mate must stay White-relative (negative = White is mated) for a black-to-move position');
 
   console.log('background smoke tests passed');
 })().catch(error => {

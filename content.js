@@ -1,9 +1,10 @@
 /**
- * Chess Hint Assistant — Content Script v9.2.0
+ * Chess Hint Assistant — Content Script v9.2.1
  * One-shot board reader — injected via chrome.scripting.executeScript
  * Reads board state ONCE and returns. No persistent footprint.
  * No polling, no intervals, no observers.
  *
+ * v9.2.1: Release metadata aligned with Chaos Attack Berserker vocabulary.
  * v9.2.0: Reports authoritative-FEN and verified-turn metadata when site game state is available.
  * v9.1.0: Updated version metadata for the DGT Slate & Tournament Obsidian redesign.
  * v9.0.0: Snapshots are strictly validated and reconciled by the service worker.

@@ -1,6 +1,11 @@
 /**
- * Chess Hint Assistant — Side Panel Controller v9.2.0
+ * Chess Hint Assistant — Side Panel Controller v9.2.1
  * Turn-Based Analysis Engine. No local Stockfish.
+ *
+ * v9.2.1 — Chaos Attack gains the Berserker aggression vocabulary (attack units,
+ *          practical chances, structural complexity, Greek gift, draw contempt,
+ *          overload, develop-with-attack, phase-aware scaling, bonus cap) while
+ *          keeping its mate-safety gate and risk budget authoritative.
  *
  * v9.2.0 — Chaos Attack explanations, Safe/Bold/Wild candidate comparison,
  *          verified-position context, and visual hierarchy refinements.
