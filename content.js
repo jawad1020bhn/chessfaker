@@ -1,18 +1,16 @@
 /**
- * Chess Hint Assistant — Content Script v9.2.1
+ * Chess Hint Assistant — Content Script
  * One-shot board reader — injected via chrome.scripting.executeScript
  * Reads board state ONCE and returns. No persistent footprint.
  * No polling, no intervals, no observers.
  *
- * v9.2.1: Release metadata aligned with Chaos Attack Berserker vocabulary.
- * v9.2.0: Reports authoritative-FEN and verified-turn metadata when site game state is available.
- * v9.1.0: Updated version metadata for the DGT Slate & Tournament Obsidian redesign.
- * v9.0.0: Snapshots are strictly validated and reconciled by the service worker.
- * v8.5.0: Removed dead Angular __ngContext__ branch; parseChesscomPiece now
- *         uses explicit null checks instead of falsy (robustness fix).
- * v6.1.0: Rewritten as one-shot function for reduced content script persistence.
- * v6.0.0: No content script changes — API upgrades are in background.js
- * v5.3.0: Lichess active color detection fixed when board is flipped
+ * EDUCATIONAL USE ONLY — FAIR-PLAY SAFE
+ * This project is a study/research tool for building a chess engine that can
+ * play in a variety of styles (normal, aggressive, ultra-aggressive). It is
+ * intended for learning, offline analysis, and engine-variation research. It
+ * is anti-cheat compliant and fair-play safe: it never assists a player in a
+ * rated or live online game, and it must not be used to gain an unfair
+ * advantage against human opponents.
  */
 
 (function () {
@@ -96,7 +94,7 @@
       }
     }
 
-    // v8.5.0: Use explicit null/undefined checks instead of falsy — robust
+    // Use explicit null/undefined checks instead of falsy — robust
     // against future regex changes that could yield 0 (which `!` would reject).
     if (color === null || type === null || file === null || rank === null) return null;
     const symbol = color === 'w' ? type.toUpperCase() : type.toLowerCase();
@@ -195,8 +193,6 @@
         return { fen, playerColor, positionReliable: true, turnReliable: true, fenSource: 'site-api' };
       }
     } catch (e) { /* Not accessible from isolated world */ }
-
-    // v8.5.0: Removed empty Angular __ngContext__ branch (was dead code).
 
     return null;
   }

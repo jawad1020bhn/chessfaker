@@ -1,56 +1,16 @@
 importScripts('engine/core-utils.js', 'engine/api-coordinator.js');
 
 /**
- * Chess Hint Assistant — Background Service Worker v9.2.1
+ * Chess Hint Assistant — Background Service Worker
  * Centralized API reliability, cache, quota, and cooldown protection
  *
- * v9.2.1 — Chaos Attack gains the Berserker aggression vocabulary (attack units,
- *          practical chances, structural complexity, Greek gift, draw contempt,
- *          overload, develop-with-attack, phase-aware scaling, bonus cap) while
- *          keeping its mate-safety gate and risk budget authoritative.
- *
- * v9.2.0 — Chaos Attack release: authoritative-position metadata,
- *          attack-first candidate ranking, and verified turn handling.
- *
- * v9.1.0 — DGT Slate & Tournament Obsidian Minimalist UI/UX redesign,
- *          synchronized horizontal evaluation gauge, enhanced analytical
- *          chart canvas rendering, and updated extension metadata.
- *
- * v9.0.0 — Three-mode style engine, Human-like selection setting,
- *            stateful FEN reconciliation, safer rendering, and regression coverage.
- *
- * v8.5.0 — Bug-fix & Enhancement Release:
- *  - FIX: Removed dead message handlers ('position_update_from_panel', 'position_changed',
- *         'position_update', 'analysis_info') and the dead handlePositionUpdate() path
- *  - FIX: Masters Explorer score now correctly normalised to White's perspective
- *  - FIX: Masters Explorer multiPv now respects user setting instead of hardcoded 3
- *  - FIX: Fallback loop no longer re-calls sources that failed non-fatally (e.g. 404)
- *  - FIX: Per-game analysis state resets when the assisted player changes
- *  - FIX: inFlightRequests rejection-safe (no orphan entries on unexpected throw)
- *  - FIX: memoryCache LRU eviction when over cap (was only TTL-based)
- *  - FIX: Consolidated keep-alive into a single chrome.alarms-based mechanism
- *         (removed the redundant setInterval + platform-info leak)
- *  - ENH (G): Replaced setInterval keep-alive with chrome.alarms (MV3 best practice)
- *  - ENH (C): Enforces the minimum depth target before showing exact hints
- *  - ENH (I): Tracks player-move / engine-recommendation correlation; sidepanel reads it
- *  - ENH (J): ECO openings now loaded from engine/eco.json (with inline fallback)
- *
- * v7.5.0 — Earlier API rotation design (superseded by the central coordinator):
- *  - 3-API rotation (Chess-API.com, Lichess Cloud Eval, Lichess Masters Explorer)
- *  - Health-based weighted round-robin — distributes load evenly across APIs
- *  - Lichess Masters Explorer as third source — human grandmaster move choices
- *  - Phase-aware source selection — openings prefer master games, midgame prefers engines
- *  - Cache-only enrichment — never makes extra API calls for PV enrichment
- *  - Adaptive backoff escalation — 60s→120s→300s for repeated rate limits
- *
- * v7.3.0 preserved features:
- *  - Turn-based analysis — only analyzes on the assisted player's turn
- *  - Adaptive circuit breaker with per-error-type recovery
- *  - Request coalescing (singleflight pattern)
- *  - Persistent cache across service worker restarts
- *  - Exact-move fair-play warnings
- *  - Berserker/Kamikaze/Ultra Aggressive playing styles
- *  - Lichess 429 = 60s+ cooldown, 404 = not a failure
+ * EDUCATIONAL USE ONLY — FAIR-PLAY SAFE
+ * This project is a study/research tool for building a chess engine that can
+ * play in a variety of styles (normal, aggressive, ultra-aggressive). It is
+ * intended for learning, offline analysis, and engine-variation research. It
+ * is anti-cheat compliant and fair-play safe: it never assists a player in a
+ * rated or live online game, and it must not be used to gain an unfair
+ * advantage against human opponents.
  */
 
 // ─── Constants ───────────────────────────────────────────────────────
@@ -68,16 +28,11 @@ const DEFAULT_SETTINGS = {
   blackRepertoire: 'none',
   autoAnalyze: true,
   showThreats: true,
-  showAssessment: true,
-  showContinuation: true,
-  showEvalHistory: true,
+  showCriticalMoments: true,
+  depthTarget: 0,                  // 0 = no minimum; otherwise min depth for exact hints
+  // These gate background fetching that feeds opening names and tablebase-backed plans.
   showOpeningExplorer: true,
   showTablebase: true,
-  showEndgameCoach: true,
-  showCriticalMoments: true,
-  showCandidateMoves: true,
-  // v8.5.0 enhancements
-  depthTarget: 0,                  // 0 = no minimum; otherwise min depth for exact hints
   // Individual analysis providers can be excluded without bypassing safeguards.
   useChessApi: true,
   useLichessCloud: true,
@@ -87,10 +42,9 @@ const DEFAULT_SETTINGS = {
 function normalizeSettings(value = {}) {
   const candidate = value && typeof value === 'object' ? value : {};
   const booleanKeys = [
-    'humanLikeMode', 'autoAnalyze', 'showThreats', 'showAssessment',
-    'showContinuation', 'showEvalHistory', 'showOpeningExplorer',
-    'showTablebase', 'showEndgameCoach', 'showCriticalMoments',
-    'showCandidateMoves', 'useChessApi', 'useLichessCloud', 'useMastersExplorer'
+    'humanLikeMode', 'autoAnalyze', 'showThreats',
+    'showCriticalMoments', 'showOpeningExplorer', 'showTablebase',
+    'useChessApi', 'useLichessCloud', 'useMastersExplorer'
   ];
   const normalized = { ...DEFAULT_SETTINGS };
   normalized.cloudDepth = ChessCore.clampNumber(candidate.cloudDepth, 1, 10, DEFAULT_SETTINGS.cloudDepth);
@@ -341,13 +295,17 @@ function semanticSourceOrder(fen, settings = DEFAULT_SETTINGS) {
 }
 
 
-// v8.5.0 — Real engine-correlation guard (Enhancement I)
+// ─── Engine-correlation / human-likeness guard ───────────────────────
 // Stores the engine's first-choice UCI move keyed by FEN-of-side-to-move.
-// When the sidepanel reports the player's actual move (or the actual
-// resulting FEN), we compare and update a rolling window of last 8 moves.
+// When the side panel is in human-like mode it also stores the human-natural
+// recommendation for the same FEN. A player move that blindly copies the
+// engine's exact top pick (while a different human recommendation was offered)
+// is flagged as "bot-like"; any natural or recommended move counts as
+// "sensible/human". This drives the fair-play-safe "Sensible moves" stat.
 const ENGINE_MOVE_BY_FEN_LIMIT = 200;
 const engineMoveByFen = new Map();
-const correlationWindow = []; // array of booleans (true = matched engine)
+const humanMoveByFen = new Map();
+const correlationWindow = []; // array of booleans (true = human-like move)
 let correlationMatches = 0;
 let correlationTotal = 0;
 
@@ -366,31 +324,71 @@ function recordEngineRecommendation(fen, uci) {
   }
 }
 
+// The side panel reports the human-natural move it actually recommended
+// (from its style/human-like selection). Distinct from the raw engine top pick.
+function recordHumanRecommendation(fen, uci) {
+  if (!fen || !uci) return;
+  humanMoveByFen.set(fen, uci);
+  if (humanMoveByFen.size > ENGINE_MOVE_BY_FEN_LIMIT) {
+    const toRemove = Math.ceil(humanMoveByFen.size * 0.25);
+    let removed = 0;
+    for (const k of humanMoveByFen.keys()) {
+      if (removed >= toRemove) break;
+      humanMoveByFen.delete(k);
+      removed++;
+    }
+  }
+}
+
 // Accepts either:
 //   { prevFen, playerUci }  — exact UCI the player played
 //   { prevFen, actualFen }  — resulting FEN (we'll infer match by FEN-diff)
-// Returns { matched, expected, recentPct } or null if no stored recommendation.
+// Returns { matched, sensible, expected, recentPct } or null if no stored
+// recommendation.
+//
+// The "Sensible moves" stat is a human-likeness guard:
+//  * Human-like mode (a distinct human recommendation exists): a move is
+//    sensible when the player did NOT blindly copy the engine's exact top pick.
+//    Playing the recommended human move, or any own natural move, is human-like
+//    and fair-play safe.
+//  * Standard mode (no separate human recommendation): following the
+//    recommendation (the engine's move) counts as sensible, preserving the
+//    classic "did you play the suggested move" behaviour.
 function recordPlayerMove(prevFen, payload) {
   if (!prevFen) return null;
-  const expected = engineMoveByFen.get(prevFen);
+  const engineTop = engineMoveByFen.get(prevFen);
+  const humanMove = humanMoveByFen.get(prevFen);
+  const expected = humanMove || engineTop;
   if (!expected) return null;
-  let matched = false;
+
+  let playedUci = null;
   if (payload && payload.playerUci) {
-    matched = payload.playerUci === expected;
+    playedUci = payload.playerUci;
   } else if (payload && payload.actualFen) {
-    // v8.5.0: Infer whether the player played the engine's recommended move
-    // by applying it to prevFen and comparing piece-placement + side-to-move
-    // against actualFen. If they match, the player played the engine move.
-    matched = didPlayerPlayEngineMove(prevFen, expected, payload.actualFen);
+    // Infer which of our stored moves the player actually played by applying
+    // each to prevFen and comparing piece-placement + side-to-move.
+    if (engineTop && didPlayerPlayEngineMove(prevFen, engineTop, payload.actualFen)) playedUci = engineTop;
+    else if (humanMove && didPlayerPlayEngineMove(prevFen, humanMove, payload.actualFen)) playedUci = humanMove;
   }
-  correlationWindow.push(matched);
+
+  let sensible;
+  if (humanMove && humanMove !== engineTop) {
+    // Human-like mode: a blind copy of the engine's exact top pick (ignoring
+    // the different human recommendation) is bot-like. Everything else —
+    // including the player's own natural move — is human and safe.
+    sensible = playedUci !== engineTop;
+  } else {
+    // Standard mode: playing the suggested move is sensible play.
+    sensible = Boolean(playedUci) && playedUci === expected;
+  }
+  correlationWindow.push(sensible);
   if (correlationWindow.length > 8) correlationWindow.shift();
   correlationTotal++;
-  if (matched) correlationMatches++;
-  return { matched, expected, recentPct: correlationWindow.filter(Boolean).length / correlationWindow.length };
+  if (sensible) correlationMatches++;
+  return { matched: sensible, sensible, expected, recentPct: correlationWindow.filter(Boolean).length / correlationWindow.length };
 }
 
-// v8.5.0: Apply the engine's UCI to prevFen and compare placement + side-to-move
+// Apply the engine's UCI to prevFen and compare placement + side-to-move
 // with actualFen. If equal, the player played the recommended move.
 // The shared helper applies the move to piece placement and compares it with
 // the newly observed position, while deliberately ignoring volatile counters.
@@ -414,6 +412,7 @@ function getCorrelationStats() {
 
 function resetCorrelationTracker() {
   engineMoveByFen.clear();
+  humanMoveByFen.clear();
   correlationWindow.length = 0;
   correlationMatches = 0;
   correlationTotal = 0;
@@ -436,12 +435,10 @@ function hasRecentPanelActivity(tabId = 'active') {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// ─── Service Worker Keep-Alive (v8.5.0: chrome.alarms based) ─────────
+// ─── Service Worker Keep-Alive (chrome.alarms based) ─────────────────
 // ═══════════════════════════════════════════════════════════════════════
-// v8.5.0: Replaced two redundant setInterval-based keep-alives with a
-// single chrome.alarms-based one. Alarms fire in the SW's event page,
-// resetting its 30s idle timer. No more platform-info leak, no more
-// orphaned timers across fetch failures.
+// A single chrome.alarms-based keep-alive replaces redundant setInterval
+// timers. Alarms fire in the SW's event page, resetting its idle timer.
 function startKeepAliveAlarm() {
   chrome.alarms.get(KEEPALIVE_ALARM, (existing) => {
     if (!existing) {
@@ -576,6 +573,8 @@ function normalizeChessApi(data, fen) {
 // ─── Cloud API #2: Lichess Cloud Eval ────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
 async function lichessCloudEval(fen, multiPv = 5, context = {}) {
+  // Lichess cloud-eval caps multiPv at 5; sending more is rejected with a 400.
+  multiPv = clampMultiPvForSource('lichess-cloud', multiPv);
   const cacheKey = analysisCacheKey('lichess-cloud', fen, multiPv);
   const outcome = await apiCoordinator.request({
     provider: 'lichessCloud',
@@ -643,12 +642,14 @@ function normalizeLichessCloudEval(data, fen) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// ─── Cloud API #3: Lichess Masters Explorer (v7.5.0 NEW) ────────────
+// ─── Cloud API #3: Lichess Masters Explorer ──────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
 // Provides moves based on what human GRANDMASTERS actually played.
 // More "natural and human" than engine evaluation — reflects real
 // human decision-making at the highest level of play.
 async function lichessMastersEval(fen, multiPv = 5, context = {}) {
+  // The masters explorer returns at most 5 moves; requesting more is rejected.
+  multiPv = clampMultiPvForSource('masters-explorer', multiPv);
   const cacheKey = analysisCacheKey('masters-explorer', fen, multiPv);
   const outcome = await apiCoordinator.request({
     provider: 'mastersExplorer',
@@ -685,10 +686,8 @@ function normalizeMastersEval(data, fen) {
   const total = (data.white || 0) + (data.draws || 0) + (data.black || 0);
   if (total === 0) return null;
 
-  // v8.5.0: Score MUST be normalised to White's perspective to match
-  // the contract documented in hint-engine.js (pv.score > 0 = White winning).
-  // Previously this computed side-to-move-relative scores, which double-
-  // flipped for black-to-move positions and showed inverted evaluations.
+  // Score is normalised to White's perspective to match the contract
+  // documented in hint-engine.js (pv.score > 0 = White winning).
 
   // Convert master game statistics into PV-like format
   const pvs = data.moves.slice(0, 5).map((m, idx) => {
@@ -731,12 +730,12 @@ function normalizeMastersEval(data, fen) {
     fen, pvs,
     bestMove: pvs.length > 0 ? pvs[0].pv[0] : null,
     depth: 0,
-    isHumanSource: true, // v7.5.0: flag for UI to show "Human" label
+    isHumanSource: true, // flag for UI to show "Human" label
     opening: data.opening || null,
     masterTopGames: topGames,
     totalMasterGames: total,
     moveHistory: [],
-    scorePerspective: 'white' // v8.5.0: now correctly white-relative
+    scorePerspective: 'white' // now correctly white-relative
   };
 }
 
@@ -879,9 +878,16 @@ function buildTablebaseResult(tbData, fen) {
 // ═══════════════════════════════════════════════════════════════════════
 // ─── Main Cloud Analysis — Semantic Routing and Bounded Fallback ─────
 // ═══════════════════════════════════════════════════════════════════════
+// Lichess cloud-eval and the masters explorer return at most 5 lines; chess-api
+// is clamped to 5 internally as well. Clamping here keeps the cache key and the
+// request in sync so a 7/10-line selection never yields a 400 or a cache miss.
+function clampMultiPvForSource(source, multiPv) {
+  return Math.max(1, Math.min(5, Number(multiPv) || 3));
+}
+
 async function getCachedAnalysisSource(source, fen, multiPv) {
   const depth = source === 'chess-api' ? 12 : 0;
-  const cacheKey = analysisCacheKey(source, fen, multiPv, depth);
+  const cacheKey = analysisCacheKey(source, fen, clampMultiPvForSource(source, multiPv), depth);
   const provider = source === 'chess-api' ? 'chessApi'
     : source === 'lichess-cloud' ? 'lichessCloud'
     : 'mastersExplorer';
@@ -1362,8 +1368,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
-  // v8.5.0: Removed dead 'position_update_from_panel' and 'position_changed'
-  //         handlers — side panel only communicates via 'request_analysis'.
+  // The side panel drives analysis via 'request_analysis' only.
 
   if (msgType === 'request_analysis') {
     if (!ChessCore.parseFen(message.fen)) {
@@ -1454,7 +1459,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
           cloudResult.exactHintBlocked = exactHintBlocked;
 
-          // v8.5.0: Record the engine's first-choice move so that when the
+          // Record the engine's first-choice move so that when the
           // player makes their move, we can update the correlation tracker.
           if (cloudResult.pvs && cloudResult.pvs.length > 0 && cloudResult.pvs[0].pv && cloudResult.pvs[0].pv.length > 0) {
             recordEngineRecommendation(message.fen, cloudResult.pvs[0].pv[0]);
@@ -1566,7 +1571,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (msgType === 'player_color_changed') {
-    // v8.5.0: Reset all per-game/per-color trackers, not just turnState.
+    // Reset all per-game/per-color trackers, not just turnState.
     resetAnalysisState();
     lastAnalysisGameId = null;
     resetCorrelationTracker();
@@ -1574,11 +1579,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
-  // v8.5.0 (Enhancement I): Side panel reports the player's actual move so
-  // we can compare it to the engine's recommendation and update the rolling
-  // correlation window. Accepts either { playerUci } (exact UCI) or
-  // { actualFen } (resulting FEN — we'll FEN-diff to infer a match).
-  // Returns the match result (or null if no stored engine recommendation).
+  // The side panel reports the player's actual move so we can compare it to the
+  // engine's recommendation and update the rolling correlation window. Accepts
+  // either { playerUci } (exact UCI) or { actualFen } (resulting FEN — we'll
+  // FEN-diff to infer a match). Returns the match result (or null if no stored
+  // engine recommendation).
   if (msgType === 'record_player_move') {
     const result = recordPlayerMove(message.prevFen, {
       playerUci: message.playerUci,
@@ -1588,12 +1593,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  // The side panel reports the human-natural move it actually recommended
+  // (from its style/human-like selection), so the correlation guard can
+  // distinguish human-like play from blind engine-top copies.
+  if (msgType === 'record_human_recommendation') {
+    recordHumanRecommendation(message.fen, message.uci);
+    sendResponse({ ok: true });
+    return false;
+  }
+
   if (msgType === 'get_correlation_stats') {
     sendResponse(getCorrelationStats());
     return false;
   }
 
-  // v8.5.0 (Enhancement I): Side panel signals a new game so the tracker resets.
+  // Side panel signals a new game so the tracker resets.
   if (msgType === 'reset_correlation') {
     resetCorrelationTracker();
     lastAnalysisGameId = null;
@@ -1603,10 +1617,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   return false;
 });
-
-// v8.5.0: Removed dead handlePositionUpdate() function — was only reachable
-//         from the now-removed 'position_update_from_panel' / 'position_changed'
-//         handlers. The side panel drives analysis via 'request_analysis' only.
 
 // ─── Start keepalive on install ──────────────────────────────────────
 chrome.runtime.onInstalled.addListener(() => {
@@ -1647,7 +1657,7 @@ chrome.runtime.onInstalled.addListener(() => {
         if (s[obsolete] !== undefined) { delete s[obsolete]; updated = true; }
       }
 
-      // v8.5.0: ensure new fields exist on migrated settings
+      // Ensure new fields exist on migrated settings
       if (s.depthTarget === undefined) { s.depthTarget = 0; updated = true; }
       if (s.correlationThreshold !== undefined) { delete s.correlationThreshold; updated = true; }
       if (s.useChessApi === undefined) { s.useChessApi = true; updated = true; }
@@ -1661,6 +1671,6 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-// v8.5.0: Start the keep-alive alarm immediately on SW startup too,
+// Start the keep-alive alarm immediately on SW startup too,
 // so it survives SW restarts without waiting for onInstalled.
 startKeepAliveAlarm();

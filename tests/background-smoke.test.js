@@ -1,4 +1,11 @@
 'use strict';
+// EDUCATIONAL USE ONLY — FAIR-PLAY SAFE
+// This project is a study/research tool for building a chess engine that can
+// play in a variety of styles (normal, aggressive, ultra-aggressive). It is
+// intended for learning, offline analysis, and engine-variation research. It
+// is anti-cheat compliant and fair-play safe: it never assists a player in a
+// rated or live online game, and it must not be used to gain an unfair
+// advantage against human opponents.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -237,6 +244,33 @@ function send(message) {
   assert.equal(chessApiUpdate.data.pvs[0].scoreType, 'mate');
   assert.equal(chessApiUpdate.data.pvs[0].score, -3,
     'chess-api mate must stay White-relative (negative = White is mated) for a black-to-move position');
+
+  // ── Human-likeness correlation guard ────────────────────────────────
+  // Standard mode: playing the engine's suggested move is "sensible".
+  // Human-like mode: a blind copy of the engine's exact top pick (while a
+  // different human recommendation was offered) is bot-like, so it must NOT
+  // count as sensible. Everything else (following the human move or any own
+  // natural move) is human-like and fair-play safe.
+  const guardFen = '4k3/8/8/8/8/8/8/3Q2K1 w - - 0 1';
+  context.recordEngineRecommendation(guardFen, 'd1d2');
+  const stdMatch = context.recordPlayerMove(guardFen, { playerUci: 'd1d2' });
+  assert.equal(stdMatch.sensible, true, 'standard mode: playing the suggested move is sensible');
+  assert.equal(stdMatch.matched, true, 'standard mode: matched flag mirrors sensible');
+  const stdOther = context.recordPlayerMove(guardFen, { playerUci: 'd1h5' });
+  assert.equal(stdOther.sensible, false, 'standard mode: ignoring the suggestion is not sensible');
+
+  context.resetCorrelationTracker();
+  context.recordEngineRecommendation(guardFen, 'd1d2');
+  context.recordHumanRecommendation(guardFen, 'd1h5');
+  const humanRec = context.recordPlayerMove(guardFen, { playerUci: 'd1h5' });
+  assert.equal(humanRec.sensible, true, 'human-like mode: following the human recommendation is sensible');
+  const humanBotCopy = context.recordPlayerMove(guardFen, { playerUci: 'd1d2' });
+  assert.equal(humanBotCopy.sensible, false, 'human-like mode: copying the engine top pick is bot-like and not sensible');
+  const humanOwn = context.recordPlayerMove(guardFen, { playerUci: 'd1d3' });
+  assert.equal(humanOwn.sensible, true, 'human-like mode: playing an own natural move stays human-like');
+  const guardStats = context.getCorrelationStats();
+  assert.equal(guardStats.total, 3, 'correlation guard records all three player moves');
+  assert.equal(guardStats.matches, 2, 'two of three moves are human-like/sensible');
 
   console.log('background smoke tests passed');
 })().catch(error => {

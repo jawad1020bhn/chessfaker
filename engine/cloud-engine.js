@@ -1,24 +1,15 @@
 /**
- * Chess Hint Assistant — Cloud Engine v9.2.1
+ * Chess Hint Assistant — Cloud Engine
  *
  * Cloud Provider Metadata
  *
- * v9.2.1: Release metadata aligned with Chaos Attack Berserker vocabulary.
- * v9.2.0: Release metadata aligned with Chaos Attack and verified-position handling.
- * v9.1.0: Updated version metadata for the DGT Slate & Tournament Obsidian redesign.
- * v9.0.0: Metadata retained for the rebuilt Standard/Human-like style pipeline.
- * v8.5.0: Removed unused duplicate cache (localCache/clearLocalCache/getCacheStats)
- *         — background.js owns caching through its central coordinator.
- * v7.5.0 — Earlier API rotation metadata:
- *  - Lichess Masters Explorer as third analysis source
- *  - Health-based weighted round-robin API rotation
- *  - Phase-aware source selection (openings → masters, midgame → engines)
- *  - Cache-only enrichment — no extra API calls for PV merge
- *
- * v7.1.0 preserved:
- *  - Turn-based analysis metadata
- *  - Cloud API endpoint definitions
- *  - Source labels and quality rankings
+ * EDUCATIONAL USE ONLY — FAIR-PLAY SAFE
+ * This project is a study/research tool for building a chess engine that can
+ * play in a variety of styles (normal, aggressive, ultra-aggressive). It is
+ * intended for learning, offline analysis, and engine-variation research. It
+ * is anti-cheat compliant and fair-play safe: it never assists a player in a
+ * rated or live online game, and it must not be used to gain an unfair
+ * advantage against human opponents.
  *
  * NOTE: The actual API calls are made in background.js (service worker context).
  * This file provides the hint-engine with cloud API metadata and utilities.
@@ -89,7 +80,7 @@
       'tablebase': 5,
       'lichess-cloud': 4,
       'chess-api': 3,
-      'masters-explorer': 2  // v7.5.0: Human source, lower engine rank but higher "naturalness"
+      'masters-explorer': 2  // Human source, lower engine rank but higher "naturalness"
     };
     return ranks[source] || 0;
   }

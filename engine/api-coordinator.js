@@ -4,6 +4,14 @@
  * All remote traffic is serialized, quota-checked, coalesced, cached and
  * classified here. The module is usable from the MV3 service worker and from
  * Node tests through dependency injection.
+ *
+ * EDUCATIONAL USE ONLY — FAIR-PLAY SAFE
+ * This project is a study/research tool for building a chess engine that can
+ * play in a variety of styles (normal, aggressive, ultra-aggressive). It is
+ * intended for learning, offline analysis, and engine-variation research. It
+ * is anti-cheat compliant and fair-play safe: it never assists a player in a
+ * rated or live online game, and it must not be used to gain an unfair
+ * advantage against human opponents.
  */
 (function (root) {
   'use strict';

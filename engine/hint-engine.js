@@ -1,12 +1,13 @@
 /**
- * Chess Hint Assistant — Three-Mode Hint Engine v9.2.1
+ * Chess Hint Assistant — Three-Mode Hint Engine
  *
- * v9.2.1: Chaos Attack gains the Berserker aggression vocabulary (attack units,
- *   practical chances, structural complexity, Greek gift, draw contempt, overload,
- *   develop-with-attack, phase-aware scaling, bonus cap) while keeping its
- *   mate-safety gate and risk budget authoritative.
- * v9.2.0: Chaos Attack redesign with feature-delta scoring, attack explanations, and Safe/Bold/Wild comparison metadata.
- * v9.1.0: Updated version metadata for the DGT Slate & Tournament Obsidian redesign.
+ * EDUCATIONAL USE ONLY — FAIR-PLAY SAFE
+ * This project is a study/research tool for building a chess engine that can
+ * play in a variety of styles (normal, aggressive, ultra-aggressive). It is
+ * intended for learning, offline analysis, and engine-variation research. It
+ * is anti-cheat compliant and fair-play safe: it never assists a player in a
+ * rated or live online game, and it must not be used to gain an unfair
+ * advantage against human opponents.
  *
  * Modes:
  *  - Normal: objective best play and reliable conversion.
@@ -23,7 +24,6 @@
   // ─── Constants ─────────────────────────────────────────────────────
   const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
   const PIECE_NAMES = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' };
-  // v8.5.0: Removed unused PIECE_UNICODE constant.
 
   // Exact-move-only product: all primary hints use this single level.
   const EXACT_HINT_LEVEL = 5;
@@ -31,7 +31,7 @@
     [EXACT_HINT_LEVEL]: { name: 'Exact Move', desc: 'Shows the selected move with SAN, squares, style, and plan' }
   };
 
-  // ─── Playing Styles (v7.3 — 6 styles, incl. Berserker from v7.3) ──
+  // ─── Playing Styles (6 styles, incl. Berserker) ────────────────────
   const PLAYING_STYLES = {
     normal: {
       id: 'normal',
@@ -69,8 +69,8 @@
     },
     super_ultra_aggressive: {
       id: 'super_ultra_aggressive',
-      name: 'Chaos Attack (vs <=1100)',
-      desc: 'Fearless direct attack tailored for <=1100 opponents: hunt the king, launch pawn storms, sacrifice fearlessly, and overwhelm the defense with relentless tactical pressure.',
+      name: 'Ultra Super Aggressive Attack',
+      desc: 'A fearless, organized attack built on sound setup first, then a relentless break-through: develop into the enemy king\'s face, rip off the pawn shield, fork/pin/skewer the big pieces, strike the castled or uncastled king, and sacrifice boldly to finish games fast against <=1100 opponents.',
       // These are objective-evaluation budgets in centipawns, not a claim that
       // every sacrificed pawn is compensated. They widen as a position worsens.
       riskBudget: { winning: 200, advantage: 350, equal: 600, worse: 850, desperate: 1200 },
@@ -104,11 +104,80 @@
         greekGift: 120,
         drawContempt: 30,
         overload: 55,
-        developmentWithAttack: 25
+        developmentWithAttack: 25,
+        // ── Advanced Chaos Attack weights ──
+        kingCage: 60,
+        kingSuffocation: 220,
+        backRank: 80,
+        shieldStrike: 170,
+        contactCheck: 90,
+        exchangeSac: 200,
+        kingChase: 70,
+        punishUncastled: 100,
+        rookLift: 45,
+        // ── Chaos Attack kill-geometry weights ──
+        kingMobility: 75,
+        smotheredMate: 260,
+        anastasiaMate: 190,
+        arabianMate: 190,
+        bodenMate: 160,
+        forcedMateNet: 300,
+        undefendedHit: 95,
+        // ── Chaos Attack mating-square arithmetic weights ──
+        matingMath: 105,
+        squareOutnumber: 85,
+        // ── Chaos Attack position-level exploitation weights ──
+        hangingPieceGrab: 75,
+        backRankExploit: 90,
+        // ── Chaos Attack opening-trap weights ──
+        scholarTrap: 110,
+        legalsTrap: 100,
+        laskerTrap: 120,
+        // ── Chaos Attack second-move vision weight ──
+        followUpVision: 70,
+        // ── Chaos Attack tactical-toolkit weights ──
+        knightFork: 90,
+        pin: 80,
+        skewer: 85,
+        discoveredAttack: 75,
+        endgameCoup: 70,
+        // ── Fast-finish weights ──
+        earlyQueen: 120,
+        quickPressure: 130,
+        fastFinish: 150,
+        // ── Fast-kill aggression weights ──
+        mateSpeed: 130,
+        narrowEscape: 100,
+        sustainedPressure: 115,
+        windmillAttack: 150,
+        corridorMate: 170,
+        epauletteMate: 180,
+        queenSacForCharge: 165,
+        urgencyTax: -230,
+        attackerTradePenalty: -110
       },
       phaseAggressionScale: 1.5
     }
   };
+
+  // ─── Ultra Super Aggressive Attack module integration -------------
+  // The Ultra Super Aggressive Attack style lives in engine/chaos-attack.js
+  // (loaded before this file). It owns computeFeatures / styleBonus /
+  // humanFeel / annotate / choosePlan / winningPlan for the
+  // super_ultra_aggressive profile, so future style enhancements never touch
+  // this engine again. If the module is absent the engine keeps its own
+  // inline fallbacks, so nothing breaks on a stale build.
+  let chaosEngine = null;
+  function getChaosEngine() {
+    if (chaosEngine) return chaosEngine;
+    const mod = (typeof globalThis !== 'undefined' && globalThis.ChaosAttack) || null;
+    if (!mod || typeof mod.createEngine !== 'function') return null;
+    chaosEngine = mod.createEngine({
+      isSquareAttacked, findKing, pieceAttacksSquare, applyMoveToBoard,
+      applyMoveToFen, getPieceAt, detectGamePhase, multiThreatCount, squareToCoords
+    });
+    return chaosEngine;
+  }
 
   // ─── Attacking Opening Repertoires ───────────────────────────────────
   // Every module is a curated, side-specific move tree. A repertoire is a
@@ -171,7 +240,7 @@
     return matchedPly || nextMoves.size ? { id: repertoire.id, name: repertoire.name, plan: repertoire.plan, risk: repertoire.risk, matchedPly, nextMoves: [...nextMoves] } : null;
   }
 
-  // ─── ECO Opening Database (v8.5.0 Enhancement J — externalised) ────
+  // ─── ECO Opening Database (externalised) ───────────────────────────
   // Loaded asynchronously from engine/eco.json. Falls back to a minimal
   // inline set if the fetch fails (e.g. CSP, dev environment).
   const ECO_FALLBACK = [
@@ -205,9 +274,6 @@
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL) {
     loadEcoDatabase();
   }
-
-  // v8.5.0: Removed dead helpers getPieceOwnerLabel() and validateMoveSide()
-  //         — neither was called anywhere; call sites do inline piece-side checks.
 
   // ─── Board Utilities ───────────────────────────────────────────────
   function parseFENPlacement(placement) {
@@ -403,7 +469,7 @@
     san += to;
     if (promo) san += '=' + promo.toUpperCase();
 
-    // v8.5.0: Append check (+) / checkmate (#) suffixes per SAN standard.
+    // Append check (+) / checkmate (#) suffixes per SAN standard.
     // We apply the move to a board copy, then test if the opponent's king
     // is in check; if so, test if they have any legal reply (mate).
     const suffix = computeCheckOrMateSuffix(uci, fen);
@@ -412,7 +478,7 @@
     return san;
   }
 
-  // v8.5.0: Returns '+' for check, '#' for checkmate, '' otherwise.
+  // Returns '+' for check, '#' for checkmate, '' otherwise.
   // Lightweight — applies the move, then does a square-attack test on
   // the opponent king. Mate detection uses a simplified legal-move check
   // (no castling/en-passant edge cases — rare in PV continuation contexts).
@@ -434,9 +500,8 @@
         }
       }
       if (!kingPos) return '';
-      // v8.5.0 bugfix: attacker is the side that just moved (activeColor),
-      // NOT the opponent. The opponent's king is in check if attacked by
-      // the just-moved side's pieces.
+      // Attacker is the side that just moved (activeColor), NOT the opponent.
+      // The opponent's king is in check if attacked by the just-moved side's pieces.
       const inCheck = isSquareAttacked(newBoard, kingPos, activeColor);
       if (!inCheck) return '';
       // Check if opponent has any legal move → if not, it's mate.
@@ -604,16 +669,68 @@
     return true;
   }
 
-  // ─── Move Classification ───────────────────────────────────────────
-  function classifyMove(evalBefore, evalAfter) {
-    const diff = evalAfter - evalBefore;
-    if (diff >= 60) return { label: 'Brilliant', symbol: '!!', color: '#26cad4' };
-    if (diff >= 30) return { label: 'Great', symbol: '!', color: '#5aade0' };
-    if (diff >= -10) return { label: 'Best', symbol: '', color: '#97af8b' };
-    if (diff >= -40) return { label: 'Good', symbol: '', color: '#97af8b' };
-    if (diff >= -90) return { label: 'Inaccuracy', symbol: '?!', color: '#f7c631' };
-    if (diff >= -200) return { label: 'Mistake', symbol: '?', color: '#e6923a' };
-    return { label: 'Blunder', symbol: '??', color: '#ca3531' };
+  // ─── Move Classification (win-probability model) ─────────────────
+  // Rates the last move the way chess.com / Lichess do: convert the eval
+  // swing into a change in win probability, then bucket by how much win
+  // chance was lost (or gained). Centipawn thresholds alone mislead — a
+  // 50cp swing in a dead-equal middlegame matters far more than the same
+  // swing at +6, and mate scores are not comparable to cp at all.
+  function classifyMove(evalBefore, evalAfter, opts = {}) {
+    const moverColor = opts.moverColor === 'b' ? 'b' : 'w';
+    const moverIsWhite = moverColor === 'w';
+    const scoreTypeBefore = opts.scoreTypeBefore || 'cp';
+    const scoreTypeAfter = opts.scoreTypeAfter || 'cp';
+
+    // Convert mate distances to an extreme cp so the sigmoid saturates
+    // (~100% / ~0% win chance) instead of treating "mate in 3" as cp=3.
+    const toCp = (score, scoreType) => {
+      if (scoreType === 'mate') {
+        return score > 0 ? 1000000 - Math.min(Math.abs(score), 9999)
+                         : -1000000 + Math.min(Math.abs(score), 9999);
+      }
+      return Number(score) || 0;
+    };
+
+    // Standardise both evals to White's perspective, then to the mover's.
+    const beforeWhite = toCp(evalBefore, scoreTypeBefore);
+    const afterWhite = toCp(evalAfter, scoreTypeAfter);
+    const before = moverIsWhite ? beforeWhite : -beforeWhite;
+    const after = moverIsWhite ? afterWhite : -afterWhite;
+
+    // Lichess winning-chances sigmoid: +1 pawn ≈ +9% win chance.
+    const winChance = (cp) => {
+      const clamped = Math.max(-1200, Math.min(1200, cp));
+      return 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * clamped)) - 1);
+    };
+
+    const winBefore = winChance(before) / 100;
+    const winAfter = winChance(after) / 100;
+    const delta = winAfter - winBefore;    // + = improved for the mover
+    const loss = Math.max(0, -delta);      // win % lost
+    const gain = Math.max(0, delta);       // win % gained
+
+    let label, symbol, color;
+    if (gain >= 0.18)      { label = 'Brilliant';  symbol = '!!'; color = '#26cad4'; }
+    else if (gain >= 0.05) { label = 'Great';      symbol = '!';  color = '#5aade0'; }
+    else if (loss <= 0.005) { label = 'Best';      symbol = '';   color = '#97af8b'; }
+    else if (loss <= 0.015) { label = 'Excellent'; symbol = '';   color = '#97af8b'; }
+    else if (loss <= 0.05) { label = 'Good';       symbol = '';   color = '#97af8b'; }
+    else if (loss <= 0.10) { label = 'Inaccuracy'; symbol = '?!'; color = '#f7c631'; }
+    else if (loss <= 0.18) { label = 'Mistake';    symbol = '?';  color = '#e6923a'; }
+    else                   { label = 'Blunder';    symbol = '??'; color = '#ca3531'; }
+
+    const accuracy = Math.max(0, Math.min(100, Math.round(100 * (1 - loss))));
+
+    return {
+      label,
+      symbol,
+      color,
+      accuracy,
+      evalDiff: after - before,
+      winChanceLost: Math.round(loss * 100),
+      winChanceGained: Math.round(gain * 100),
+      moverColor
+    };
   }
 
   // ─── Position Assessment ───────────────────────────────────────────
@@ -785,6 +902,12 @@
     return 'middlegame';
   }
 
+  // ─── FEN Move Count ────────────────────────────────────────────────
+  function parseMoveCount(fen) {
+    if (!fen || typeof fen !== 'string') return 1;
+    return parseInt(fen.split(' ')[5], 10) || 1;
+  }
+
   // ─── Winning Plan Generation ───────────────────────────────────────
   function generateWinningPlan(evalScore, scoreType, position, playerColor, fen, style) {
     const currentStyle = PLAYING_STYLES[style] || PLAYING_STYLES.normal;
@@ -800,9 +923,16 @@
       return 'Create active counterplay immediately — checks, threats, and tempo are more valuable than passive defense.';
     }
     if (currentStyle.id === 'super_ultra_aggressive') {
-      if (evalScore > 100) return 'Finish fast: swarm the enemy king, maintain relentless attack, and force immediate tactical collapse.';
-      if (evalScore > -100) return 'Direct attack vs <=1100: open lines, launch pawn storms, and sacrifice material fearlessly to overwhelm their defense.';
-      return 'Fearless counter-attack: launch checks, deep invasions, and aggressive sacrifices. Apply maximum pressure until they crack!';
+      const chaosW = getChaosEngine();
+      if (chaosW) {
+        const plan = chaosW.winningPlan(evalScore, phase);
+        if (plan) return plan;
+      }
+      if (evalScore > 100) return phase === 'endgame'
+        ? 'Finish fast in the endgame: activate the king, march it toward the enemy king, and hunt every check and capture — the endgame is where your opponent blunders most.'
+        : 'Finish fast: count the attackers on the king\'s mating squares, spring the classic opening trap if it is still on the board, fork or pin the big pieces, and ride the forced mate sequence until the position collapses.';
+      if (evalScore > -100) return 'Ultra aggressive attack vs <=1100: open lines, launch pawn storms, chase the king out of its castle, and sacrifice fearlessly to overwhelm their defense.';
+      return 'Fearless counter-attack: hunt the exposed king, hit every defender, and trade wood for time until their position cracks!';
     }
 
     if (evalScore > 300) {
@@ -929,7 +1059,7 @@
 
   // ─── Chaos Attack feature primitives (grafted from the Berserker vocabulary) ──
   // Each helper is a pure, stateless board computation so the rebuilt scorer keeps
-  // its "hypothetical candidates never mutate game history" invariant (v9.2).
+  // its "hypothetical candidates never mutate game history" invariant.
 
   // A1 — Attack Unit System: king-zone attacker quality weighted by piece type
   // (N/B = 2, R = 3, Q = 5) rather than raw attacker count.
@@ -1026,6 +1156,10 @@
     }
     return count;
   }
+  // ─── Chaos Attack delegation ─────────────────────────────────────────
+  // The Chaos Attack advanced primitives and tactical toolkit all live in
+  // engine/chaos-attack.js. The engine delegates the whole style via
+  // getChaosEngine() — future Chaos enhancements never touch this file.
 
   function analyzeCandidate(fen, pv, playerColor, rawScore, scoreType, depth = 0) {
     const line = Array.isArray(pv) ? pv.filter(Boolean).slice(0, 8) : [];
@@ -1118,6 +1252,10 @@
     const developmentWithAttack = isDevelopingMove(piece, from) &&
       (pressureDeltaForDevelopment > 0 || terrainAfter.penetration > terrainBefore.penetration || givesCheck);
 
+// ── Chaos Attack feature deltas are computed by engine/chaos-attack.js
+    // (the style lives there now). computeFeatures(ctx) returns the whole
+    // Chaos feature set and it is merged onto the candidate below.
+
     const features = {
       rawScore, scoreType, depth, first, from, to, piece, captured, fen,
       givesCheck,
@@ -1170,17 +1308,36 @@
       edgePawnMove: piece.toLowerCase() === 'p' && (destination.col === 0 || destination.col === 7),
       supportedDestination: defended,
       calculationBurden: Math.max(0, line.length * 1.2 + (sacrifice ? 3 : 0) + Math.max(0, ownDangerAfter.pressure - ownDangerBefore.pressure) - forcingPly * 0.65),
-      followUpUci: line[2] || null,
+followUpUci: line[2] || null,
       masterGames: 0,
-      plan: givesCheck || pressureAfter.pressure > pressureBefore.pressure
-        ? (opponentKingAfter?.col >= 4 ? 'kingside attack' : 'queenside attack')
-        : isDevelopingMove(piece, from) ? 'complete development'
-        : piecesBefore - countPieces(boardAfterReply) > 1 ? 'force a favorable simplification'
-        : captured ? 'win material with tempo'
-        : 'improve piece activity',
+      // plan is assigned below, after the ChaosEngine merges its features.
       humanReasons: [], humanRisks: [],
       reasons: [], risks: []
     };
+
+    // ── ChaosEngine merge — the Chaos feature set and plan live in
+    // engine/chaos-attack.js (the style hierarchy). Fall back gracefully to
+    // the generic plan if the module is not present.
+    const chaos0 = getChaosEngine();
+    if (chaos0) {
+      Object.assign(features, chaos0.computeFeatures({
+        board, after, piece, captured, from, to, destination,
+        playerIsWhite, playerColor, opponentKingBefore, opponentKingAfter,
+        ownKingBefore, ownKingAfter, givesCheck, materialDelta, line,
+        boardAfterReply, fen, scoreType, rawScore, pressureBefore, pressureAfter
+      }));
+      features.plan = chaos0.choosePlan(features);
+    }
+    if (!features.plan) {
+      features.plan = features.chased && pressureAfter.pressure > pressureBefore.pressure ? 'hunt the exposed king'
+        : features.punishUncastled ? 'punish the uncastled king'
+        : givesCheck || pressureAfter.pressure > pressureBefore.pressure
+          ? (opponentKingAfter?.col >= 4 ? 'kingside attack' : 'queenside attack')
+          : isDevelopingMove(piece, from) ? 'complete development'
+          : piecesBefore - countPieces(boardAfterReply) > 1 ? 'force a favorable simplification'
+          : captured ? 'win material with tempo'
+          : 'improve piece activity';
+    }
     return features;
   }
 
@@ -1221,31 +1378,24 @@
     }
     add(candidate.complexity > 0, 'complexity', weights.complexity * Math.min(candidate.complexity, 4), 'creates practical complexity');
     add(candidate.simplification > 1, 'simplification', weights.simplification * Math.min(candidate.simplification - 1, 3), 'simplifies the attack');
-    add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * Math.min(candidate.ownKingDangerDelta, 5), 'weakens your own king');
+add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * Math.min(candidate.ownKingDangerDelta, 5), 'weakens your own king');
     add(candidate.unsupportedAttack, 'unsupportedAttack', weights.unsupportedAttack, 'attacking piece lacks support');
 
-    // ── Grafted Berserker-vocabulary features (additive, guardrail-preserving) ──
-    // A1 — Attack Unit System (S-curve on king-zone attacker quality).
-    if (candidate.attackUnitDelta > 0) {
-      const after = candidate.attackUnits;
-      const before = after - candidate.attackUnitDelta;
-      const sBonus = attackUnitsToBonus(after) - attackUnitsToBonus(before);
-      add(sBonus > 0, 'attackUnits', weights.attackUnits * Math.min(sBonus, 4), 'swarms the king zone with high-value attackers');
+    // ── Chaos Attack delegation ─────────────────────────────────────────
+    // The full grafted Berserker-vocabulary, advanced Chaos, kill-geometry,
+    // mating-square arithmetic, position-level, opening-trap, second-move
+    // vision, and tactical-toolkit clauses live in engine/chaos-attack.js
+    // (styleBonus). Future Chaos enhancements never touch this engine again.
+    const chaosB = getChaosEngine();
+    if (chaosB) {
+      let chaosWeights = style.weights || {};
+      if (style.id === 'super_ultra_aggressive' && typeof chaosB.scaledWeights === 'function') {
+        const phase = candidate.fen ? detectGamePhase(candidate.fen) : 'middlegame';
+        const moveCount = parseMoveCount(candidate.fen);
+        chaosWeights = chaosB.scaledWeights(candidate, phase, moveCount);
+      }
+      bonus += chaosB.styleBonus(candidate, chaosWeights);
     }
-    // A2 — Practical chances: out-number the enemy defenders in the king zone.
-    add(candidate.practicalChancesScore > 0, 'practicalChances', weights.practicalChances * Math.min(candidate.practicalChancesScore, 4), 'out-numbers the defenders in the enemy king zone');
-    // A3 — Structural complexity: sacs and central pushes up, equal trades down.
-    add(candidate.structuralComplexity !== 0, 'complexityStructural',
-      weights.complexityStructural * Math.min(Math.abs(candidate.structuralComplexity), 3) * Math.sign(candidate.structuralComplexity),
-      candidate.structuralComplexity > 0 ? 'raises the structural complexity with a sacrifice or central push' : 'squanders complexity with an even minor/rook trade');
-    // A4 — Greek Gift pattern.
-    add(candidate.isGreekGift, 'greekGift', weights.greekGift, 'delivers the classic Greek gift on h7/h2');
-    // A5 — Draw contempt: penalize near-equal calm positions (the score is
-    // negative for |rawScore| < 50, so a positive weight yields a penalty).
-    add(candidate.drawContemptScore < 0, 'drawContempt',
-      weights.drawContempt * Math.max(-2, Math.min(candidate.drawContemptScore, 0)), 'rejects a near-equal calm position');
-    // A6 — Overload exploitation.
-    add(candidate.overloadScore > 0, 'overload', weights.overload * Math.min(candidate.overloadScore, 2), 'exploits overloaded defenders near the king');
 
     // A8 — Phase-aware aggression scaling (Chaos only). Middlegame amplifies the
     // whole aggression budget; the endgame amplifies a forced-mate seeker. The
@@ -1307,25 +1457,27 @@
       penalize(candidate.ownKingDangerDelta > 1.5, Math.min(30, candidate.ownKingDangerDelta * 5), 'makes your own king harder to handle');
       penalize(candidate.calculationBurden > 7, Math.min(24, (candidate.calculationBurden - 7) * 3), 'requires a long precise continuation');
     }
+    // H1 — Self-safety hard gate: a human would never box their own
+    // king in with no escape squares — not even a fearless attacker.
+    penalize(candidate.ownKingTrapped, 60, 'boxes in your own king with no escape squares');
 
     if (profile.id === 'normal') {
       reward(bestScore > 180 && candidate.simplification > 1, 18, 'converts the advantage with a simpler position');
       penalize(candidate.sacrifice, 26, 'introduces unnecessary material risk');
-    } else if (profile.id === 'aggressive') {
+} else if (profile.id === 'aggressive') {
       reward(candidate.playerForcingMoves >= 2, 25, 'renews the threat on consecutive moves');
       reward(candidate.development && candidate.kingPressureDelta > 0, 20, 'develops directly into the attack');
       penalize(candidate.sacrificeSoundness === 'speculative', 35, 'the fastest-looking attack is not fully forced');
     } else {
-      reward(candidate.doubleCheck, 55, 'delivers a devastating double check');
-      reward(candidate.givesCheck && candidate.forcingPly >= 1, 45, 'launches a direct, relentless attack');
-      reward(candidate.kingPressureDelta > 0, Math.min(70, Math.round(candidate.kingPressureDelta * 22)), 'swarms the enemy king with relentless pressure');
-      reward(candidate.penetrationDelta > 0, Math.min(60, candidate.penetrationDelta * 25), 'invades deep into enemy territory');
-      reward(candidate.deepPenetrationDelta > 0, Math.min(70, candidate.deepPenetrationDelta * 30), 'establishes a terrifying deep-invasion attacking piece');
-      reward(candidate.pawnStormDelta > 0, Math.min(65, candidate.pawnStormDelta * 28), 'drives a ruthless pawn storm straight at the enemy king');
-      reward(candidate.sacrifice, candidate.sacrificeSoundness === 'sound' ? 80 : 50,
-        candidate.sacrificeSoundness === 'sound' ? 'executes a sound, game-ending sacrifice' : 'launches a fearless speculative sacrifice to shatter the defense');
-      reward(candidate.complexity >= 2, 40, 'creates maximum tactical chaos');
-      reward(candidate.opensKingFile, 45, 'rips open direct attack lines straight at the king');
+      // ── Chaos human feel delegation ─────────────────────────────────
+      // The Chaos-only rewards for the kill-geometry, mating-square math,
+      // opening traps, second-move vision, and tactical toolkit all live in
+      // engine/chaos-attack.js (humanFeel). Future Chaos enhancements never
+      // touch this engine again.
+      const chaosH = getChaosEngine();
+      if (chaosH) {
+        score += chaosH.humanFeel(candidate);
+      }
     }
 
     candidate.naturalnessScore = Math.round(score);
@@ -1451,7 +1603,11 @@
       analysis.evalLoss = evalLoss;
       analysis.objectiveRank = rank + 1;
       analysis.mode = profile.id;
-      const eligible = Number.isFinite(evalLoss) && (bestIsWinningMate ? evalLoss === 0 : evalLoss <= budget);
+      const eligible = Number.isFinite(evalLoss) && (bestIsWinningMate ? evalLoss === 0 : evalLoss <= budget) &&
+        // H1 — Self-safety hard gate: a candidate that leaves our own
+        // king with zero legal escapes is refused outright (unless it is a
+        // mate-for-us or keeps the initiative). Normal keeps objective purity.
+        (profile.id === 'normal' || !analysis.ownKingTrapped);
       const bonus = eligible ? candidateStyleBonus(analysis, profile) : -Infinity;
       // Aggressive is especially focused on converting quickly: objective cost
       // remains expensive, while checks and sustained forcing play can overcome it.
@@ -1481,10 +1637,30 @@
       const shortlist = eligible.filter(candidate => standardBest - candidate.styleScore <= shortlistMargin);
       for (const candidate of shortlist) {
         const naturalness = humanNaturalness(candidate.analysis, profile, context, objectiveBest.score);
-        const humanWeight = profile.id === 'normal' ? 0.8 : (profile.id === 'aggressive' ? 0.65 : 0.52);
+        // Chaos gives human-naturalness extra weight so a fearless, natural
+        // attacking move beats a dry, engine-perfect but unremarkable line.
+        const humanWeight = profile.id === 'normal' ? 0.8 : (profile.id === 'aggressive' ? 0.65 : 0.7);
         candidate.humanScore = candidate.styleScore + naturalness * humanWeight;
       }
       shortlist.sort((a, b) => b.humanScore - a.humanScore || b.styleScore - a.styleScore || b.utility - a.utility);
+      // C2 — Human Chaos "surprise" selection. When the top engine line is a
+      // cold, obvious pick and a close human-natural attacking alternative
+      // exists, prefer the alternative with stable per-position probability.
+      // This keeps hints feeling like a human coach's choice instead of an
+      // exact Stockfish/chess-api echo, which is also fair-play friendly.
+      if (profile.id === 'super_ultra_aggressive' && shortlist.length > 1) {
+        const top = shortlist[0];
+        const topIsEngineLine = top.pv.pv?.[0] === objectiveBest.pv.pv?.[0];
+        const surprise = shortlist.findIndex((c, index) => index > 0 &&
+          c.pv.pv?.[0] !== objectiveBest.pv.pv?.[0] &&
+          (c.analysis.naturalnessScore || 0) > 30 &&
+          top.humanScore - c.humanScore <= 18);
+        if (topIsEngineLine && surprise > 0 && stableFenFraction(fen, 'human-chaos-surprise') < 0.5) {
+          const chosen = shortlist[surprise];
+          shortlist[surprise] = shortlist[0];
+          shortlist[0] = chosen;
+        }
+      }
       const shortlisted = new Set(shortlist);
       eligible = [...shortlist, ...eligible.filter(candidate => !shortlisted.has(candidate))];
     }
@@ -1514,7 +1690,7 @@
   }
 
   // ─── Style-Aware Move Annotation ───────────────────────────────────
-  // v6.2: Enhanced with pawn storm, exchange sacrifice, outpost, prophylactic annotations
+  // Enhanced with pawn storm, exchange sacrifice, outpost, prophylactic annotations.
   function annotateMoveForStyle(uci, fen, style, evalScore, styleAnalysis = null) {
     const profile = PLAYING_STYLES[style] || PLAYING_STYLES.normal;
     if (profile.id === 'normal') return [];
@@ -1528,13 +1704,18 @@
     if (analysis.development) annotations.push('active development');
     if (analysis.opensKingFile) annotations.push('open king line');
     if (analysis.sacrifice) annotations.push(analysis.sacrificeSoundness === 'sound' ? 'sound sacrifice' : (analysis.sacrificeSoundness === 'speculative' ? 'speculative sacrifice' : 'unsound sacrifice'));
-    // Chaos-only flavor tags keyed on the grafted Berserker-vocabulary features.
+    // Chaos-only flavor tags. The full tag set (grafted Berserker-vocabulary,
+    // kill-geometry, mating-square math, opening traps, second-move vision, and
+    // tactical toolkit) lives in engine/chaos-attack.js (annotate), so future
+    // Chaos enhancements never touch this engine again.
     if (profile.id === 'super_ultra_aggressive') {
-      annotations.push('chaos attack');
-      if (analysis.isGreekGift) annotations.push('greek gift');
-      if (analysis.overloadScore > 0) annotations.push('overload');
-      if (analysis.practicalChancesScore > 0) annotations.push('practical chances');
-      if (analysis.structuralComplexity > 0) annotations.push('storm the king');
+      const chaosA = getChaosEngine();
+      if (chaosA) {
+        annotations.push(...chaosA.annotate(analysis));
+      } else {
+        annotations.push('ultra-aggressive attack');
+        annotations.push('aggressive');
+      }
     } else {
       annotations.push('aggressive');
     }
@@ -1618,7 +1799,6 @@
         const board = fen ? parseFENPlacement(fen.split(' ')[0]) : null;
         const piece = board ? getPieceAt(board, from) : null;
         const pieceName = piece ? PIECE_NAMES[piece.toLowerCase()] : 'piece';
-        // v5.4.0: Use actual piece color
         const isPieceWhite = piece && piece === piece.toUpperCase();
         const sideLabel = isPieceWhite ? 'White' : 'Black';
         hints.bestMoveFromTo = `${sideLabel}: ${pieceName}: ${from} \u2192 ${to}`;
@@ -1637,7 +1817,6 @@
 
     // Exact-move-only primary hint.
     hints.main = generateExactMoveHint(bestPV, position, evalScore, scoreType, playerColor, fen || '', currentStyle, currentRepertoire, analysisData.moveHistory);
-    hints.fairPlayWarning = 'Using exact move hints frequently may cause your moves to match engine recommendations, which fair play systems can detect.';
 
     // Explain why the selected move fits the requested mode. This keeps lower
     // hint levels educational and gives exact/deep hints concrete compensation.
@@ -1646,21 +1825,11 @@
       hints.styleAnalysis = meta;
       if (humanLikeMode) {
         if (hintLevel === EXACT_HINT_LEVEL) {
-          hints.main = hints.main.replace(/^Best:/, 'Human choice:')
-            .replace(/^Aggressive choice:/, 'Human Aggressive choice:')
-            .replace(/^Chaos Attack choice:/, 'Human Chaos Attack choice:');
+          // Human-like hints lead with the move itself, not a style label.
+          // No verbose plan / continuation / risk sentences: the hint card
+          // stays minimal and the threat pill carries the tactical alert.
+          hints.main = hints.main.replace(/^[^:]+: /, '');
         }
-        const humanReasons = (meta.humanReasons || []).slice(0, 3);
-        const humanRisks = [...(meta.humanRisks || []), ...(meta.risks || [])].slice(0, 2);
-        hints.main += ` Human plan: ${meta.plan || 'improve the position with a clear purpose'}.`;
-        if (humanReasons.length) hints.main += ` Why it feels natural: ${humanReasons.join(', ')}.`;
-        if (hintLevel === EXACT_HINT_LEVEL && meta.followUpUci && bestPV.pv?.length >= 3) {
-          let followFen = fen;
-          followFen = applyMoveToFen(followFen, bestPV.pv[0]);
-          if (bestPV.pv[1]) followFen = applyMoveToFen(followFen, bestPV.pv[1]);
-          hints.main += ` If the expected reply comes, continue with ${uciToSan(meta.followUpUci, followFen)}.`;
-        }
-        if (hintLevel === EXACT_HINT_LEVEL && humanRisks.length) hints.main += ` Practical risk: ${humanRisks.join(', ')}.`;
       } else if (currentStyle.id !== 'normal') {
         const reasons = (meta.reasons || []).slice(0, 3);
         const risks = (meta.risks || []).slice(0, 2);
@@ -1673,9 +1842,6 @@
         }
         if (hintLevel === EXACT_HINT_LEVEL && risks.length) hints.main += ` Risk: ${risks.join(', ')}.`;
       }
-      if (hintLevel === EXACT_HINT_LEVEL && Number.isFinite(meta.evalLoss) && meta.evalLoss > 0 && humanLikeMode) {
-        hints.main += ` Objective cost: ${(meta.evalLoss / 100).toFixed(1)} pawn${meta.evalLoss === 100 ? '' : 's'}.`;
-      }
     }
 
     // From-to square notation — always show actual piece color
@@ -1686,7 +1852,6 @@
       const board = fen ? parseFENPlacement(fen.split(' ')[0]) : null;
       const piece = board ? getPieceAt(board, from) : null;
       const pieceName = piece ? PIECE_NAMES[piece.toLowerCase()] : 'piece';
-      // v5.4.0: Use actual piece color — uppercase = White, lowercase = Black
       const isPieceWhite = piece && piece === piece.toUpperCase();
       const sideLabel = isPieceWhite ? 'White' : 'Black';
       hints.bestMoveFromTo = `${sideLabel}: ${pieceName}: ${from} \u2192 ${to}`;
@@ -1702,9 +1867,15 @@
       hints.continuation = formatContinuation(bestPV.pv, hintLevel, isWhite, fen || '');
     }
 
-    // Move classification
+    // Move classification — from the mover's perspective (the side that
+    // played the last move is the opposite of the current side to move).
     if (analysisData.prevEval !== undefined && analysisData.currEval !== undefined) {
-      hints.moveClassification = classifyMove(analysisData.prevEval, analysisData.currEval);
+      const activeColor = (fen && typeof fen === 'string') ? (fen.split(' ')[1] || 'w') : 'w';
+      hints.moveClassification = classifyMove(analysisData.prevEval, analysisData.currEval, {
+        moverColor: activeColor === 'w' ? 'b' : 'w',
+        scoreTypeBefore: analysisData.prevScoreType || 'cp',
+        scoreTypeAfter: analysisData.currScoreType || 'cp'
+      });
     }
 
     // Winning plan (style-aware)
@@ -1716,7 +1887,7 @@
       if (annotations.length > 0) hints.styleAnnotation = annotations.join(', ');
     }
 
-    // v6.0.0: Depth-aware hint quality indicator
+    // Depth-aware hint quality indicator
     if (bestPV && bestPV.depth >= 40) {
       hints.depthQuality = 'deep';
     } else if (bestPV && bestPV.depth >= 20) {
@@ -1785,29 +1956,23 @@
     const uci = bestPV.pv[0];
     const from = uci.substring(0, 2);
     const to = uci.substring(2, 4);
-    const piece = getPieceAt(board, from);
     const captured = getPieceAt(board, to);
-    const pieceName = piece ? PIECE_NAMES[piece.toLowerCase()] : 'piece';
     const san = uciToSan(uci, fen);
     const isWhite = playerColor === 'w';
-    const playerLabel = isWhite ? 'White' : 'Black';
-    // v5.4.0: Use ACTUAL piece color from the board, not assumed ownership.
+    // Use ACTUAL piece color from the board, not assumed ownership.
     // A piece on e7 with lowercase letter is Black's piece regardless of
     // which side the user is assisting.
-    const isPieceWhite = piece && piece === piece.toUpperCase();
-    const pieceSideLabel = isPieceWhite ? 'White' : 'Black';
     const currentStyle = style || PLAYING_STYLES.normal;
 
     // uciToSan already includes the promotion suffix.
     const moveStr = san;
     const choiceLabel = currentStyle.id === 'normal' ? 'Best' : `${currentStyle.name} choice`;
-    let hint = `${choiceLabel}: ${moveStr}  (${pieceSideLabel}: ${pieceName}: ${from} \u2192 ${to})`;
+    // Hero stays compact: the from-to squares and the evaluation are already
+    // rendered by dedicated UI elements, so repeating them here adds noise.
+    let hint = `${choiceLabel}: ${moveStr}`;
 
     if (scoreType === 'mate') {
       hint += ` \u2014 MATE IN ${Math.abs(evalScore)}`;
-    } else {
-      const evalPawns = (evalScore / 100).toFixed(1);
-      hint += evalScore > 0 ? `  eval: +${evalPawns}` : `  eval: ${evalPawns}`;
     }
 
     if (captured) {
@@ -1886,19 +2051,29 @@
       const from = responseUci.substring(0, 2);
       const to = responseUci.substring(2, 4);
       const piece = getPieceAt(boardAfterOppMove, from);
+      const captured = getPieceAt(boardAfterOppMove, to);
       const pieceName = piece ? PIECE_NAMES[piece.toLowerCase()] : 'piece';
       const fenAfterOppMove = applyMoveToFen(fen, oppMoveUci);
       const responseSan = uciToSan(responseUci, fenAfterOppMove);
       // Determine the actual side of the response piece
       const isRespWhitePiece = piece && piece === piece.toUpperCase();
       const respPieceLabel = isRespWhitePiece ? 'White' : 'Black';
-      responseHint = `${respPieceLabel}: ${pieceName} ${from} \u2192 ${to} (${responseSan})`;
+      // Compact primary hint — mirrors the clean format used on the
+      // assisted player's own turn (e.g. "Best: Nc6"), never the verbose
+      // piece narrative.
+      responseHint = `Best: ${responseSan}`;
+      if (captured) {
+        const capturedName = PIECE_NAMES[captured.toLowerCase()] || 'piece';
+        const isOppPiece = isRespWhitePiece ? (captured === captured.toLowerCase()) : (captured === captured.toUpperCase());
+        if (isOppPiece) responseHint += ` | Captures opponent's ${capturedName}`;
+        else responseHint += ` | Captures ${capturedName}`;
+      }
       responseFromToHint = `${respPieceLabel}: ${pieceName}: ${from} \u2192 ${to}`;
     }
 
     // Build main hint — PLAYER-FIRST design:
-    // Always lead with the player's best response.
-    // Opponent's expected move is contextual/secondary.
+    // Always lead with the player's best response, compact and clean.
+    // Opponent's expected move is contextual/secondary (threat pill).
     let mainHint = '';
     if (responseUci) {
       // PRIMARY: Show the player's best response
@@ -1908,10 +2083,6 @@
       else if (evalScore < -100) mainHint += ` \u2014 Be careful!`;
       else if (evalScore < 0) mainHint += ` \u2014 Slight disadvantage`;
       else mainHint += ` \u2014 Equal position`;
-      // SECONDARY: Opponent's expected move as context
-      if (oppMoveHint) {
-        mainHint += `. If ${oppColor} plays ${oppMoveHint}`;
-      }
     } else if (oppMoveUci) {
       // No response PV line available — still show player-focused message
       mainHint = `Waiting for ${oppColor}'s move. Expect: ${oppMoveHint}`;
@@ -1962,7 +2133,6 @@
     const piece = getPieceAt(board, from);
     const captured = getPieceAt(board, to);
     const pieceName = piece ? PIECE_NAMES[piece.toLowerCase()] : 'piece';
-    // v5.4.0: Use actual piece color from the board
     const isPieceWhite = piece && piece === piece.toUpperCase();
     const oppPieceSideLabel = isPieceWhite ? 'White' : 'Black';
 
@@ -1985,7 +2155,6 @@
       const rTo = responseUci.substring(2, 4);
       const rPiece = getPieceAt(boardAfterOppMove, rFrom);
       const rPieceName = rPiece ? PIECE_NAMES[rPiece.toLowerCase()] : 'piece';
-      // v5.4.0: Use actual piece color for the response
       const isRWhite = rPiece && rPiece === rPiece.toUpperCase();
       const rSideLabel = isRWhite ? 'White' : 'Black';
       threat += `. ${rSideLabel}'s best reply: ${rPieceName} ${rFrom} \u2192 ${rTo}`;
@@ -2028,7 +2197,6 @@
     const san = uciToSan(oppMoveUci, fenAfterPlayerMove);
     const pieceName = piece ? PIECE_NAMES[piece.toLowerCase()] : 'piece';
 
-    // v5.4.0: Use actual piece color from the board
     const isOppPieceWhite = piece && piece === piece.toUpperCase();
     const oppPieceSideLabel = isOppPieceWhite ? 'White' : 'Black';
 
@@ -2216,7 +2384,7 @@
         ? (rawScore > 0 ? 99 : 1)
         : 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * rawScore)) - 1);
 
-      // v5.4.0 PLAYER-FIRST: When opponent's turn, show the PLAYER's best
+      // PLAYER-FIRST: When opponent's turn, show the PLAYER's best
       // response as the primary candidate move, with opponent's move as context.
       // When it's the player's turn, show their move directly.
       let candidateMoveUci, candidateMoveFen, opponentMoveUci, opponentMoveSan;
@@ -2224,7 +2392,6 @@
 
       if (isOpponentTurn && pv.pv && pv.pv.length > 1) {
         // Opponent moves first (pv[0]), player responds (pv[1])
-        // v5.4.0: Show player's response as the PRIMARY candidate move
         opponentMoveUci = pv.pv[0];
         candidateMoveUci = pv.pv[1];
         const fenAfterOpp = applyMoveToFen(fen, opponentMoveUci);
@@ -2254,7 +2421,6 @@
           : board;
         const piece = getPieceAt(lookupBoard, from);
         const pieceName = piece ? PIECE_NAMES[piece.toLowerCase()] : '';
-        // v5.4.0: Use ACTUAL piece color from the board
         const isPieceWhite = piece && piece === piece.toUpperCase();
         const sidePrefix = isPieceWhite ? 'White:' : 'Black:';
         fromTo = pieceName ? `${sidePrefix} ${from}\u2192${to}` : `${from}-${to}`;
@@ -2269,7 +2435,7 @@
         fromTo = pieceName ? `${oppLabel}: ${from}\u2192${to}` : `${oppLabel}: ${from}-${to}`;
       }
 
-      // v5.4.0: SAN display — show player's response move as primary
+      // SAN display — show player's response move as primary
       let san;
       if (candidateMoveUci) {
         san = uciToSan(candidateMoveUci, candidateMoveFen);
@@ -2517,7 +2683,7 @@
     return coach;
   }
 
-  // ─── v8.5.0 Enhancement D — Player-perspective score formatting ────
+  // ─── Player-perspective score formatting ───────────────────────────
   // Returns a string like "+1.5 (you)" / "-0.8 (opp)" / "+M5 (you)" that
   // makes it obvious whose favour the eval is in, regardless of whether
   // the assisted player is White or Black. Used by the side panel for
@@ -2568,9 +2734,8 @@
     repertoireState,
     HINT_LEVELS,
     EXACT_HINT_LEVEL,
-    // v8.5.0
     resetSacrificeHistory,
-    formatScorePlayerPerspective, // Enhancement D
+    formatScorePlayerPerspective,
     // Exposed for deterministic regression tests and progressive-PV consumers.
     applyMoveToFen,
     applyMoveToBoard
