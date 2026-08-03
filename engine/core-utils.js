@@ -65,10 +65,55 @@
     return { row: 8 - Number(square[1]), col: square.charCodeAt(0) - 97 };
   }
 
+  // Public name for callers (hint engine) that prefer the verbose form.
+  function squareToCoords(sq) { return coords(sq); }
+
+  // Apply a UCI move to an 8x8 board array (row 0 = rank 8). Returns a
+  // new board; the input is never mutated. Handles promotion, castling
+  // (king moves two files on its home rank), and en-passant captures
+  // (diagonal pawn move into an empty square). Returns the input board
+  // for any unparsable move so callers can chain safely.
+  function applyMoveToBoard(board, uci) {
+    if (!Array.isArray(board) || !uci || uci.length < 4) return board;
+    const from = uci.substring(0, 2);
+    const to = uci.substring(2, 4);
+    const promo = uci.length > 4 ? uci[4] : null;
+    const fromCoords = coords(from);
+    const toCoords = coords(to);
+    if (!fromCoords || !toCoords) return board;
+    if (fromCoords.row < 0 || fromCoords.row > 7 || toCoords.row < 0 || toCoords.row > 7) return board;
+    if (fromCoords.col < 0 || fromCoords.col > 7 || toCoords.col < 0 || toCoords.col > 7) return board;
+
+    const newBoard = board.map(row => row.slice());
+    const piece = newBoard[fromCoords.row][fromCoords.col];
+    if (!piece) return newBoard;
+
+    newBoard[toCoords.row][toCoords.col] = piece;
+    newBoard[fromCoords.row][fromCoords.col] = null;
+
+    if (promo) {
+      const isWhite = piece === piece.toUpperCase();
+      newBoard[toCoords.row][toCoords.col] = isWhite ? promo.toUpperCase() : promo.toLowerCase();
+    }
+
+    const pieceType = piece.toLowerCase();
+    if (pieceType === 'k') {
+      if (from === 'e1' && to === 'g1') { newBoard[7][5] = newBoard[7][7]; newBoard[7][7] = null; }
+      if (from === 'e1' && to === 'c1') { newBoard[7][3] = newBoard[7][0]; newBoard[7][0] = null; }
+      if (from === 'e8' && to === 'g8') { newBoard[0][5] = newBoard[0][7]; newBoard[0][7] = null; }
+      if (from === 'e8' && to === 'c8') { newBoard[0][3] = newBoard[0][0]; newBoard[0][0] = null; }
+    }
+    if (pieceType === 'p' && from[0] !== to[0] && !board[toCoords.row][toCoords.col]) {
+      const capturedRow = fromCoords.row;
+      newBoard[capturedRow][toCoords.col] = null;
+    }
+    return newBoard;
+  }
+
   function applyUciToPlacement(fen, uci) {
     const parsed = parseFen(fen);
     if (!parsed || !/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(uci || '')) return null;
-    const board = parsed.board.map(row => [...row]);
+    const board = parsed.board.map(row => row.slice());
     const from = coords(uci.slice(0, 2)), to = coords(uci.slice(2, 4));
     const piece = board[from.row][from.col];
     if (!piece) return null;
@@ -88,6 +133,75 @@
       board[from.row][to.col] = null;
     }
     return boardToPlacement(board);
+  }
+
+  // Apply a UCI move to a full FEN, including side-to-move, castling,
+  // en-passant, halfmove, and fullmove counters. The placement is
+  // reconstructed from the board the move was applied to so promotion
+  // and castling stay in sync. Returns the input FEN unchanged if it
+  // cannot be parsed or the move is missing.
+  function applyMoveToFen(fen, uci) {
+    if (typeof fen !== 'string' || !uci || uci.length < 4) return fen;
+    const parsed = parseFen(fen);
+    if (!parsed) return fen;
+    const parts = parsed.parts;
+    const activeColor = parts[1];
+    let castling = parts[2] || '-';
+    let epSquare = parts[3] || '-';
+    let halfmove = parseInt(parts[4], 10) || 0;
+    let fullmove = parseInt(parts[5], 10) || 1;
+
+    const board = parsed.board;
+    const newBoard = applyMoveToBoard(board, uci);
+
+    let newPlacement = '';
+    for (let r = 0; r < 8; r++) {
+      let empty = 0;
+      for (let c = 0; c < 8; c++) {
+        if (newBoard[r][c]) {
+          if (empty > 0) { newPlacement += empty; empty = 0; }
+          newPlacement += newBoard[r][c];
+        } else empty++;
+      }
+      if (empty > 0) newPlacement += empty;
+      if (r < 7) newPlacement += '/';
+    }
+
+    const newActiveColor = activeColor === 'w' ? 'b' : 'w';
+    const from = uci.substring(0, 2);
+    const to = uci.substring(2, 4);
+    const fromCoords = coords(from);
+    const toCoords = coords(to);
+    if (!fromCoords || !toCoords) return fen;
+    if (from === 'e1') castling = castling.replace(/[KQ]/g, '');
+    if (from === 'e8') castling = castling.replace(/[kq]/g, '');
+    if (from === 'h1') castling = castling.replace(/K/g, '');
+    if (from === 'a1') castling = castling.replace(/Q/g, '');
+    if (from === 'h8') castling = castling.replace(/k/g, '');
+    if (from === 'a8') castling = castling.replace(/q/g, '');
+    const capturedOnTarget = board[toCoords.row][toCoords.col];
+    if (capturedOnTarget === 'R' && to === 'h1') castling = castling.replace(/K/g, '');
+    if (capturedOnTarget === 'R' && to === 'a1') castling = castling.replace(/Q/g, '');
+    if (capturedOnTarget === 'r' && to === 'h8') castling = castling.replace(/k/g, '');
+    if (capturedOnTarget === 'r' && to === 'a8') castling = castling.replace(/q/g, '');
+    if (!castling) castling = '-';
+
+    const piece = board[fromCoords.row][fromCoords.col];
+    const pieceType = piece ? piece.toLowerCase() : '';
+    if (pieceType === 'p' && Math.abs(parseInt(from[1], 10) - parseInt(to[1], 10)) === 2) {
+      const epRow = (parseInt(from[1], 10) + parseInt(to[1], 10)) / 2;
+      epSquare = from[0] + epRow;
+    } else {
+      epSquare = '-';
+    }
+
+    const isCapture = board[toCoords.row][toCoords.col] !== null;
+    const isEpCapture = pieceType === 'p' && from[0] !== to[0] && !board[toCoords.row][toCoords.col];
+    if (pieceType === 'p' || isCapture || isEpCapture) { halfmove = 0; } else { halfmove++; }
+
+    if (activeColor === 'b') fullmove++;
+
+    return `${newPlacement} ${newActiveColor} ${castling} ${epSquare} ${halfmove} ${fullmove}`;
   }
 
   function didUciProduceFen(previousFen, uci, actualFen) {
@@ -159,5 +273,10 @@
     return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
   }
 
-  root.ChessCore = { parsePlacement, boardToPlacement, parseFen, applyUciToPlacement, didUciProduceFen, inferTransition, reconcileFen, escapeHtml, clampNumber };
+  root.ChessCore = {
+    parsePlacement, boardToPlacement, parseFen,
+    applyUciToPlacement, didUciProduceFen, inferTransition, reconcileFen,
+    applyMoveToBoard, applyMoveToFen, squareToCoords,
+    escapeHtml, clampNumber
+  };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

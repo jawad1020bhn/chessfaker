@@ -18,6 +18,10 @@ const sandbox = {
   Math, Promise, setTimeout, clearTimeout
 };
 vm.createContext(sandbox);
+// core-utils.js exposes ChessCore on the sandbox's globalThis; hint-engine
+// expects it as a global to consume the shared applyMoveToBoard / applyMoveToFen
+// helpers. Load it before the engine module so its globals are available.
+vm.runInContext(fs.readFileSync(require.resolve('../engine/core-utils.js'), 'utf8'), sandbox);
 vm.runInContext(fs.readFileSync(require.resolve('../engine/chaos-attack.js'), 'utf8'), sandbox);
 vm.runInContext(fs.readFileSync(require.resolve('../engine/hint-engine.js'), 'utf8'), sandbox);
 const engine = sandbox.window.ChessHintEngine;
