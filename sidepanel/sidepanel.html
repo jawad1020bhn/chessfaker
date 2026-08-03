@@ -57,6 +57,12 @@
       </div>
     </header>
 
+    <!-- Tab navigation -->
+    <nav class="tab-strip" role="tablist" aria-label="Panel views">
+      <button class="tab-strip__tab is-active" id="tab-hint" role="tab" aria-selected="true" aria-controls="tab-panel-hint" data-tab="hint">Hint</button>
+      <button class="tab-strip__tab" id="tab-history" role="tab" aria-selected="false" aria-controls="tab-panel-history" data-tab="history">History</button>
+    </nav>
+
     <!-- Engine Status -->
     <div id="engine-status" class="engine-status" role="status" aria-live="polite">
       <span class="status-dot offline" aria-hidden="true"></span>
@@ -69,6 +75,9 @@
 
     <!-- ═══ Main Content ═══ -->
     <div class="tab-content">
+
+      <!-- Hint tab panel: the existing main view -->
+      <div class="tab-panel is-active" id="tab-panel-hint" role="tabpanel" aria-labelledby="tab-hint">
 
         <!-- Hero: The Move -->
         <section id="hint-section" class="hint-section" aria-label="Chess hint">
@@ -87,6 +96,21 @@
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
               <span id="fair-play-warning-text" class="warning-text"></span>
             </div>
+            <!-- Engine heartbeat: one-tap shortcut for the "Auto-analyze on your turn" setting.
+                 A chess-clock-style toggle that ticks while it's watching your turn and
+                 goes dim when you take the wheel. The hairline keeps it part of the
+                 felt hero without competing with the move text. -->
+            <label id="autopilot-card" class="autopilot" data-on="true">
+              <input type="checkbox" id="autopilot-toggle" class="autopilot__input" checked>
+              <span class="autopilot__knob" aria-hidden="true">
+                <span class="autopilot__dot"></span>
+              </span>
+              <span class="autopilot__labels">
+                <span class="autopilot__title">Auto-analyze on your turn</span>
+                <span class="autopilot__sub" id="autopilot-sub">Engine watches your turn</span>
+              </span>
+              <span class="autopilot__pulse" aria-hidden="true"></span>
+            </label>
           </div>
         </section>
 
@@ -117,7 +141,7 @@
 
         <!-- Move Classification -->
         <section id="move-class-section" class="move-class-section" style="display:none" aria-label="Last move classification">
-          <div class="section-title-row" style="margin-bottom:8px;">
+          <div class="section-title-row">
             <h3>Last move</h3>
           </div>
           <div id="move-class-display" class="move-class-display"></div>
@@ -128,8 +152,38 @@
           <div class="info-row"><span class="info-label">Opening</span><span id="opening-name" class="info-value">&ndash;</span></div>
           <div class="info-row"><span class="info-label">Phase</span><span id="game-phase" class="info-value">&ndash;</span></div>
           <div class="info-row"><span class="info-label">Material</span><span id="material-balance" class="info-value">Equal</span></div>
-          <div class="info-row"><span class="info-label">Sensible moves</span><span id="correlation-stat" class="info-value" title="Human-like play guard: share of your moves that played naturally rather than blindly copying the engine's exact top pick. Keep this high to stay fair-play safe.">0 / 0 (0%)</span></div>
+          <div class="info-row"><span class="info-label">Analysis</span><span id="analysis-source" class="info-value" title="Active analysis source and the engine's reported depth. A "stale" suffix marks results served from the cache after their fresh window.">&ndash;</span></div>
+          <div id="comparison-card" class="comparison-card" aria-label="Engine vs human comparison">
+            <div class="comparison-card__title">Engine comparison</div>
+            <div class="comparison-row" id="comparison-engine" data-row="engine">
+              <span class="comparison-row__label">Engine match</span>
+              <span class="comparison-row__value">&mdash;</span>
+            </div>
+            <div class="comparison-row" id="comparison-human" data-row="human">
+              <span class="comparison-row__label">Human match</span>
+              <span class="comparison-row__value">&mdash;</span>
+            </div>
+            <div class="comparison-row" id="comparison-independent" data-row="independent">
+              <span class="comparison-row__label">Independent</span>
+              <span class="comparison-row__value">&mdash;</span>
+            </div>
+            <div class="comparison-row comparison-row--diagnostic" id="comparison-agreement" data-row="agreement">
+              <span class="comparison-row__label">Engine &harr; human</span>
+              <span class="comparison-row__value">&mdash;</span>
+            </div>
+            <div class="comparison-card__hint">Side-by-side match rate against the engine's top pick and the human-like alternative. Use Settings → "Engine comparison highlight" to pick which row stands out.</div>
+          </div>
         </section>
+
+      </div><!-- /tab-panel-hint -->
+
+      <!-- History tab panel: per-move ratings, accuracy, breakdown -->
+      <div class="tab-panel" id="tab-panel-history" role="tabpanel" aria-labelledby="tab-history" hidden>
+        <section class="history-section" aria-label="Moves history">
+          <div class="history-section__title">Moves history</div>
+          <div id="history-card" class="history-card"></div>
+        </section>
+      </div><!-- /tab-panel-history -->
 
     </div><!-- /tab-content -->
 
@@ -322,6 +376,24 @@
           </label>
         </div>
 
+        <div class="setting-group">
+          <label class="toggle-label">
+            <input type="checkbox" id="setting-show-correlation-stat" checked>
+            <span>Engine comparison card</span>
+          </label>
+          <div class="setting-hint">Hides the engine-vs-human comparison card in the position-info card. The underlying tracker still runs, so toggling back on is instant.</div>
+        </div>
+
+        <div class="setting-group">
+          <label for="setting-comparison-mode">Engine comparison highlight</label>
+          <select id="setting-comparison-mode">
+            <option value="engine">Engine match (followed the engine top pick)</option>
+            <option value="human">Human match (followed the human-like pick)</option>
+            <option value="independent">Independent (played a move neither side suggested)</option>
+          </select>
+          <div class="setting-hint">Picks which row of the engine comparison card stands out. The other rows stay visible but dimmed. Switch any time — the tracker is unaffected.</div>
+        </div>
+
         <!-- Performance & Reliability -->
         <div class="setting-section-title">Reliability</div>
         <div class="setting-disclaimer">
@@ -335,7 +407,6 @@
 
   <script src="../engine/core-utils.js"></script>
   <script src="../engine/chaos-attack.js"></script>
-  <script src="../engine/cloud-engine.js"></script>
   <script src="../engine/hint-engine.js"></script>
   <script src="sidepanel.js"></script>
 </body>
