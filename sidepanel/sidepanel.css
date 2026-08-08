@@ -228,3 +228,99 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
   box-shadow: 0 10px 25px rgba(61, 81, 130, .12);
 }
 .setting-group select:hover, .api-health-row:hover { background: rgba(255,255,255,.76); }
+
+/* Liquid-glass pass: lens edges, specular highlights and a restrained dotted field.
+   This uses only extension-local CSS — no remote images, canvas, or shader code. */
+body {
+  background-image:
+    radial-gradient(circle at 2px 2px, rgba(47, 71, 123, .13) 1px, transparent 1.15px),
+    radial-gradient(130% 68% at -18% -8%, #a7d6ff 0%, transparent 49%),
+    radial-gradient(100% 60% at 111% 4%, #e2baff 0%, transparent 55%),
+    radial-gradient(110% 70% at 52% 110%, #b5efd9 0%, transparent 59%),
+    linear-gradient(145deg, #f3f7ff, var(--canvas) 52%, #f5edff);
+  background-size: 30px 30px, auto, auto, auto, auto;
+  background-position: 0 0, center, center, center, center;
+}
+
+/* A reusable lens treatment for the main glass containers. */
+.eval-section, .position-info, .move-class-display, .critical-moment-section,
+.human-mode-card, .api-usage-diagnostics, .setting-disclaimer, .shortcut-help,
+.toast, .api-health-row, .setting-group select, .btn-secondary {
+  position: relative;
+  isolation: isolate;
+  box-shadow:
+    inset 1px 1px 0 rgba(255,255,255,.78),
+    inset -1px -1px 0 rgba(255,255,255,.22),
+    inset 0 -9px 16px rgba(129,151,204,.055),
+    0 8px 21px rgba(58,78,126,.10);
+}
+.eval-section::before, .position-info::before, .move-class-display::before,
+.critical-moment-section::before, .human-mode-card::before,
+.api-usage-diagnostics::before, .setting-disclaimer::before, .shortcut-help::before,
+.toast::before, .api-health-row::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(122deg, rgba(255,255,255,.46), transparent 28% 73%, rgba(139,172,238,.11));
+  opacity: .8;
+}
+
+/* Deliberately small, tactile controls based on the supplied button reference. */
+.icon-btn, .settings-close-btn, .refresh-btn, .btn-secondary, .player-btn,
+.human-mode-opt, .shortcut-close {
+  position: relative;
+  overflow: hidden;
+  transform: translateZ(0);
+  transition: transform 220ms cubic-bezier(.25,1,.5,1), box-shadow 220ms cubic-bezier(.25,1,.5,1), background 220ms ease, filter 220ms ease;
+}
+.icon-btn::after, .settings-close-btn::after, .refresh-btn::after, .btn-secondary::after,
+.player-btn::after, .human-mode-opt::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: linear-gradient(115deg, transparent 16%, rgba(255,255,255,.58) 45%, transparent 68%);
+  background-size: 220% 100%;
+  background-position: 115% 0;
+  mix-blend-mode: screen;
+  transition: background-position 420ms cubic-bezier(.25,1,.5,1);
+}
+.icon-btn:hover::after, .settings-close-btn:hover::after, .refresh-btn:hover::after,
+.btn-secondary:hover::after, .player-btn:hover::after, .human-mode-opt:hover::after { background-position: -30% 0; }
+.icon-btn:active, .settings-close-btn:active, .refresh-btn:active, .btn-secondary:active,
+.player-btn:active, .human-mode-opt:active { transform: scale(.955) translateY(1px); }
+.refresh-btn { box-shadow: inset 0 1px 1px rgba(255,255,255,.52), inset 0 -2px 4px rgba(30,54,176,.21), 0 8px 17px rgba(43,105,229,.31); }
+.btn-secondary { box-shadow: inset 0 1px 1px rgba(255,255,255,.80), inset 0 -2px 4px rgba(84,105,155,.08), 0 5px 12px rgba(65,83,125,.07); }
+
+/* Give the selected options a real glass-control depth, not a flat fill. */
+.player-btn.active[data-color="w"], .human-mode-opt[aria-checked="true"] {
+  box-shadow: inset 1px 1px 0 rgba(255,255,255,.92), inset 0 -3px 5px rgba(81,102,151,.11), 0 3px 8px rgba(51,70,112,.13);
+}
+.human-mode-thumb {
+  box-shadow: inset 1px 1px 1px rgba(255,255,255,.56), inset 0 -3px 5px rgba(39,62,176,.17), 0 4px 10px rgba(47,104,231,.24);
+}
+
+/* The move panel gets a convex, refractive edge while its content remains clear. */
+.hint-section {
+  box-shadow:
+    inset 1px 1px 0 rgba(255,255,255,.54),
+    inset -1px -1px 0 rgba(181,211,255,.15),
+    0 22px 38px rgba(67,82,163,.29);
+}
+.hint-section::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border-radius: 25px;
+  pointer-events: none;
+  background: linear-gradient(125deg, rgba(255,255,255,.28), transparent 26% 66%, rgba(221,210,255,.15));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon-btn::after, .settings-close-btn::after, .refresh-btn::after, .btn-secondary::after,
+  .player-btn::after, .human-mode-opt::after { transition: none; }
+}
