@@ -182,3 +182,49 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 
 @media (max-width:360px) { .version-tag, .context-turn { display:none; } .player-btn span { display:none; } .hint-text { font-size:24px; } .topbar { padding-inline:12px; } }
 @media (prefers-reduced-motion:reduce) { *, *::before, *::after { animation-duration:.01ms !important; transition-duration:.01ms !important; } }
+
+/* Native settings become compact, tactile system switches. */
+.toggle-label input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 38px;
+  height: 23px;
+  flex: 0 0 38px;
+  border: 1px solid rgba(95, 114, 153, .13);
+  border-radius: 999px;
+  background: rgba(102, 117, 149, .28);
+  box-shadow: inset 0 1px 2px rgba(37, 50, 83, .10), 0 1px 1px rgba(255,255,255,.55);
+  cursor: pointer;
+  transition: background .22s ease, box-shadow .22s ease;
+}
+.toggle-label input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 5px rgba(30, 47, 84, .24);
+  transition: transform .22s cubic-bezier(.2, .9, .2, 1.15);
+}
+.toggle-label input[type="checkbox"]:checked {
+  border-color: rgba(35, 126, 246, .28);
+  background: linear-gradient(135deg, #2695ff, #5d6ff1);
+  box-shadow: 0 4px 10px rgba(37, 112, 238, .25), inset 0 1px 1px rgba(255,255,255,.32);
+}
+.toggle-label input[type="checkbox"]:checked::after { transform: translateX(15px); }
+.toggle-label input[type="checkbox"]:focus-visible { outline-offset: 2px; }
+
+/* Interaction depth for the primary panel surfaces. */
+.eval-section, .position-info, .move-class-display, .critical-moment-section,
+.human-mode-card, .api-health-row, .setting-group select, .btn-secondary {
+  transition: transform .2s ease, background .2s ease, box-shadow .2s ease;
+}
+.eval-section:hover, .position-info:hover, .move-class-display:hover, .critical-moment-section:hover {
+  background: rgba(255,255,255,.66);
+  box-shadow: 0 10px 25px rgba(61, 81, 130, .12);
+}
+.setting-group select:hover, .api-health-row:hover { background: rgba(255,255,255,.76); }
