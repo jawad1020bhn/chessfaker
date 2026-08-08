@@ -27,10 +27,6 @@
 
   // Exact-move-only product: all primary hints use this single level.
   const EXACT_HINT_LEVEL = 5;
-  // The legacy multi-level HINT_LEVELS map was collapsed to a single
-  // "exact move" level. The constant and the always-equal branch gates
-  // remain so call sites stay readable; a future return to multi-level
-  // hints is a small refactor rather than a search-and-replace.
   const HINT_LEVELS = {
     [EXACT_HINT_LEVEL]: { name: 'Exact Move', desc: 'Shows the selected move with SAN, squares, style, and plan' }
   };
@@ -307,17 +303,115 @@
   }
 
   // ─── Apply UCI Move to Board (for progressive PV analysis) ────────
-  // The implementation now lives in core-utils.js so the service worker
-  // and side panel share a single source of truth. The local helpers
-  // below are thin wrappers that delegate to ChessCore, preserving the
-  // historic call-site contract (`applyMoveToBoard(board, uci)`).
   function applyMoveToBoard(board, uci) {
-    return ChessCore.applyMoveToBoard(board, uci);
+    if (!uci || uci.length < 4) return board;
+    const from = uci.substring(0, 2);
+    const to = uci.substring(2, 4);
+    const promo = uci.length > 4 ? uci[4] : null;
+    const fromCoords = squareToCoords(from);
+    const toCoords = squareToCoords(to);
+
+    // Deep copy the board
+    const newBoard = board.map(row => [...row]);
+    const piece = newBoard[fromCoords.row][fromCoords.col];
+    if (!piece) return newBoard;
+
+    // Move the piece
+    newBoard[toCoords.row][toCoords.col] = piece;
+    newBoard[fromCoords.row][fromCoords.col] = null;
+
+    // Handle promotion
+    if (promo) {
+      const isWhite = piece === piece.toUpperCase();
+      newBoard[toCoords.row][toCoords.col] = isWhite ? promo.toUpperCase() : promo.toLowerCase();
+    }
+
+    // Handle castling: move the rook too
+    const pieceType = piece.toLowerCase();
+    if (pieceType === 'k') {
+      if (from === 'e1' && to === 'g1') { newBoard[7][5] = newBoard[7][7]; newBoard[7][7] = null; }
+      if (from === 'e1' && to === 'c1') { newBoard[7][3] = newBoard[7][0]; newBoard[7][0] = null; }
+      if (from === 'e8' && to === 'g8') { newBoard[0][5] = newBoard[0][7]; newBoard[0][7] = null; }
+      if (from === 'e8' && to === 'c8') { newBoard[0][3] = newBoard[0][0]; newBoard[0][0] = null; }
+    }
+
+    // Handle en passant capture
+    if (pieceType === 'p' && from[0] !== to[0] && !board[toCoords.row][toCoords.col]) {
+      const capturedRow = fromCoords.row;
+      newBoard[capturedRow][toCoords.col] = null;
+    }
+
+    return newBoard;
   }
 
   // ─── Apply UCI Move to FEN ─────────────────────────────────────────
   function applyMoveToFen(fen, uci) {
-    return ChessCore.applyMoveToFen(fen, uci);
+    if (!fen || !uci || uci.length < 4) return fen;
+    const parts = fen.split(' ');
+    let placement = parts[0];
+    let activeColor = parts[1] || 'w';
+    let castling = parts[2] || '-';
+    let epSquare = parts[3] || '-';
+    let halfmove = parseInt(parts[4]) || 0;
+    let fullmove = parseInt(parts[5]) || 1;
+
+    const board = parseFENPlacement(placement);
+    const newBoard = applyMoveToBoard(board, uci);
+
+    // Rebuild placement string
+    let newPlacement = '';
+    for (let r = 0; r < 8; r++) {
+      let empty = 0;
+      for (let c = 0; c < 8; c++) {
+        if (newBoard[r][c]) {
+          if (empty > 0) { newPlacement += empty; empty = 0; }
+          newPlacement += newBoard[r][c];
+        } else {
+          empty++;
+        }
+      }
+      if (empty > 0) newPlacement += empty;
+      if (r < 7) newPlacement += '/';
+    }
+
+    const newActiveColor = activeColor === 'w' ? 'b' : 'w';
+
+    // Update castling rights
+    const from = uci.substring(0, 2);
+    const to = uci.substring(2, 4);
+    if (from === 'e1') castling = castling.replace(/[KQ]/g, '');
+    if (from === 'e8') castling = castling.replace(/[kq]/g, '');
+    if (from === 'h1') castling = castling.replace(/K/g, '');
+    if (from === 'a1') castling = castling.replace(/Q/g, '');
+    if (from === 'h8') castling = castling.replace(/k/g, '');
+    if (from === 'a8') castling = castling.replace(/q/g, '');
+    // Capturing a rook on its original square also permanently removes that right.
+    const capturedOnTarget = board[squareToCoords(to).row][squareToCoords(to).col];
+    if (capturedOnTarget === 'R' && to === 'h1') castling = castling.replace(/K/g, '');
+    if (capturedOnTarget === 'R' && to === 'a1') castling = castling.replace(/Q/g, '');
+    if (capturedOnTarget === 'r' && to === 'h8') castling = castling.replace(/k/g, '');
+    if (capturedOnTarget === 'r' && to === 'a8') castling = castling.replace(/q/g, '');
+    if (!castling) castling = '-';
+
+    // Update en passant square
+    const piece = board[squareToCoords(from).row][squareToCoords(from).col];
+    const pieceType = piece ? piece.toLowerCase() : '';
+    if (pieceType === 'p' && Math.abs(parseInt(from[1]) - parseInt(to[1])) === 2) {
+      const epRow = (parseInt(from[1]) + parseInt(to[1])) / 2;
+      epSquare = from[0] + epRow;
+    } else {
+      epSquare = '-';
+    }
+
+    // Update halfmove clock
+    const isCapture = board[squareToCoords(to).row][squareToCoords(to).col] !== null;
+    const isEpCapture = pieceType === 'p' && from[0] !== to[0] && !board[squareToCoords(to).row][squareToCoords(to).col];
+    if (pieceType === 'p' || isCapture || isEpCapture) { halfmove = 0; } else { halfmove++; }
+
+    // Update fullmove number
+    if (activeColor === 'b') fullmove++;
+
+    return `${newPlacement} ${newActiveColor} ${castling} ${epSquare} ${halfmove} ${fullmove}`;
   }
 
   // ─── Proper UCI-to-SAN Conversion ─────────────────────────────────
@@ -581,14 +675,7 @@
   // chance was lost (or gained). Centipawn thresholds alone mislead — a
   // 50cp swing in a dead-equal middlegame matters far more than the same
   // swing at +6, and mate scores are not comparable to cp at all.
-  //
-  // Contract: BOTH evals are passed in **White-relative** terms
-  // (positive = White is winning). The function flips to the mover's
-  // perspective internally using `moverColor`. The caller must pass
-  // the raw `bestPV.score` from the cloud result, which is already
-  // White-relative after `normalizeChessApi` / `normalizeLichessCloudEval`
-  // / `normalizeMastersEval` / `buildTablebaseResult`.
-  function classifyMove(whiteEvalBefore, whiteEvalAfter, opts = {}) {
+  function classifyMove(evalBefore, evalAfter, opts = {}) {
     const moverColor = opts.moverColor === 'b' ? 'b' : 'w';
     const moverIsWhite = moverColor === 'w';
     const scoreTypeBefore = opts.scoreTypeBefore || 'cp';
@@ -604,10 +691,9 @@
       return Number(score) || 0;
     };
 
-    // Standardise both evals to the mover's perspective. The caller has
-    // already given us White-relative values; we flip once for the mover.
-    const beforeWhite = toCp(whiteEvalBefore, scoreTypeBefore);
-    const afterWhite = toCp(whiteEvalAfter, scoreTypeAfter);
+    // Standardise both evals to White's perspective, then to the mover's.
+    const beforeWhite = toCp(evalBefore, scoreTypeBefore);
+    const afterWhite = toCp(evalAfter, scoreTypeAfter);
     const before = moverIsWhite ? beforeWhite : -beforeWhite;
     const after = moverIsWhite ? afterWhite : -afterWhite;
 
@@ -1637,9 +1723,8 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
   }
 
   // ─── Generate Hints (Main Entry) ───────────────────────────────────
-  function generateHints(analysisData, _hintLevel, playerColor, style, openingRepertoire, humanLikeMode = false, humanContext = {}) {
-    // The product is exact-move-only; the hintLevel parameter is accepted for
-    // back-compat with the historical public API but is ignored internally.
+  function generateHints(analysisData, hintLevel, playerColor, style, openingRepertoire, humanLikeMode = false, humanContext = {}) {
+    hintLevel = EXACT_HINT_LEVEL;
     const { fen, pvs, bestMove, source, tablebaseData, openingData } = analysisData;
     const position = assessPosition(fen);
     const isWhite = playerColor === 'w';
@@ -1675,20 +1760,15 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     const isAssistedPlayerTurn = activeColor === playerColor;
 
     const hints = {
-      level: EXACT_HINT_LEVEL,
-      levelName: HINT_LEVELS[EXACT_HINT_LEVEL].name,
+      level: hintLevel,
+      levelName: HINT_LEVELS[hintLevel]?.name || 'Unknown',
       main: '',
       threat: '',
       positionAssessment: position,
-      pvs: formatPVs(rankedPVs, isWhite, fen),
+      pvs: formatPVs(rankedPVs, isWhite, hintLevel, fen),
       bestMove: formatMove(bestPV && bestPV.pv && bestPV.pv.length > 0 ? bestPV.pv[0] : bestMove, fen),
       bestMoveFromTo: '',
       continuation: [],
-      // The "Last move" classification is computed by the side panel using
-      // the previous analysis's White-relative eval as the baseline. The
-      // hint engine no longer computes it because it never had access to
-      // the prior analysis result. Callers can call `classifyMove` directly
-      // with White-relative evals + a moverColor.
       moveClassification: null,
       opening: null,
       winningPlan: '',
@@ -1705,7 +1785,7 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
 
     // If not the assisted player's turn, show side-specific opponent analysis
     if (!isAssistedPlayerTurn && bestPV) {
-      generateOpponentTurnHints(hints, bestPV, rankedPVs, evalScore, scoreType, position, playerColor, activeColor, fen || '', currentStyle);
+      generateOpponentTurnHints(hints, bestPV, rankedPVs, evalScore, scoreType, position, playerColor, activeColor, fen || '', hintLevel, currentStyle);
       return hints;
     }
 
@@ -1738,17 +1818,18 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     // Exact-move-only primary hint.
     hints.main = generateExactMoveHint(bestPV, position, evalScore, scoreType, playerColor, fen || '', currentStyle, currentRepertoire, analysisData.moveHistory);
 
-    // Explain why the selected move fits the requested mode. The exact-move
-    // level is the only one we render; the gates that previously checked
-    // `hintLevel === EXACT_HINT_LEVEL` were always true and are now removed.
+    // Explain why the selected move fits the requested mode. This keeps lower
+    // hint levels educational and gives exact/deep hints concrete compensation.
     if (bestPV?._styleAnalysis) {
       const meta = bestPV._styleAnalysis;
       hints.styleAnalysis = meta;
       if (humanLikeMode) {
-        // Human-like hints lead with the move itself, not a style label.
-        // No verbose plan / continuation / risk sentences: the hint card
-        // stays minimal and the threat pill carries the tactical alert.
-        hints.main = hints.main.replace(/^[^:]+: /, '');
+        if (hintLevel === EXACT_HINT_LEVEL) {
+          // Human-like hints lead with the move itself, not a style label.
+          // No verbose plan / continuation / risk sentences: the hint card
+          // stays minimal and the threat pill carries the tactical alert.
+          hints.main = hints.main.replace(/^[^:]+: /, '');
+        }
       } else if (currentStyle.id !== 'normal') {
         const reasons = (meta.reasons || []).slice(0, 3);
         const risks = (meta.risks || []).slice(0, 2);
@@ -1756,15 +1837,15 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
           const prefix = currentStyle.id === 'aggressive' ? 'Fast-win idea' : 'Maximum-pressure idea';
           hints.main += ` ${prefix}: ${reasons.join(', ')}.`;
         }
-        if (Number.isFinite(meta.evalLoss) && meta.evalLoss > 0) {
+        if (hintLevel === EXACT_HINT_LEVEL && Number.isFinite(meta.evalLoss) && meta.evalLoss > 0) {
           hints.main += ` Objective cost: ${(meta.evalLoss / 100).toFixed(1)} pawn${meta.evalLoss === 100 ? '' : 's'}.`;
         }
-        if (risks.length) hints.main += ` Risk: ${risks.join(', ')}.`;
+        if (hintLevel === EXACT_HINT_LEVEL && risks.length) hints.main += ` Risk: ${risks.join(', ')}.`;
       }
     }
 
     // From-to square notation — always show actual piece color
-    if (bestPV && bestPV.pv && bestPV.pv.length > 0) {
+    if (hintLevel === EXACT_HINT_LEVEL && bestPV && bestPV.pv && bestPV.pv.length > 0) {
       const uci = bestPV.pv[0];
       const from = uci.substring(0, 2);
       const to = uci.substring(2, 4);
@@ -1783,14 +1864,25 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
 
     // Continuation
     if (bestPV && bestPV.pv) {
-      hints.continuation = formatContinuation(bestPV.pv, isWhite, fen || '');
+      hints.continuation = formatContinuation(bestPV.pv, hintLevel, isWhite, fen || '');
+    }
+
+    // Move classification — from the mover's perspective (the side that
+    // played the last move is the opposite of the current side to move).
+    if (analysisData.prevEval !== undefined && analysisData.currEval !== undefined) {
+      const activeColor = (fen && typeof fen === 'string') ? (fen.split(' ')[1] || 'w') : 'w';
+      hints.moveClassification = classifyMove(analysisData.prevEval, analysisData.currEval, {
+        moverColor: activeColor === 'w' ? 'b' : 'w',
+        scoreTypeBefore: analysisData.prevScoreType || 'cp',
+        scoreTypeAfter: analysisData.currScoreType || 'cp'
+      });
     }
 
     // Winning plan (style-aware)
     hints.winningPlan = generateWinningPlan(evalScore, scoreType, position, playerColor, fen || '', style);
 
-    // Style annotation for the exact-move hint
-    if (bestPV && bestPV.pv && bestPV.pv.length > 0 && fen) {
+    // Style annotation for exact-move hints
+    if (hintLevel === EXACT_HINT_LEVEL && bestPV && bestPV.pv && bestPV.pv.length > 0 && fen) {
       const annotations = annotateMoveForStyle(bestPV.pv[0], fen, style, evalScore, bestPV._styleAnalysis);
       if (annotations.length > 0) hints.styleAnnotation = annotations.join(', ');
     }
@@ -1928,7 +2020,7 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
   //
   // Design principle: The user chose to assist Black → show Black's
   // moves as primary, not White's expectations.
-  function generateOpponentTurnHints(hints, bestPV, pvs, evalScore, scoreType, position, playerColor, activeColor, fen, style) {
+  function generateOpponentTurnHints(hints, bestPV, pvs, evalScore, scoreType, position, playerColor, activeColor, fen, hintLevel, style) {
     if (!fen) return;
     const board = parseFENPlacement(fen.split(' ')[0]);
     const isWhite = playerColor === 'w';
@@ -2005,11 +2097,13 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
 
     // From-to notation — ALWAYS show the PLAYER'S response move
     // Never show opponent's move as the primary from-to hint
-    if (responseUci) {
-      hints.bestMoveFromTo = responseFromToHint;
-    } else {
-      // No response available yet — show waiting state, NOT opponent's move
-      hints.bestMoveFromTo = `Waiting for ${oppColor}'s move...`;
+    if (hintLevel === EXACT_HINT_LEVEL) {
+      if (responseUci) {
+        hints.bestMoveFromTo = responseFromToHint;
+      } else {
+        // No response available yet — show waiting state, NOT opponent's move
+        hints.bestMoveFromTo = `Waiting for ${oppColor}'s move...`;
+      }
     }
 
     // Winning plan from assisted player's perspective (style-aware)
@@ -2022,7 +2116,7 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
 
     // Continuation
     if (bestPV.pv) {
-      hints.continuation = formatContinuation(bestPV.pv, isWhite, fen);
+      hints.continuation = formatContinuation(bestPV.pv, hintLevel, isWhite, fen);
     }
   }
 
@@ -2119,7 +2213,7 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
   }
 
   // ─── Format PVs ────────────────────────────────────────────────────
-  function formatPVs(pvs, isWhite, fen) {
+  function formatPVs(pvs, isWhite, hintLevel, fen) {
     if (!pvs || pvs.length === 0) return [];
     const safeFen = fen || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -2151,7 +2245,7 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
   }
 
   // ─── Format Continuation ───────────────────────────────────────────
-  function formatContinuation(pv, isWhite, fen) {
+  function formatContinuation(pv, hintLevel, isWhite, fen) {
     if (!pv || pv.length === 0) return [];
     if (!fen) return [];
 

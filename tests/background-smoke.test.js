@@ -256,10 +256,8 @@ function send(message) {
   const stdMatch = context.recordPlayerMove(guardFen, { playerUci: 'd1d2' });
   assert.equal(stdMatch.sensible, true, 'standard mode: playing the suggested move is sensible');
   assert.equal(stdMatch.matched, true, 'standard mode: matched flag mirrors sensible');
-  assert.equal(stdMatch.playedUci, 'd1d2', 'recordPlayerMove echoes the played UCI back to the caller');
   const stdOther = context.recordPlayerMove(guardFen, { playerUci: 'd1h5' });
   assert.equal(stdOther.sensible, false, 'standard mode: ignoring the suggestion is not sensible');
-  assert.equal(stdOther.playedUci, 'd1h5', 'recordPlayerMove echoes the played UCI even on a miss');
 
   context.resetCorrelationTracker();
   context.recordEngineRecommendation(guardFen, 'd1d2');
@@ -273,62 +271,6 @@ function send(message) {
   const guardStats = context.getCorrelationStats();
   assert.equal(guardStats.total, 3, 'correlation guard records all three player moves');
   assert.equal(guardStats.matches, 2, 'two of three moves are human-like/sensible');
-
-  // ── Engine-vs-human comparison tracker ──────────────────────────────
-  // The same three moves are now visible from a different angle: did the
-  // player follow the engine top pick, the human pick, or neither? Each
-  // recorded move bumps a separate counter, and the agreement figure
-  // captures whether the human-like re-ranker actually moved off the
-  // engine line in the first place.
-  context.resetCorrelationTracker();
-  context.recordEngineRecommendation(guardFen, 'd1d2');
-  context.recordHumanRecommendation(guardFen, 'd1h5');
-  // First move: player copies the human pick.
-  context.recordPlayerMove(guardFen, { playerUci: 'd1h5' });
-  // Second move: player copies the engine top pick (bot-style in human mode).
-  context.recordPlayerMove(guardFen, { playerUci: 'd1d2' });
-  // Third move: player plays something neither side recommended.
-  context.recordPlayerMove(guardFen, { playerUci: 'd1d3' });
-  const cmp = context.getComparisonStats();
-  assert.equal(cmp.totalMoves, 3, 'comparison tracker records all three moves');
-  assert.equal(cmp.engine.matches, 1, 'engine match: only the second move copied the engine');
-  assert.equal(cmp.engine.total, 3);
-  assert.equal(cmp.engine.pct, 33, 'engine match pct = 1/3 = 33%');
-  assert.equal(cmp.human.matches, 1, 'human match: only the first move copied the human pick');
-  assert.equal(cmp.human.total, 3, 'human match denominator = number of moves with a human pick');
-  assert.equal(cmp.human.pct, 33, 'human match pct = 1/3 = 33%');
-  assert.equal(cmp.independent.moves, 1, 'independent: only the third move was neither engine nor human');
-  assert.equal(cmp.independent.total, 3);
-  assert.equal(cmp.independent.pct, 33);
-  assert.equal(cmp.agreement.agreed, 0, 'agreement: engine and human disagreed on all three FENs');
-  assert.equal(cmp.agreement.total, 3);
-
-  // Edge case: when the engine and human pick coincide, copying the engine
-  // also counts as following the human — the comparison must reflect that.
-  context.resetCorrelationTracker();
-  const agreedFen = '4k3/8/8/8/8/8/8/4Q1K1 w - - 0 1';
-  context.recordEngineRecommendation(agreedFen, 'e1f2');
-  context.recordHumanRecommendation(agreedFen, 'e1f2');
-  context.recordPlayerMove(agreedFen, { playerUci: 'e1f2' });
-  const agreedCmp = context.getComparisonStats();
-  assert.equal(agreedCmp.totalMoves, 1);
-  assert.equal(agreedCmp.engine.matches, 1, 'engine match: copying the (agreed) move counts');
-  assert.equal(agreedCmp.human.matches, 1, 'human match: copying the (agreed) move also counts');
-  assert.equal(agreedCmp.independent.moves, 0, 'no independent move when both sides agreed and player copied');
-  assert.equal(agreedCmp.agreement.agreed, 1, 'agreement = 1/1 since engine and human suggested the same move');
-  assert.equal(agreedCmp.agreement.pct, 100);
-
-  // Edge case: standard mode (no human pick recorded) leaves the human row
-  // at zero/zero and the comparison degrades to the engine match alone.
-  context.resetCorrelationTracker();
-  context.recordEngineRecommendation(agreedFen, 'e1f2');
-  context.recordPlayerMove(agreedFen, { playerUci: 'e1f2' });
-  const stdCmp = context.getComparisonStats();
-  assert.equal(stdCmp.totalMoves, 1);
-  assert.equal(stdCmp.engine.matches, 1);
-  assert.equal(stdCmp.human.total, 0, 'no human samples when no human recommendation was recorded');
-  assert.equal(stdCmp.human.pct, 0, 'human pct is 0/0 = 0% (UI shows n/a)');
-  assert.equal(stdCmp.agreement.total, 0, 'agreement denominator is also 0 with no human samples');
 
   console.log('background smoke tests passed');
 })().catch(error => {

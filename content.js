@@ -164,21 +164,15 @@
     return rights || '-';
   }
 
-  // DOM placement cannot recover castling rights, en-passant, or move
-  // counters from piece positions alone. The only EP target we can
-  // legitimately infer is the one left by a single-file double push: a
-  // pawn on rank 4 (row 4) directly adjacent to an enemy pawn on rank 4
-  // (row 4) means the side-to-move's pawn *just* crossed two squares.
-  // Any other configuration yields '-'.
   function getChesscomEnPassant(board) {
     for (let c = 0; c < 8; c++) {
-      if (board[4][c] === 'P') {
-        if (c > 0 && board[4][c - 1] === 'p') return String.fromCharCode(97 + c) + '3';
-        if (c < 7 && board[4][c + 1] === 'p') return String.fromCharCode(97 + c) + '3';
+      if (board[3][c] === 'P') {
+        if (c > 0 && board[3][c - 1] === 'p') return String.fromCharCode(97 + c) + '6';
+        if (c < 7 && board[3][c + 1] === 'p') return String.fromCharCode(97 + c) + '6';
       }
-      if (board[3][c] === 'p') {
-        if (c > 0 && board[3][c - 1] === 'P') return String.fromCharCode(97 + c) + '6';
-        if (c < 7 && board[3][c + 1] === 'P') return String.fromCharCode(97 + c) + '6';
+      if (board[4][c] === 'p') {
+        if (c > 0 && board[4][c - 1] === 'P') return String.fromCharCode(97 + c) + '3';
+        if (c < 7 && board[4][c + 1] === 'P') return String.fromCharCode(97 + c) + '3';
       }
     }
     return '-';
@@ -361,18 +355,15 @@
     return isFlipped ? 'b' : 'w';
   }
 
-  // Same single-file double-push heuristic as getChesscomEnPassant: a
-  // white pawn on rank 4 (row 4) adjacent to a black pawn on rank 4
-  // (row 4) yields EP rank 3, and vice versa for black on rank 5 → rank 6.
   function getLichessEnPassant(board) {
     for (let c = 0; c < 8; c++) {
-      if (board[4][c] === 'P') {
-        if (c > 0 && board[4][c - 1] === 'p') return String.fromCharCode(97 + c) + '3';
-        if (c < 7 && board[4][c + 1] === 'p') return String.fromCharCode(97 + c) + '3';
+      if (board[3][c] === 'P') {
+        if (c > 0 && board[3][c - 1] === 'p') return String.fromCharCode(97 + c) + '6';
+        if (c < 7 && board[3][c + 1] === 'p') return String.fromCharCode(97 + c) + '6';
       }
-      if (board[3][c] === 'p') {
-        if (c > 0 && board[3][c - 1] === 'P') return String.fromCharCode(97 + c) + '6';
-        if (c < 7 && board[3][c + 1] === 'P') return String.fromCharCode(97 + c) + '6';
+      if (board[4][c] === 'p') {
+        if (c > 0 && board[4][c - 1] === 'P') return String.fromCharCode(97 + c) + '3';
+        if (c < 7 && board[4][c + 1] === 'P') return String.fromCharCode(97 + c) + '3';
       }
     }
     return '-';

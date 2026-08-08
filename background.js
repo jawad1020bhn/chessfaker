@@ -29,12 +29,6 @@ const DEFAULT_SETTINGS = {
   autoAnalyze: true,
   showThreats: true,
   showCriticalMoments: true,
-  showCorrelationStat: true,       // Engine-comparison card in the side panel position-info card
-  // Which row of the comparison card to highlight. 'engine' follows the
-  // historical default (engine match rate); 'human' emphasises the
-  // human-like pick match rate; 'independent' surfaces the rate at which
-  // the player plays a move neither side recommended.
-  comparisonMode: 'engine',
   depthTarget: 0,                  // 0 = no minimum; otherwise min depth for exact hints
   // These gate background fetching that feeds opening names and tablebase-backed plans.
   showOpeningExplorer: true,
@@ -45,14 +39,11 @@ const DEFAULT_SETTINGS = {
   useMastersExplorer: true
 };
 
-const COMPARISON_MODES = Object.freeze(['engine', 'human', 'independent']);
-
 function normalizeSettings(value = {}) {
   const candidate = value && typeof value === 'object' ? value : {};
   const booleanKeys = [
     'humanLikeMode', 'autoAnalyze', 'showThreats',
-    'showCriticalMoments', 'showCorrelationStat',
-    'showOpeningExplorer', 'showTablebase',
+    'showCriticalMoments', 'showOpeningExplorer', 'showTablebase',
     'useChessApi', 'useLichessCloud', 'useMastersExplorer'
   ];
   const normalized = { ...DEFAULT_SETTINGS };
@@ -63,9 +54,6 @@ function normalizeSettings(value = {}) {
     : DEFAULT_SETTINGS.style;
   normalized.whiteRepertoire = typeof candidate.whiteRepertoire === 'string' ? candidate.whiteRepertoire : DEFAULT_SETTINGS.whiteRepertoire;
   normalized.blackRepertoire = typeof candidate.blackRepertoire === 'string' ? candidate.blackRepertoire : DEFAULT_SETTINGS.blackRepertoire;
-  normalized.comparisonMode = COMPARISON_MODES.includes(candidate.comparisonMode)
-    ? candidate.comparisonMode
-    : DEFAULT_SETTINGS.comparisonMode;
   for (const key of booleanKeys) normalized[key] = typeof candidate[key] === 'boolean' ? candidate[key] : DEFAULT_SETTINGS[key];
   return normalized;
 }
@@ -321,28 +309,6 @@ const correlationWindow = []; // array of booleans (true = human-like move)
 let correlationMatches = 0;
 let correlationTotal = 0;
 
-// ─── Engine-vs-human comparison tracker ──────────────────────────────
-// A side-by-side comparison: for every recorded move we capture what the
-// engine's top pick was, what the human-like pick was, and what the player
-// actually moved. Four independent verdicts per move (engine-match, human-
-// match, played-own-natural, engine-and-human-agreed) feed four numbers in
-// the UI so the player can see "I followed the engine 6/8, but the human
-// pick only on 2/3" — i.e. *when* the engine and human disagreed, what did I
-// do? The legacy "Sensible moves" binary above is preserved; this is a new
-// shape that runs alongside it. The window is bounded to keep memory in
-// check; counters are unbounded for the per-game totals.
-const COMPARISON_WINDOW_LIMIT = 32;
-const comparisonWindow = []; // { playedUci, engineTop, humanUci, t }
-const comparisonStats = {
-  totalMoves: 0,         // moves where the engine had a top pick
-  engineMatches: 0,      // Σ playedUci === engineTop
-  humanSamples: 0,       // moves where the human-like pick was offered
-  humanMatches: 0,       // Σ playedUci === humanUci (only when humanUci exists)
-  engineHumanPairs: 0,   // moves with both engineTop and humanUci
-  engineHumanAgreed: 0,  // Σ engineTop === humanUci (only when both exist)
-  ownNaturalMoves: 0     // Σ playedUci differed from both engine and human
-};
-
 function recordEngineRecommendation(fen, uci) {
   if (!fen || !uci) return;
   engineMoveByFen.set(fen, uci);
@@ -419,37 +385,7 @@ function recordPlayerMove(prevFen, payload) {
   if (correlationWindow.length > 8) correlationWindow.shift();
   correlationTotal++;
   if (sensible) correlationMatches++;
-
-  // ── Engine-vs-human comparison bookkeeping ────────────────────────
-  // Only run the comparison if we have a known engine top pick and a
-  // concrete player move; without those, every verdict is undefined.
-  if (engineTop && playedUci) {
-    const matchedEngine = playedUci === engineTop;
-    const matchedHuman = Boolean(humanMove) && playedUci === humanMove;
-    const engineHumanAgree = Boolean(humanMove) && engineTop === humanMove;
-    const ownNatural = playedUci !== engineTop && playedUci !== humanMove;
-    comparisonWindow.push({ playedUci, engineTop, humanUci: humanMove || null, t: Date.now() });
-    if (comparisonWindow.length > COMPARISON_WINDOW_LIMIT) {
-      comparisonWindow.splice(0, comparisonWindow.length - COMPARISON_WINDOW_LIMIT);
-    }
-    comparisonStats.totalMoves += 1;
-    if (matchedEngine) comparisonStats.engineMatches += 1;
-    if (humanMove) {
-      comparisonStats.humanSamples += 1;
-      if (matchedHuman) comparisonStats.humanMatches += 1;
-      comparisonStats.engineHumanPairs += 1;
-      if (engineHumanAgree) comparisonStats.engineHumanAgreed += 1;
-    }
-    if (ownNatural) comparisonStats.ownNaturalMoves += 1;
-  }
-
-  return {
-    matched: sensible,
-    sensible,
-    expected,
-    playedUci,
-    recentPct: correlationWindow.filter(Boolean).length / correlationWindow.length
-  };
+  return { matched: sensible, sensible, expected, recentPct: correlationWindow.filter(Boolean).length / correlationWindow.length };
 }
 
 // Apply the engine's UCI to prevFen and compare placement + side-to-move
@@ -460,38 +396,6 @@ function didPlayerPlayEngineMove(prevFen, engineUci, actualFen) {
   // Compare the resulting placement and require the side to move to flip.
   // ChessCore also handles castling, promotion and en-passant captures.
   return ChessCore.didUciProduceFen(prevFen, engineUci, actualFen);
-}
-
-// Infer the UCI that was played between two FENs. Walks all plausible
-// from/to squares from `inferTransition` and finds the unique UCI that
-// reproduces `currentFen`'s placement. Returns null when no UCI fits
-// (positions differ in more than one move, illegal positions, etc.).
-// Promotions are detected by checking which under-promotion piece the
-// target square ended up with.
-function inferUciFromFenDiff(prevFen, currentFen) {
-  if (!prevFen || !currentFen) return null;
-  const prev = ChessCore.parseFen(prevFen);
-  const next = ChessCore.parseFen(currentFen);
-  if (!prev || !next) return null;
-  if (prev.parts[1] === next.parts[1]) return null; // side to move must flip
-
-  // Build a list of candidate from-to squares from the placement diff.
-  // inferTransition already does this; reuse it.
-  const transition = ChessCore.inferTransition(prevFen, currentFen);
-  if (!transition) return null;
-  const fromSq = String.fromCharCode(97 + transition.from.c) + (8 - transition.from.r);
-  const toSq = String.fromCharCode(97 + transition.to.c) + (8 - transition.to.r);
-  // Promotion: if the from piece is a pawn and the to piece is not a
-  // pawn of the same color, infer the promotion piece. Otherwise no
-  // promotion suffix.
-  let promo = '';
-  const moverIsWhite = prev.parts[1] === 'w';
-  const fromPiece = transition.from.before;
-  const toPiece = transition.to.after;
-  if (fromPiece && fromPiece.toLowerCase() === 'p' && toPiece && toPiece.toLowerCase() !== 'p' && toPiece !== fromPiece) {
-    promo = toPiece.toLowerCase();
-  }
-  return fromSq + toSq + promo;
 }
 
 function getCorrelationStats() {
@@ -506,57 +410,12 @@ function getCorrelationStats() {
   };
 }
 
-// Side-by-side engine vs human comparison. The same numerator/denominator
-// pair drives each percentage so the headline figures are directly comparable:
-// "8/8 (100%) engine match, 5/7 (71%) human match" means the player followed
-// the engine on every move but only picked the human-style suggestion 71% of
-// the time it was offered. The agreement figure answers the upstream question
-// of *how often* the human-mode re-ranker actually moved the engine off its
-// top pick — if the agreement is high, the comparison column is mostly
-// measuring the same thing twice.
-function getComparisonStats() {
-  const pct = (num, den) => (den > 0 ? Math.round((num / den) * 100) : 0);
-  return {
-    totalMoves: comparisonStats.totalMoves,
-    humanSamples: comparisonStats.humanSamples,
-    engine: {
-      matches: comparisonStats.engineMatches,
-      total: comparisonStats.totalMoves,
-      pct: pct(comparisonStats.engineMatches, comparisonStats.totalMoves)
-    },
-    human: {
-      matches: comparisonStats.humanMatches,
-      total: comparisonStats.humanSamples,
-      pct: pct(comparisonStats.humanMatches, comparisonStats.humanSamples)
-    },
-    independent: {
-      moves: comparisonStats.ownNaturalMoves,
-      total: comparisonStats.totalMoves,
-      pct: pct(comparisonStats.ownNaturalMoves, comparisonStats.totalMoves)
-    },
-    agreement: {
-      agreed: comparisonStats.engineHumanAgreed,
-      total: comparisonStats.engineHumanPairs,
-      pct: pct(comparisonStats.engineHumanAgreed, comparisonStats.engineHumanPairs)
-    },
-    recentWindow: comparisonWindow.slice()
-  };
-}
-
 function resetCorrelationTracker() {
   engineMoveByFen.clear();
   humanMoveByFen.clear();
   correlationWindow.length = 0;
   correlationMatches = 0;
   correlationTotal = 0;
-  comparisonWindow.length = 0;
-  comparisonStats.totalMoves = 0;
-  comparisonStats.engineMatches = 0;
-  comparisonStats.humanSamples = 0;
-  comparisonStats.humanMatches = 0;
-  comparisonStats.engineHumanPairs = 0;
-  comparisonStats.engineHumanAgreed = 0;
-  comparisonStats.ownNaturalMoves = 0;
 }
 
 // ─── Analysis workflow coalescing and panel lifecycle ─────────────────
@@ -1489,305 +1348,274 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 // ═══════════════════════════════════════════════════════════════════════
 // ─── Message Routing ─────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
-// Every chrome.runtime.onMessage handler is a function that receives the
-// (message, sender, sendResponse) triple and returns a truthy value when
-// the response is delivered asynchronously (keeps the channel open) or a
-// falsy value when the response is already sent synchronously. Pulling the
-// per-message work out of one giant listener into a routes map makes each
-// precondition easier to read and easier to test in isolation.
-//
-// The route shape is:
-//   { pre?: (msg, sender) => boolean,
-//     run: (msg, sender, sendResponse) => boolean }
-//
-// `pre` is an optional validation hook. If it returns false, the response
-// is sent as `null` synchronously and the route is skipped. Returning true
-// means "valid, proceed".
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  const msgType = message.type;
 
-function getEffectiveTabId(message, sender) {
-  return message.tabId ?? sender.tab?.id ?? 'active';
-}
+  if (msgType === 'read_board') {
+    readBoardFromActiveTab().then(result => {
+      sendResponse(result);
+    }).catch(err => sendResponse({ error: err.message }));
+    return true;
+  }
 
-const MESSAGE_ROUTES = {
-  read_board: {
-    run(_message, _sender, sendResponse) {
-      readBoardFromActiveTab()
-        .then(result => sendResponse(result))
-        .catch(err => sendResponse({ error: err.message }));
-      return true;
-    }
-  },
+  if (msgType === 'get_turn_state') {
+    sendResponse({
+      isPlayerTurn: turnState.isPlayerTurn,
+      waitingForOpponent: turnState.waitingForOpponent,
+      lastAnalyzedFen: turnState.lastAnalyzedFen,
+      analysisInProgress: turnState.analysisInProgress
+    });
+    return false;
+  }
 
   // The side panel drives analysis via 'request_analysis' only.
-  request_analysis: {
-    pre: (message) => ChessCore.parseFen(message.fen) !== null,
-    run(message, sender, sendResponse) {
-      // A turn-unknown reply is sent synchronously so the side panel can
-      // render the "Turn unavailable" state without waiting for storage I/O.
-      if (message.turnReliable !== true) {
+
+  if (msgType === 'request_analysis') {
+    if (!ChessCore.parseFen(message.fen)) {
+      sendResponse({ ok: false, error: 'Invalid board position' });
+      return false;
+    }
+    if (message.turnReliable !== true) {
+      chrome.runtime.sendMessage({
+        type: 'turn_status_update',
+        data: { isPlayerTurn: false, waitingForOpponent: false, reason: 'turn_unknown', fen: message.fen }
+      }).catch(() => {});
+      sendResponse({ ok: true, turnStatus: 'turn_unknown' });
+      return false;
+    }
+    chrome.storage.local.get(['settings', 'assistedPlayerColor'], (result) => {
+      const settings = normalizeSettings(result.settings);
+      const assistedPlayerColor = message.playerColor || result.assistedPlayerColor || 'w';
+      const tabId = message.tabId ?? sender.tab?.id ?? 'active';
+      notePanelActivity(tabId, true);
+      const positionToken = registerPosition(message.fen, tabId);
+
+      if (positionToken && lastAnalysisGameId !== positionToken.gameId) {
+        lastAnalysisGameId = positionToken.gameId;
+        resetAnalysisState();
+        resetCorrelationTracker();
+      }
+
+      const effectiveHintLevel = 5;
+      let exactHintBlocked = null;
+
+      // Refresh is deliberately non-destructive: caches, cooldowns, quotas and
+      // passive health remain intact. The coordinator decides whether the
+      // current cached result is old enough to revalidate.
+
+      const turnCheck = shouldAnalyzePosition(message.fen, assistedPlayerColor);
+
+      const refreshCurrentPosition = Boolean(message.refresh && turnCheck.reason === 'same_position' && turnCheck.isPlayerTurn);
+      if (!turnCheck.shouldAnalyze && !refreshCurrentPosition) {
         chrome.runtime.sendMessage({
           type: 'turn_status_update',
-          data: { isPlayerTurn: false, waitingForOpponent: false, reason: 'turn_unknown', fen: message.fen }
+          data: {
+            isPlayerTurn: turnCheck.isPlayerTurn,
+            waitingForOpponent: !turnCheck.isPlayerTurn,
+            reason: turnCheck.reason,
+            fen: message.fen,
+            playerColor: assistedPlayerColor
+          }
         }).catch(() => {});
-        sendResponse({ ok: true, turnStatus: 'turn_unknown' });
-        return false;
+
+        if (turnCheck.reason === 'opponents_turn') {
+          sendResponse({ ok: true, turnStatus: 'opponents_turn' });
+        } else if (turnCheck.reason === 'same_position') {
+          sendResponse({ ok: true, turnStatus: 'same_position' });
+        } else {
+          sendResponse({ ok: true });
+        }
+        return;
       }
-      chrome.storage.local.get(['settings', 'assistedPlayerColor'], (result) => {
-        const settings = normalizeSettings(result.settings);
-        const assistedPlayerColor = message.playerColor || result.assistedPlayerColor || 'w';
-        const tabId = getEffectiveTabId(message, sender);
-        notePanelActivity(tabId, true);
-        const positionToken = registerPosition(message.fen, tabId);
 
-        if (positionToken && lastAnalysisGameId !== positionToken.gameId) {
-          lastAnalysisGameId = positionToken.gameId;
-          resetAnalysisState();
-          resetCorrelationTracker();
-        }
+      turnState.analysisInProgress = true;
 
-        const effectiveHintLevel = 5;
-        let exactHintBlocked = null;
-
-        // Refresh is deliberately non-destructive: caches, cooldowns, quotas
-        // and passive health remain intact. The coordinator decides whether
-        // the current cached result is old enough to revalidate.
-        const turnCheck = shouldAnalyzePosition(message.fen, assistedPlayerColor);
-        const refreshCurrentPosition = Boolean(message.refresh && turnCheck.reason === 'same_position' && turnCheck.isPlayerTurn);
-        if (!turnCheck.shouldAnalyze && !refreshCurrentPosition) {
-          chrome.runtime.sendMessage({
-            type: 'turn_status_update',
-            data: {
-              isPlayerTurn: turnCheck.isPlayerTurn,
-              waitingForOpponent: !turnCheck.isPlayerTurn,
-              reason: turnCheck.reason,
-              fen: message.fen,
-              playerColor: assistedPlayerColor
-            }
-          }).catch(() => {});
-          if (turnCheck.reason === 'opponents_turn') {
-            sendResponse({ ok: true, turnStatus: 'opponents_turn' });
-          } else if (turnCheck.reason === 'same_position') {
-            sendResponse({ ok: true, turnStatus: 'same_position' });
-          } else {
-            sendResponse({ ok: true });
-          }
-          return;
-        }
-
-        turnState.analysisInProgress = true;
-        performCloudAnalysis(message.fen, assistedPlayerColor, {
-          multiPv: message.multiPv || settings.cloudDepth || 3,
-          moveHistory: message.gameInfo?.moveHistory || [],
-          refresh: Boolean(message.refresh),
-          positionToken,
-          tabId,
-          positionReliable: message.positionReliable === true
-        }).then(cloudResult => {
-          turnState.analysisInProgress = false;
-          if (!apiCoordinator.isPositionCurrent(positionToken) || cloudResult?.stalePosition) return;
-
-          if (cloudResult && !cloudResult.error) {
-            markPositionAnalyzed(message.fen, cloudResult.source);
-            turnState.consecutiveFailures = 0;
-            cloudResult.hintLevel = effectiveHintLevel;
-
-            // Exact-only mode has no lower-detail fallback. Guards withhold
-            // the move rather than leaking it through a downgraded hint.
-            const depthTarget = settings.depthTarget || 0;
-            if (!exactHintBlocked && depthTarget > 0) {
-              const actualDepth = cloudResult.depth || 0;
-              // Sources with perfect or forced information (tablebase, mate
-              // scores) bypass the depth target — they are not subject to
-              // the same "shallow engine evaluation" risk.
-              const isAuthoritative = cloudResult.source === 'tablebase' ||
-                (cloudResult.pvs && cloudResult.pvs.some(pv => pv.scoreType === 'mate'));
-              if (!isAuthoritative && actualDepth < depthTarget) {
-                exactHintBlocked = { reason: 'depth_target', message: `Exact-move hints require depth ${depthTarget}; current depth is ${actualDepth}.` };
-              }
-            }
-            cloudResult.exactHintBlocked = exactHintBlocked;
-
-            if (cloudResult.pvs && cloudResult.pvs.length > 0 && cloudResult.pvs[0].pv && cloudResult.pvs[0].pv.length > 0) {
-              recordEngineRecommendation(message.fen, cloudResult.pvs[0].pv[0]);
-              cloudResult.correlationStats = getCorrelationStats();
-              cloudResult.comparisonStats = getComparisonStats();
-            }
-            chrome.runtime.sendMessage({ type: 'analysis_update', data: cloudResult }).catch(() => {});
-          } else {
-            turnState.consecutiveFailures++;
-            const detail = cloudResult?.errorDetail || classifyError();
-            let errorMsg = detail.message || 'Cloud analysis unavailable';
-            if (detail.suggestion === 'retry') errorMsg += ' Try Refresh.';
-            else if (detail.suggestion === 'wait') errorMsg += ' Will retry on your next turn.';
-            else if (detail.suggestion !== 'none') errorMsg += ' Check your connection and try Refresh.';
-            chrome.runtime.sendMessage({
-              type: 'analysis_error',
-              data: { error: errorMsg, fen: message.fen, detail }
-            }).catch(() => {});
-          }
-        });
-        sendResponse({ ok: true });
-      });
-      return true;
-    }
-  },
-
-  request_cloud_analysis: {
-    pre: (message) => ChessCore.parseFen(message.fen) !== null,
-    run(message, sender, sendResponse) {
-      const tabId = getEffectiveTabId(message, sender);
-      const positionToken = registerPosition(message.fen, tabId);
-      notePanelActivity(tabId, true);
-      performCloudAnalysis(message.fen, message.playerColor, {
-        multiPv: message.multiPv || 3,
-        moveHistory: message.moveHistory || [],
+      performCloudAnalysis(message.fen, assistedPlayerColor, {
+        multiPv: message.multiPv || settings.cloudDepth || 3,
+        moveHistory: message.gameInfo?.moveHistory || [],
         refresh: Boolean(message.refresh),
         positionToken,
         tabId,
         positionReliable: message.positionReliable === true
-      }).then(result => sendResponse(result)).catch(() => sendResponse(null));
-      return true;
-    }
-  },
+      }).then(cloudResult => {
+        turnState.analysisInProgress = false;
+        if (!apiCoordinator.isPositionCurrent(positionToken) || cloudResult?.stalePosition) return;
 
-  health_check: {
-    run(_message, _sender, sendResponse) {
-      checkConnectionHealth().then(results => sendResponse(results)).catch(() => sendResponse({}));
-      return true;
-    }
-  },
+        if (cloudResult && !cloudResult.error) {
+          markPositionAnalyzed(message.fen, cloudResult.source);
+          turnState.consecutiveFailures = 0;
 
-  get_api_diagnostics: {
-    run(_message, _sender, sendResponse) {
-      apiCoordinator.ready.then(() => sendResponse(apiCoordinator.getDiagnostics())).catch(() => sendResponse(null));
-      return true;
-    }
-  },
+          cloudResult.hintLevel = effectiveHintLevel;
 
-  panel_state: {
-    run(message, sender, sendResponse) {
-      const tabId = getEffectiveTabId(message, sender);
-      notePanelActivity(tabId, message.open !== false);
-      if (message.open === false) apiCoordinator.cancelTab(tabId);
-      sendResponse({ ok: true });
-      return false;
-    }
-  },
+          // Exact-only mode has no lower-detail fallback. Guards withhold the
+          // move rather than leaking it through a downgraded hint level.
+          const depthTarget = settings.depthTarget || 0;
+          if (!exactHintBlocked && depthTarget > 0) {
+            const actualDepth = cloudResult.depth || 0;
+            if (actualDepth < depthTarget && actualDepth < 100) {
+              exactHintBlocked = { reason: 'depth_target', message: `Exact-move hints require depth ${depthTarget}; current depth is ${actualDepth}.` };
+            }
+          }
 
-  clear_caches: {
-    run(_message, _sender, sendResponse) {
-      // Clearing result data never clears quota, cooldown or provider-health
-      // state — those are kept on purpose so the next request still has the
-      // rate-limit and circuit-breaker signals to lean on.
-      apiCoordinator.clearCaches().then(async () => {
-        const items = await chrome.storage.local.get(null);
-        const legacyKeys = Object.keys(items).filter(key =>
-          key.startsWith('cloud_eval_') || key.startsWith('chessapi_') ||
-          key.startsWith('opening_') || key.startsWith('tablebase_') ||
-          key.startsWith('eval_') || key.startsWith('masters_eval_')
-        );
-        if (legacyKeys.length) await chrome.storage.local.remove(legacyKeys);
-        resetAnalysisState();
-        sendResponse({ ok: true });
-      }).catch(() => sendResponse({ ok: false }));
-      return true;
-    }
-  },
+          cloudResult.exactHintBlocked = exactHintBlocked;
 
-  player_color_changed: {
-    run(_message, _sender, sendResponse) {
-      // Reset all per-game/per-color trackers, not just turnState.
-      resetAnalysisState();
-      lastAnalysisGameId = null;
-      resetCorrelationTracker();
-      sendResponse({ ok: true });
-      return false;
-    }
-  },
+          // Record the engine's first-choice move so that when the
+          // player makes their move, we can update the correlation tracker.
+          if (cloudResult.pvs && cloudResult.pvs.length > 0 && cloudResult.pvs[0].pv && cloudResult.pvs[0].pv.length > 0) {
+            recordEngineRecommendation(message.fen, cloudResult.pvs[0].pv[0]);
+            // Also expose (non-revealing) correlation stats so the sidepanel UI
+            // can show "Engine Match: X / Y (Z%)" without revealing the move.
+            cloudResult.correlationStats = getCorrelationStats();
+          }
 
-  // The side panel reports the player's actual move so we can compare it to
-  // the engine's recommendation and update the rolling correlation window.
-  // Accepts either { playerUci } (exact UCI) or { actualFen } (resulting FEN
-  // — we FEN-diff to infer a match). Returns the match result (or null if
-  // no stored engine recommendation).
-  record_player_move: {
-    run(message, _sender, sendResponse) {
-      const result = recordPlayerMove(message.prevFen, {
-        playerUci: message.playerUci,
-        actualFen: message.actualFen
+          chrome.runtime.sendMessage({ type: 'analysis_update', data: cloudResult }).catch(() => {});
+        } else {
+          turnState.consecutiveFailures++;
+          const detail = cloudResult?.errorDetail || classifyError();
+          let errorMsg = detail.message || 'Cloud analysis unavailable';
+          if (detail.suggestion === 'retry') errorMsg += ' Try Refresh.';
+          else if (detail.suggestion === 'wait') errorMsg += ' Will retry on your next turn.';
+          else if (detail.suggestion !== 'none') errorMsg += ' Check your connection and try Refresh.';
+          chrome.runtime.sendMessage({
+            type: 'analysis_error',
+            data: { error: errorMsg, fen: message.fen, detail }
+          }).catch(() => {});
+        }
       });
-      sendResponse(result);
+
+      sendResponse({ ok: true });
+    });
+    return true;
+  }
+
+  if (msgType === 'request_cloud_analysis') {
+    if (!ChessCore.parseFen(message.fen)) { sendResponse(null); return false; }
+    const tabId = message.tabId ?? sender.tab?.id ?? 'active';
+    const positionToken = registerPosition(message.fen, tabId);
+    notePanelActivity(tabId, true);
+    performCloudAnalysis(message.fen, message.playerColor, {
+      multiPv: message.multiPv || 3,
+      moveHistory: message.moveHistory || [],
+      refresh: Boolean(message.refresh),
+      positionToken,
+      tabId,
+      positionReliable: message.positionReliable === true
+    }).then(result => sendResponse(result)).catch(() => sendResponse(null));
+    return true;
+  }
+
+  if (msgType === 'request_opening_data') {
+    if (message.positionReliable !== true || !ChessCore.parseFen(message.fen) || !isPlausibleOpening(message.fen)) {
+      sendResponse(null);
       return false;
     }
-  },
+    const tabId = message.tabId ?? sender.tab?.id ?? 'active';
+    const positionToken = registerPosition(message.fen, tabId);
+    chrome.storage.local.get('settings').then(result => {
+      const settings = normalizeSettings(result.settings);
+      if (!settings.showOpeningExplorer) return null;
+      return lichessOpeningExplorer(message.fen, { positionToken, priority: 'opening-enrichment' });
+    }).then(data => sendResponse(data)).catch(() => sendResponse(null));
+    return true;
+  }
+
+  if (msgType === 'request_tablebase_data') {
+    if (message.positionReliable !== true || !ChessCore.parseFen(message.fen) || countFenPieces(message.fen) > 7) {
+      sendResponse(null);
+      return false;
+    }
+    const tabId = message.tabId ?? sender.tab?.id ?? 'active';
+    const positionToken = registerPosition(message.fen, tabId);
+    lichessTablebase(message.fen, { positionToken, priority: 'current-position-tablebase' })
+      .then(data => sendResponse(data)).catch(() => sendResponse(null));
+    return true;
+  }
+
+  if (msgType === 'get_circuit_states') {
+    sendResponse(apiCoordinator.getDiagnostics().providers);
+    return false;
+  }
+
+  if (msgType === 'health_check') {
+    checkConnectionHealth().then(results => sendResponse(results)).catch(() => sendResponse({}));
+    return true;
+  }
+
+  if (msgType === 'get_api_diagnostics') {
+    apiCoordinator.ready.then(() => sendResponse(apiCoordinator.getDiagnostics())).catch(() => sendResponse(null));
+    return true;
+  }
+
+  if (msgType === 'panel_state') {
+    const tabId = message.tabId ?? sender.tab?.id ?? 'active';
+    notePanelActivity(tabId, message.open !== false);
+    if (message.open === false) apiCoordinator.cancelTab(tabId);
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  if (msgType === 'clear_caches') {
+    // Clearing result data never clears quota, cooldown or provider-health state.
+    apiCoordinator.clearCaches().then(async () => {
+      const items = await chrome.storage.local.get(null);
+      const legacyKeys = Object.keys(items).filter(key =>
+        key.startsWith('cloud_eval_') || key.startsWith('chessapi_') ||
+        key.startsWith('opening_') || key.startsWith('tablebase_') ||
+        key.startsWith('eval_') || key.startsWith('masters_eval_')
+      );
+      if (legacyKeys.length) await chrome.storage.local.remove(legacyKeys);
+      resetAnalysisState();
+      sendResponse({ ok: true });
+    }).catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+
+  if (msgType === 'player_color_changed') {
+    // Reset all per-game/per-color trackers, not just turnState.
+    resetAnalysisState();
+    lastAnalysisGameId = null;
+    resetCorrelationTracker();
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  // The side panel reports the player's actual move so we can compare it to the
+  // engine's recommendation and update the rolling correlation window. Accepts
+  // either { playerUci } (exact UCI) or { actualFen } (resulting FEN — we'll
+  // FEN-diff to infer a match). Returns the match result (or null if no stored
+  // engine recommendation).
+  if (msgType === 'record_player_move') {
+    const result = recordPlayerMove(message.prevFen, {
+      playerUci: message.playerUci,
+      actualFen: message.actualFen
+    });
+    sendResponse(result);
+    return false;
+  }
 
   // The side panel reports the human-natural move it actually recommended
   // (from its style/human-like selection), so the correlation guard can
   // distinguish human-like play from blind engine-top copies.
-  record_human_recommendation: {
-    run(message, _sender, sendResponse) {
-      recordHumanRecommendation(message.fen, message.uci);
-      sendResponse({ ok: true });
-      return false;
-    }
-  },
-
-  get_correlation_stats: {
-    run(_message, _sender, sendResponse) {
-      sendResponse(getCorrelationStats());
-      return false;
-    }
-  },
-
-  get_comparison_stats: {
-    run(_message, _sender, sendResponse) {
-      sendResponse(getComparisonStats());
-      return false;
-    }
-  },
-
-  // Infer the UCI that was played between two FENs. Used by the side
-  // panel's moves-history log to display the SAN of the opponent's last
-  // move (the side panel knows `fenAfterMyMove` from the snapshot and
-  // `currentFen` from the next analysis, but not which UCI bridged them).
-  // Returns null when no move can be inferred (different positions,
-  // invalid FENs, or multiple plausible moves).
-  infer_move: {
-    pre: (message) => {
-      if (!message || !message.prevFen || !message.currentFen) return false;
-      if (ChessCore.parseFen(message.prevFen) === null) return false;
-      if (ChessCore.parseFen(message.currentFen) === null) return false;
-      return true;
-    },
-    run(message, _sender, sendResponse) {
-      sendResponse(inferUciFromFenDiff(message.prevFen, message.currentFen));
-      return false;
-    }
-  },
-
-  // Side panel signals a new game so the tracker resets.
-  reset_correlation: {
-    run(_message, _sender, sendResponse) {
-      resetCorrelationTracker();
-      lastAnalysisGameId = null;
-      sendResponse({ ok: true });
-      return false;
-    }
-  }
-};
-
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  const route = MESSAGE_ROUTES[message?.type];
-  if (!route) return false;
-  if (route.pre && !route.pre(message, sender)) {
-    // A pre-condition failure silently nullifies the response. The previous
-    // giant listener did the same thing via early `sendResponse(null)` calls;
-    // keeping the contract for routes that already used null avoids changing
-    // the side panel's interpretation of "this isn't available right now".
-    sendResponse(null);
+  if (msgType === 'record_human_recommendation') {
+    recordHumanRecommendation(message.fen, message.uci);
+    sendResponse({ ok: true });
     return false;
   }
-  return route.run(message, sender, sendResponse);
+
+  if (msgType === 'get_correlation_stats') {
+    sendResponse(getCorrelationStats());
+    return false;
+  }
+
+  // Side panel signals a new game so the tracker resets.
+  if (msgType === 'reset_correlation') {
+    resetCorrelationTracker();
+    lastAnalysisGameId = null;
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  return false;
 });
 
 // ─── Start keepalive on install ──────────────────────────────────────
@@ -1835,8 +1663,6 @@ chrome.runtime.onInstalled.addListener(() => {
       if (s.useChessApi === undefined) { s.useChessApi = true; updated = true; }
       if (s.useLichessCloud === undefined) { s.useLichessCloud = true; updated = true; }
       if (s.useMastersExplorer === undefined) { s.useMastersExplorer = true; updated = true; }
-      if (s.showCorrelationStat === undefined) { s.showCorrelationStat = true; updated = true; }
-      if (s.comparisonMode === undefined) { s.comparisonMode = 'engine'; updated = true; }
 
       if (updated) {
         chrome.storage.local.set({ settings: s });

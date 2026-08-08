@@ -176,6 +176,20 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   border-radius: var(--radius-xs);
 }
 
+/* ─── Cards ─── */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--t-fast), background-color var(--t-fast);
+}
+
+.card:hover {
+  border-color: var(--border-hover);
+}
+
 /* ═══════════════════════════════════════════════════════════════
    TOP BAR — Scoresheet header
    ═══════════════════════════════════════════════════════════════ */
@@ -345,10 +359,6 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 .source-indicator.source-cloud { color: var(--accent-cloud); }
 .source-indicator.source-tb { color: var(--accent-green); }
 .source-indicator.source-human { color: var(--accent-purple); }
-/* A "stale" suffix on the Analysis row marks a cache-served result that
-   has passed its fresh window. The row's text is dimmed to signal the
-   staleness contract while still showing the source label. */
-.source-indicator.stale { color: var(--text-dim); font-weight: 500; }
 
 /* ═══════════════════════════════════════════════════════════════
    ENGINE STATUS STRIP
@@ -430,228 +440,10 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   gap: 12px;
 }
 
-/* ─── Tab strip ──────────────────────────────────────────────────────
-   Two-tab nav (Hint | History) sitting just below the topbar. Same
-   hairline aesthetic as the rest of the design system: warm paper
-   canvas, gold accent for the active tab, monospace caps for labels.
-   ───────────────────────────────────────────────────────────────── */
-.tab-strip {
-  display: flex;
-  gap: 4px;
-  padding: 0 14px;
-  background: var(--bg-secondary);
-  flex-shrink: 0;
-}
-
-.tab-strip__tab {
-  appearance: none;
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  /* 9px bottom padding (not 10px) keeps the tab text centred with the
-     2px underline, so the gold rule appears to sit on the text
-     baseline rather than below it. */
-  padding: 10px 14px 9px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  font-weight: 700;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  cursor: pointer;
-  transition: color var(--t-fast), border-color var(--t-fast);
-}
-
-.tab-strip__tab:hover { color: var(--text-secondary); }
-
-.tab-strip__tab.is-active {
-  color: var(--accent-gold);
-  border-bottom-color: var(--accent-gold);
-}
-
-/* Tab panel visibility. The active panel is the only one rendered
-   in the layout grid; the hidden panel takes no space. */
-.tab-panel { display: flex; flex-direction: column; gap: 12px; }
-.tab-panel[hidden] { display: none; }
-.tab-panel.is-active { display: flex; }
-
-/* ─── History tab ───────────────────────────────────────────────────
-   Aggregate summary on top, per-move list below. Hairline rows keep
-   the data dense but legible; colour cues mirror the classification
-   palette used elsewhere.
-   ───────────────────────────────────────────────────────────────── */
-.history-section {
+.tab-pane {
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-
-.history-section__title {
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  font-weight: 700;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  padding: 0 4px;
-}
-
-.history-card {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 4px 4px 4px;
-}
-
-.history-empty {
-  padding: 16px 8px;
-  color: var(--text-dim);
-  font-size: var(--fs-sm);
-  text-align: center;
-  border: 1px dashed var(--border-color);
-  border-radius: var(--radius);
-  background: var(--bg-card);
-}
-
-.history-summary {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px 16px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius);
-  background: var(--bg-card);
-}
-
-.history-summary__row {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.history-summary__label {
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.history-summary__value {
-  font-family: var(--font-mono);
-  font-size: var(--fs-md);
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-.history-histogram {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border-color);
-  margin-top: 4px;
-}
-
-.history-histogram__row {
-  display: grid;
-  grid-template-columns: 90px 1fr 24px;
-  gap: 8px;
-  align-items: center;
-}
-
-.history-histogram__label {
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-weight: 700;
-}
-
-.history-histogram__bar {
-  height: 6px;
-  background: var(--bg-surface);
-  border-radius: 3px;
-  overflow: hidden;
-}
-
-.history-histogram__fill {
-  height: 100%;
-  border-radius: 3px;
-  transition: width var(--t-normal);
-}
-
-.history-histogram__value {
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  color: var(--text-secondary);
-  text-align: right;
-}
-
-.history-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  /* No max-height: the surrounding tab-content already scrolls, so a
-     second scroll viewport would be redundant and confusing. */
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius);
-  background: var(--bg-card);
-}
-
-.history-row {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.history-row:last-child { border-bottom: none; }
-
-.history-row__head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 10px;
-}
-
-.history-row__move {
-  font-family: var(--font-mono);
-  font-size: var(--fs-md);
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-.history-row__class {
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-secondary);
-}
-
-/* Per-label colour cue for the classification badge in the history list.
-   Mirrors the .class-* palette used by the "Last move" card so the
-   two surfaces stay visually consistent. */
-.history-row__class.cls-brilliant { color: var(--accent-green); }
-.history-row__class.cls-great     { color: var(--accent-green); }
-.history-row__class.cls-best      { color: var(--accent-green); }
-.history-row__class.cls-excellent { color: var(--accent-green); }
-.history-row__class.cls-good      { color: var(--text-primary); }
-.history-row__class.cls-inaccuracy { color: var(--accent-yellow); }
-.history-row__class.cls-mistake   { color: var(--accent-mistake); }
-.history-row__class.cls-blunder   { color: var(--accent-red); }
-
-.history-row__meta {
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  color: var(--text-dim);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -758,192 +550,6 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   padding: 5px 12px;
 }
 
-/* ─── Autopilot — hero-shortcut for "Auto-analyze on your turn" ──────
-   A chess-clock-style switch that sits at the bottom of the felt hero.
-   When ON, a soft gold pulse runs along the rail to read as the engine's
-   heartbeat; when OFF, the same rail dims to ash and the knob rests.
-   The whole row is the click target, but the visible affordance is the
-   knob (a small gold pip) so it never looks like a settings-page toggle. */
-.autopilot {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 14px;
-  padding: 9px 12px 9px 10px;
-  border-radius: var(--radius-pill);
-  /* Two-tone rail: the active end is the felt-gold accent, the
-     inactive end is the dark felt's own dim value. The transition
-     is keyed on the [data-on] attribute so JS only flips one
-     selector to animate the whole row. */
-  background:
-    linear-gradient(
-      90deg,
-      oklch(0.36 0.06 156 / 0.55) 0%,
-      oklch(0.36 0.06 156 / 0.55) var(--autopilot-fill, 50%),
-      oklch(0.22 0.02 156 / 0.55) var(--autopilot-fill, 50%),
-      oklch(0.22 0.02 156 / 0.55) 100%
-    );
-  border: 1px solid oklch(0.32 0.04 156 / 0.6);
-  cursor: pointer;
-  user-select: none;
-  -webkit-tap-highlight-color: transparent;
-  transition: border-color var(--t-normal), background-color var(--t-normal);
-}
-.autopilot:hover {
-  border-color: oklch(0.46 0.10 156 / 0.7);
-}
-.autopilot[data-on="false"] {
-  --autopilot-fill: 0%;
-}
-.autopilot[data-on="true"] {
-  --autopilot-fill: 100%;
-}
-
-.autopilot__input {
-  /* Visually hidden but focusable, so the keyboard "Tab" still hits it
-     and screen readers announce it as a real checkbox. */
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
-  margin: 0;
-}
-
-/* The knob is a flat 12px circle with a single chess pip in the centre.
-   It slides along the rail with a 240ms spring; the pip stays centred
-   inside the knob so the "knob as a chess piece" motif reads at a glance. */
-.autopilot__knob {
-  position: relative;
-  flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: oklch(0.97 0.005 100);
-  border: 1px solid oklch(0.78 0.04 156);
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.35),
-    inset 0 1px 0 oklch(1 0 0);
-  transition: transform var(--t-normal), background-color var(--t-normal), border-color var(--t-normal);
-  /* The knob starts on the left (OFF) and travels to the right (ON). */
-  transform: translateX(0);
-}
-.autopilot__input:checked + .autopilot__knob,
-.autopilot[data-on="true"] .autopilot__knob {
-  background: var(--accent-gold);
-  border-color: color-mix(in oklab, var(--accent-gold) 70%, oklch(0.30 0.04 156));
-  /* Push the knob to the right edge of the row. The 22px knob
-     + 12px gap + 9px right padding gives the exact travel the
-     transform needs; setting transform: translateX(calc(...)) keeps
-     it robust if the row width changes. */
-  transform: translateX(calc(100% - 22px + 0px));
-  /* Small inset highlight tinted gold to read as "the engine is on". */
-  box-shadow:
-    0 1px 3px rgba(0, 0, 0, 0.4),
-    0 0 0 2px oklch(0.46 0.115 156 / 0.35),
-    inset 0 1px 0 oklch(0.85 0.10 156);
-}
-.autopilot[data-on="false"] .autopilot__knob {
-  transform: translateX(0);
-}
-.autopilot__dot {
-  /* The single white pip inside the knob — it stays put while the
-     knob travels, like a fixed centre on a real clock face. */
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: oklch(0.27 0.03 156);
-  transform: translate(-50%, -50%);
-  transition: background-color var(--t-normal);
-}
-.autopilot[data-on="true"] .autopilot__dot {
-  background: oklch(0.97 0.005 100);
-}
-
-/* A thin gold "ticks" line that animates from left to right when the
-   autopilot is watching. It's a single 1px bar that travels under the
-   row, hitting the right edge and resetting — a soft engine pulse. */
-.autopilot__pulse {
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  bottom: -1px;
-  height: 1px;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    oklch(0.72 0.18 156 / 0.85) 50%,
-    transparent 100%
-  );
-  background-size: 50% 100%;
-  background-repeat: no-repeat;
-  transform: translateX(-100%);
-  opacity: 0;
-  pointer-events: none;
-  border-radius: 1px;
-}
-.autopilot[data-on="true"] .autopilot__pulse {
-  opacity: 1;
-  animation: autopilotPulse 2.6s cubic-bezier(0.5, 0, 0.5, 1) infinite;
-}
-@keyframes autopilotPulse {
-  0%   { transform: translateX(-50%); opacity: 0; }
-  20%  { opacity: 1; }
-  80%  { opacity: 1; }
-  100% { transform: translateX(150%); opacity: 0; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .autopilot[data-on="true"] .autopilot__pulse {
-    animation: none;
-    opacity: 0.6;
-  }
-}
-
-.autopilot__labels {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-  flex: 1 1 auto;
-  /* The knob column already covers the left padding; nudge the labels
-     past the knob so they read as a separate, second column. */
-  margin-left: 4px;
-}
-.autopilot__title {
-  font-family: var(--font-sans);
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  color: oklch(0.92 0.02 156);
-  line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: color var(--t-normal);
-}
-.autopilot[data-on="false"] .autopilot__title {
-  color: oklch(0.66 0.025 156);
-}
-.autopilot__sub {
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: oklch(0.72 0.10 156);
-  line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: color var(--t-normal);
-}
-.autopilot[data-on="false"] .autopilot__sub {
-  color: oklch(0.50 0.020 156);
-}
-
 /* ─── Fair Play Warning (on felt) ─── */
 .fair-play-warning {
   display: flex;
@@ -979,37 +585,28 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 }
 
 .eval-bar {
-  position: relative;
   width: 100%;
   height: 8px;
+  display: flex;
   border-radius: var(--radius-pill);
   overflow: hidden;
   background: var(--eval-black);
 }
 
-/* Both child bars are absolutely positioned inside the parent. The
-   white bar is anchored to the left and the black bar to the right;
-   their widths are driven from JS via inline `width: X%`. This is
-   the standard horizontal eval-bar shape: the side that is winning
-   takes more horizontal space. */
 .eval-bar-white {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
   background: var(--eval-white);
-  width: 50%;
-  transition: width var(--t-slow);
+  width: 100%;
+  height: 100%;
+  transform-origin: top left;
+  transition: transform var(--t-slow);
 }
 
 .eval-bar-black {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  right: 0;
   background: var(--eval-black);
-  width: 50%;
-  transition: width var(--t-slow);
+  width: 100%;
+  height: 100%;
+  transform-origin: bottom right;
+  transition: transform var(--t-slow);
 }
 
 .eval-labels {
@@ -1109,6 +706,15 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 /* ═══════════════════════════════════════════════════════════════
    MOVE CLASSIFICATION
    ═══════════════════════════════════════════════════════════════ */
+.move-class-section h3 {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+}
+
 .move-class-display {
   display: flex;
   align-items: center;
@@ -1183,87 +789,6 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   border-bottom: none;
 }
 
-/* ─── Engine comparison card ────────────────────────────────────────
-   Four short rows that compare how the player fared against the engine's
-   top pick and the human-like alternative on the same set of moves. The
-   highlighted row (settings.comparisonMode) gets a left border and a
-   stronger background so the eye lands on the row the user cares about.
-   Diagnostic rows (engine-human agreement) stay dim regardless. */
-.comparison-card {
-  margin-top: 8px;
-  padding: 8px 10px 10px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius);
-  background: var(--bg-card);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.comparison-card[hidden] { display: none; }
-
-.comparison-card__title {
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  font-weight: 700;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.comparison-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  padding: 4px 6px;
-  border-radius: var(--radius-sm);
-  border-left: 2px solid transparent;
-  transition: background var(--t-fast), border-color var(--t-fast);
-}
-
-.comparison-row.is-highlighted {
-  background: var(--bg-card-hover);
-  border-left-color: var(--accent-gold);
-}
-
-.comparison-row.is-dim {
-  opacity: 0.55;
-}
-
-.comparison-row--diagnostic.is-dim {
-  /* The agreement row is diagnostic even when explicitly selected. */
-  opacity: 0.45;
-}
-
-.comparison-row__label {
-  font-size: var(--fs-sm);
-  color: var(--text-secondary);
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.comparison-row__value {
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-  color: var(--text-primary);
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-.comparison-card__hint {
-  font-size: var(--fs-xs);
-  color: var(--text-dim);
-  padding-top: 4px;
-  border-top: 1px solid var(--border-color);
-  line-height: 1.35;
-}
-
 .info-label {
   font-family: var(--font-mono);
   font-size: var(--fs-micro);
@@ -1294,7 +819,6 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  margin-bottom: 8px;
 }
 
 .section-title-row svg {
@@ -1706,6 +1230,7 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 
 .api-status.online { background: color-mix(in oklab, var(--accent-green) 14%, var(--bg-card)); color: var(--accent-green); }
 .api-status.error { background: color-mix(in oklab, var(--accent-red) 14%, var(--bg-card)); color: var(--accent-red); }
+.api-status.checking { background: color-mix(in oklab, var(--accent-yellow) 14%, var(--bg-card)); color: var(--accent-yellow); }
 .api-status.unknown { background: var(--bg-input); color: var(--text-dim); }
 
 .api-usage-diagnostics {
@@ -1916,9 +1441,4 @@ kbd {
 @media (max-width: 320px) {
   .topbar { padding: 8px 10px; }
   .tab-content { padding: 12px 12px 20px; }
-  /* The history summary's 2-column grid becomes cramped below 320px
-     (the side panel's narrowest supported width); collapse to one
-     column at that breakpoint so labels and values stack instead of
-     truncating each other. */
-  .history-summary { grid-template-columns: 1fr; }
 }
