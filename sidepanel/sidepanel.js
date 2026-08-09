@@ -485,6 +485,14 @@
           humanPlanState = null;
           renderAnalysis(lastAnalysis);
         }
+        if (id === 'setting-auto-analyze') {
+          if (val && currentFen && isPlayerTurn) {
+            savePromise.finally(() => requestAnalysis(true));
+          } else if (!val) {
+            updateEngineStatus('online', 'Auto-analyze off — press Refresh');
+            if (dom.hintText) dom.hintText.textContent = 'Auto-analyze is off. Press Refresh to analyze this position.';
+          }
+        }
         if (['setting-use-chess-api', 'setting-use-lichess-cloud', 'setting-use-masters-explorer'].includes(id) && currentFen) {
           // Ensure the worker sees the new source policy before it routes.
           savePromise.finally(() => requestAnalysis(true));
@@ -676,15 +684,24 @@
       return;
     }
 
+    // Default: analyze only on your turn, never on opponent's turn.
+    // Auto-analyze toggle (checked by default) controls *all* automatic calls.
+    // When OFF: no API calls at all until manual Refresh.
     if (isPlayerTurn) {
-      // It's the player's turn — request analysis
-      if (positionChanged && (settings.autoAnalyze || turnJustChanged)) {
+      if (settings.autoAnalyze && positionChanged) {
         requestAnalysis();
+        updateEngineStatus(wasPlayerTurn ? 'online' : 'analyzing', turnJustChanged ? 'Your turn: analyzing...' : 'Your turn');
+      } else if (!settings.autoAnalyze) {
+        updateEngineStatus('online', 'Auto-analyze off — press Refresh');
+        if (dom.hintText && !lastAnalysis) {
+          dom.hintText.textContent = 'Auto-analyze is off. Press Refresh to analyze this position.';
+        }
+      } else {
+        // autoAnalyze ON but position hasn't changed — just idle on your turn
+        updateEngineStatus('online', 'Your turn');
       }
-      updateEngineStatus(wasPlayerTurn ? 'online' : 'analyzing', turnJustChanged ? 'Your turn: analyzing...' : 'Your turn');
     } else {
-      // It's the opponent's turn — show waiting status, no API calls
-      const playerLabel = effectiveColor === 'w' ? 'White' : 'Black';
+      // It's the opponent's turn — never analyze, regardless of autoAnalyze
       updateEngineStatus('online', `Opponent's turn: waiting...`);
       if (dom.hintText && !lastAnalysis) {
         dom.hintText.textContent = `Waiting for opponent's move...`;
@@ -755,7 +772,12 @@
     }
 
     if (isPlayerTurn) {
-      updateEngineStatus('analyzing', 'Your turn: analyzing...');
+      if (!settings.autoAnalyze) {
+        updateEngineStatus('online', 'Auto-analyze off — press Refresh');
+        if (dom.hintText && !lastAnalysis) dom.hintText.textContent = 'Auto-analyze is off. Press Refresh to analyze this position.';
+      } else {
+        updateEngineStatus('analyzing', 'Your turn: analyzing...');
+      }
     } else {
       updateEngineStatus('online', "Opponent's turn: waiting...");
       if (dom.hintText && !lastAnalysis) {

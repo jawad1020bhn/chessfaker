@@ -409,10 +409,11 @@
             <div class="setting-section-title"><span>What to show</span></div>
             <div class="glass-card glass-card--inner">
               <label class="toggle-row">
-                <div class="toggle-label"><span>Auto-analyze on your turn</span><span class="toggle-sub">Only on your turn, never opponent's</span></div>
+                <div class="toggle-label"><span>Auto-analyze</span><span class="toggle-sub">Automatically analyze — uncheck to stop all API calls</span></div>
                 <input type="checkbox" id="setting-auto-analyze" checked>
                 <span class="ios-switch" aria-hidden="true"></span>
               </label>
+              <div class="setting-hint" style="margin-top:-4px">Default is <strong>your turn only</strong> — never analyzes on opponent's turn. Turn this off to pause all automatic analysis (manual Refresh still works).</div>
               <label class="toggle-row">
                 <div class="toggle-label"><span>Threat alerts</span><span class="toggle-sub">Show immediate threats</span></div>
                 <input type="checkbox" id="setting-show-threats" checked>
