@@ -7,14 +7,48 @@
   <link rel="stylesheet" href="sidepanel.css">
 </head>
 <body>
-  <!-- Toast Container -->
+  <!-- Liquid Glass Background -->
+  <div class="bg" aria-hidden="true">
+    <div class="bg-gradient"></div>
+    <div class="bg-orb orb-1"></div>
+    <div class="bg-orb orb-2"></div>
+    <div class="bg-orb orb-3"></div>
+    <svg class="bg-grid" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <pattern id="dottedGrid" width="28" height="28" patternUnits="userSpaceOnUse">
+          <circle cx="1.5" cy="1.5" r="1" fill="rgba(0,0,0,0.08)"/>
+        </pattern>
+      </defs>
+      <rect width="100%" height="100%" fill="url(#dottedGrid)"/>
+    </svg>
+  </div>
+
+  <!-- SVG Filters for Liquid Glass Refraction -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true">
+    <defs>
+      <filter id="lensFilter" x="0%" y="0%" width="100%" height="100%" filterUnits="objectBoundingBox" primitiveUnits="objectBoundingBox" color-interpolation-filters="sRGB">
+        <feComponentTransfer in="SourceAlpha" result="alpha">
+          <feFuncA type="identity"/>
+        </feComponentTransfer>
+        <feGaussianBlur in="alpha" stdDeviation="0.02" result="blur"/>
+        <feDisplacementMap in="SourceGraphic" in2="blur" scale="0.6" xChannelSelector="A" yChannelSelector="A"/>
+      </filter>
+      <filter id="glassFilter" x="-10%" y="-10%" width="120%" height="120%">
+        <feGaussianBlur in="SourceAlpha" stdDeviation="8" result="blur"/>
+        <feDisplacementMap in="SourceGraphic" in2="blur" scale="14" xChannelSelector="A" yChannelSelector="A" result="disp"/>
+        <feColorMatrix type="saturate" values="1.2" in="disp"/>
+      </filter>
+    </defs>
+  </svg>
+
+  <!-- Toasts -->
   <div id="toast-container" class="toast-container" role="alert" aria-live="polite" aria-atomic="true"></div>
 
-  <!-- Keyboard Shortcut Help -->
-  <div id="shortcut-help" class="shortcut-help" style="display:none" role="dialog" aria-label="Keyboard shortcuts">
+  <!-- Shortcut Help -->
+  <div id="shortcut-help" class="shortcut-help glass-sheet" style="display:none" role="dialog" aria-label="Keyboard shortcuts">
     <div class="shortcut-help-header">
-      <h4>Keyboard Shortcuts</h4>
-      <button id="btn-close-shortcut-help" class="shortcut-close" aria-label="Close">&times;</button>
+      <h4>Shortcuts</h4>
+      <button id="btn-close-shortcut-help" class="icon-btn icon-btn--small" aria-label="Close">×</button>
     </div>
     <div class="shortcut-grid">
       <div class="shortcut-row"><span>Refresh analysis</span><kbd>R</kbd></div>
@@ -24,312 +58,413 @@
     </div>
   </div>
 
-  <div id="app">
-    <!-- ═══ Top Bar ═══ -->
-    <header class="topbar" role="banner">
-      <div class="topbar-rule" aria-hidden="true"></div>
-      <div class="topbar-left">
-        <div class="logo-icon" aria-hidden="true">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="chess-emblem">
-            <path d="M19 22H5V20H19V22Z" fill="currentColor"/>
-            <path d="M17 17H7L6 20H18L17 17Z"/>
-            <path d="M15 17C15 14.5 16.5 13 16.5 10.5C16.5 7.5 14 5 11 5C10 5 9 5.3 8.2 5.8C9.5 6.5 10 8 9.5 9.5C9 11 7.5 11.5 6 11.5C6 14 7.5 15.5 8.5 17H15Z"/>
-          </svg>
+  <div id="app" class="app">
+    <!-- Top Bar — Floating Glass Pill -->
+    <header class="topbar glass-container glass-container--pill">
+      <div class="glass-filter"></div>
+      <div class="glass-overlay"></div>
+      <div class="glass-specular"></div>
+      <div class="glass-content">
+        <div class="topbar-left">
+          <div class="logo-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 2C10.9 2 10 2.9 10 4C10 4.7 10.4 5.4 11 5.7V7H7V9H8V20H6V22H18V20H16V9H17V7H13V5.7C13.6 5.4 14 4.7 14 4C14 2.9 13.1 2 12 2Z" fill="white"/>
+            </svg>
+          </div>
+          <div class="topbar-titles">
+            <h1 class="topbar-title">Chess Coach</h1>
+            <span class="topbar-subtitle">Liquid Glass • Edu</span>
+          </div>
         </div>
-        <h1 class="topbar-title">Chess Coach</h1>
-        <span class="version-tag" aria-label="Educational study tool">Edu</span>
-      </div>
-      <div class="topbar-right">
-        <div id="player-selector" class="player-selector" role="radiogroup" aria-label="Which player to assist">
-          <button class="player-btn active" data-color="w" role="radio" aria-checked="true" title="Assist White">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C10.9 2 10 2.9 10 4C10 4.7 10.4 5.4 11 5.7V7H7V9H8V20H6V22H18V20H16V9H17V7H13V5.7C13.6 5.4 14 4.7 14 4C14 2.9 13.1 2 12 2Z"/></svg>
-            <span>White</span>
-          </button>
-          <button class="player-btn" data-color="b" role="radio" aria-checked="false" title="Assist Black">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C10.9 2 10 2.9 10 4C10 4.7 10.4 5.4 11 5.7V7H7V9H8V20H6V22H18V20H16V9H17V7H13V5.7C13.6 5.4 14 4.7 14 4C14 2.9 13.1 2 12 2Z"/></svg>
-            <span>Black</span>
+        <div class="topbar-right">
+          <button id="btn-settings" class="icon-btn icon-btn--glass" title="Settings (S)" aria-label="Open settings">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </button>
         </div>
-
-        <button id="btn-settings" class="icon-btn" title="Settings (S)" aria-label="Open settings">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        </button>
       </div>
     </header>
 
-    <!-- Engine Status -->
-    <div id="engine-status" class="engine-status" role="status" aria-live="polite">
-      <span class="status-dot offline" aria-hidden="true"></span>
-      <span class="status-text">Connecting to engine...</span>
-      <div id="position-context" class="position-context" aria-label="Position source and turn status">
-        <span id="position-source" class="context-chip pending">BOARD</span>
-        <span id="position-turn" class="context-turn">Awaiting position</span>
+    <!-- Player Selector — iOS Segmented Glass -->
+    <div class="selector-wrap">
+      <div id="player-selector" class="player-selector glass-container glass-container--pill glass-container--small" role="radiogroup" aria-label="Which player to assist">
+        <div class="glass-filter"></div>
+        <div class="glass-overlay"></div>
+        <div class="glass-specular"></div>
+        <div class="glass-content segmented-content">
+          <button class="player-btn active" data-color="w" role="radio" aria-checked="true" title="Assist White">
+            <span class="piece-dot white"></span>
+            <span>White</span>
+          </button>
+          <button class="player-btn" data-color="b" role="radio" aria-checked="false" title="Assist Black">
+            <span class="piece-dot black"></span>
+            <span>Black</span>
+          </button>
+          <div class="segment-thumb" aria-hidden="true"></div>
+        </div>
       </div>
     </div>
 
-    <!-- ═══ Main Content ═══ -->
+    <!-- Engine Status Pill -->
+    <div id="engine-status" class="engine-status glass-container glass-container--pill glass-container--small">
+      <div class="glass-filter"></div>
+      <div class="glass-overlay"></div>
+      <div class="glass-specular"></div>
+      <div class="glass-content engine-status-content">
+        <span class="status-dot offline" aria-hidden="true"></span>
+        <span class="status-text">Connecting…</span>
+        <div id="position-context" class="position-context">
+          <span id="position-source" class="context-chip">BOARD</span>
+          <span id="position-turn" class="context-turn">Awaiting position</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Auto Toggle — Main Page Shortcut -->
+    <div id="auto-quick" class="auto-quick glass-container glass-container--pill glass-container--small" role="group" aria-label="Auto analyze quick toggle" title="Tap to toggle auto-analyze — when off, no API calls until Refresh">
+      <div class="glass-filter"></div>
+      <div class="glass-overlay"></div>
+      <div class="glass-specular"></div>
+      <div class="glass-content auto-quick-content">
+        <div class="auto-quick-left">
+          <div class="auto-quick-icon" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 3.2 L13.6 8.6 L19 10 L13.6 11.4 L12 16.8 L10.4 11.4 L5 10 L10.4 8.6 Z" fill="white" stroke="white" stroke-linejoin="round" stroke-width="0.6"/>
+              <circle cx="18.2" cy="5.8" r="1.4" fill="white"/>
+              <circle cx="7.2" cy="15.6" r="1" fill="white" opacity="0.9"/>
+            </svg>
+          </div>
+          <div class="auto-quick-text">
+            <span class="auto-quick-label">Auto</span>
+            <span id="auto-quick-sub" class="auto-quick-sub">Your turn only</span>
+          </div>
+        </div>
+        <div class="auto-quick-right">
+          <span id="auto-quick-state" class="auto-quick-state on">ON</span>
+          <label class="quick-switch" aria-label="Toggle auto analyze">
+            <input type="checkbox" id="auto-analyze-quick-toggle" checked>
+            <span class="ios-switch ios-switch--quick" aria-hidden="true"></span>
+          </label>
+        </div>
+      </div>
+      <div class="auto-quick-glow" aria-hidden="true"></div>
+    </div>
+
+    <!-- Main Content -->
     <div class="tab-content">
 
-        <!-- Hero: The Move -->
-        <section id="hint-section" class="hint-section" aria-label="Chess hint">
+      <!-- Hero: Best Move — Prominent Liquid Glass Card -->
+      <section id="hint-section" class="hint-section glass-container glass-container--hero">
+        <div class="glass-filter"></div>
+        <div class="glass-overlay"></div>
+        <div class="glass-specular"></div>
+        <div class="glass-content hint-content">
           <div class="hint-meta">
             <span class="hint-eyebrow">Best move</span>
-            <span id="source-badge" class="source-badge source-local" aria-label="Analysis Source">LOCAL</span>
+            <span id="source-badge" class="source-badge source-local" style="display:none !important" aria-hidden="true">Local</span>
           </div>
-          <div id="hint-card" class="hint-card exact-move" aria-live="polite">
-            <p id="hint-text" class="hint-text">Waiting for a board position...</p>
-            <div id="hint-fromto" class="hint-fromto" style="display:none" aria-label="Move squares"></div>
-            <div id="threat-pill" class="threat-pill" style="display:none" role="alert" aria-label="Threat detected">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+          <div id="hint-card" class="hint-card exact-move">
+            <p id="hint-text" class="hint-text">Waiting for a board position…</p>
+            <div id="hint-fromto" class="hint-fromto" style="display:none"></div>
+            <div id="threat-pill" class="threat-pill" style="display:none">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
               <span id="threat-pill-text" class="threat-pill-text"></span>
             </div>
-            <div id="fair-play-warning" class="fair-play-warning" style="display:none" role="alert">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <div id="fair-play-warning" class="fair-play-warning" style="display:none">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
               <span id="fair-play-warning-text" class="warning-text"></span>
             </div>
           </div>
-        </section>
+        </div>
+        <!-- Hero liquid highlight -->
+        <div class="hero-glow" aria-hidden="true"></div>
+      </section>
 
-        <!-- Evaluation Gauge -->
-        <section id="eval-section" class="eval-section" aria-label="Position evaluation">
+      <!-- Evaluation Gauge -->
+      <section id="eval-section" class="eval-section glass-container">
+        <div class="glass-filter"></div>
+        <div class="glass-overlay"></div>
+        <div class="glass-specular"></div>
+        <div class="glass-content eval-content">
+          <div class="eval-header">
+            <span class="eval-eyebrow">Evaluation</span>
+            <span id="eval-description" class="eval-description">Position is equal</span>
+          </div>
           <div class="eval-bar-container">
             <div id="eval-bar" class="eval-bar" role="meter" aria-label="Evaluation bar" aria-valuemin="-10" aria-valuemax="10" aria-valuenow="0" aria-valuetext="0.0">
-              <div id="eval-bar-white" class="eval-bar-white" style="transform: scale(0.5, 0.5);"></div>
-              <div id="eval-bar-black" class="eval-bar-black" style="transform: scale(0.5, 0.5);"></div>
+              <div id="eval-bar-white" class="eval-bar-white"></div>
+              <div id="eval-bar-black" class="eval-bar-black"></div>
+              <div class="eval-bar-highlight" aria-hidden="true"></div>
             </div>
             <div class="eval-labels">
               <span id="eval-white-label" class="eval-label white">0.0</span>
               <span id="eval-black-label" class="eval-label black">0.0</span>
             </div>
           </div>
-          <div id="eval-description" class="eval-description">Position is equal</div>
-        </section>
+        </div>
+      </section>
 
-        <!-- Critical Moment Alert -->
-        <section id="critical-moment-section" class="critical-moment-section" style="display:none" role="alert" aria-label="Critical moment alert">
+      <!-- Critical Moment -->
+      <section id="critical-moment-section" class="critical-moment-section glass-container glass-container--alert" style="display:none">
+        <div class="glass-filter"></div>
+        <div class="glass-overlay"></div>
+        <div class="glass-specular"></div>
+        <div class="glass-content critical-content">
           <div class="critical-moment-header">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            <span class="critical-icon">⚡</span>
             <span>Critical moment</span>
           </div>
           <p id="critical-moment-text" class="critical-moment-text"></p>
           <div id="critical-moment-detail" class="critical-moment-detail"></div>
-        </section>
+        </div>
+      </section>
 
-        <!-- Move Classification -->
-        <section id="move-class-section" class="move-class-section" style="display:none" aria-label="Last move classification">
-          <div class="section-title-row" style="margin-bottom:8px;">
+      <!-- Move Classification -->
+      <section id="move-class-section" class="move-class-section glass-container" style="display:none">
+        <div class="glass-filter"></div>
+        <div class="glass-overlay"></div>
+        <div class="glass-specular"></div>
+        <div class="glass-content">
+          <div class="section-title-row">
             <h3>Last move</h3>
+            <span class="section-mono">Accuracy</span>
           </div>
           <div id="move-class-display" class="move-class-display"></div>
-        </section>
+        </div>
+      </section>
 
-        <!-- Position Info -->
-        <section id="position-info" class="position-info" aria-label="Position information">
-          <div class="info-row"><span class="info-label">Opening</span><span id="opening-name" class="info-value">&ndash;</span></div>
-          <div class="info-row"><span class="info-label">Phase</span><span id="game-phase" class="info-value">&ndash;</span></div>
+      <!-- Position Info — Frosted Scorecard -->
+      <section id="position-info" class="position-info glass-container">
+        <div class="glass-filter"></div>
+        <div class="glass-overlay"></div>
+        <div class="glass-specular"></div>
+        <div class="glass-content position-content">
+          <div class="info-row"><span class="info-label">Opening</span><span id="opening-name" class="info-value">—</span></div>
+          <div class="info-row"><span class="info-label">Phase</span><span id="game-phase" class="info-value">—</span></div>
           <div class="info-row"><span class="info-label">Material</span><span id="material-balance" class="info-value">Equal</span></div>
-          <div class="info-row"><span class="info-label">Sensible moves</span><span id="correlation-stat" class="info-value" title="Human-like play guard: share of your moves that played naturally rather than blindly copying the engine's exact top pick. Keep this high to stay fair-play safe.">0 / 0 (0%)</span></div>
-        </section>
+          <div class="info-row"><span class="info-label">Sensible moves</span><span id="correlation-stat" class="info-value mono" title="Human-like play guard">0 / 0 (0%)</span></div>
+          <div class="info-row info-row--hidden" style="display:none"><span class="info-label">Depth</span><span id="analysis-depth" class="info-value mono">—</span></div>
+          <div class="info-row info-row--hidden" style="display:none"><span class="info-label">Source</span><span id="analysis-source" class="info-value mono">—</span></div>
+        </div>
+      </section>
 
-    </div><!-- /tab-content -->
-
-    <!-- ═══ Bottom Action Bar ═══ -->
-    <div class="bottom-bar">
-      <div class="exact-hint-label" aria-label="Hint type">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 22H5V20H19V22Z"/><path d="M15 17C15 14.5 16.5 13 16.5 10.5C16.5 7.5 14 5 11 5C10 5 9 5.3 8.2 5.8C9.5 6.5 10 8 9.5 9.5C9 11 7.5 11.5 6 11.5C6 14 7.5 15.5 8.5 17H15Z"/></svg>
-        Best move hint
-      </div>
-      <button id="btn-refresh" class="refresh-btn" title="Refresh analysis (R)" aria-label="Refresh analysis">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-      </button>
+      <div class="bottom-spacer" aria-hidden="true"></div>
     </div>
 
-    <!-- ═══ Settings Panel ═══ -->
-    <div id="settings-panel" class="settings-panel" style="display:none" role="dialog" aria-label="Settings" aria-modal="true">
-      <div class="settings-header">
-        <div class="settings-header-left">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          <h3>Settings</h3>
-          <span class="settings-saved">saved automatically</span>
+    <!-- Bottom Dock — Floating Glass Pill -->
+    <div class="bottom-bar glass-container glass-container--pill glass-container--dock">
+      <div class="glass-filter"></div>
+      <div class="glass-overlay"></div>
+      <div class="glass-specular"></div>
+      <div class="glass-content bottom-content">
+        <div class="exact-hint-label">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2C10.9 2 10 2.9 10 4C10 4.7 10.4 5.4 11 5.7V7H7V9H8V20H6V22H18V20H16V9H17V7H13V5.7C13.6 5.4 14 4.7 14 4C14 2.9 13.1 2 12 2Z"/></svg>
+          <span>Best move hint</span>
         </div>
-        <button id="btn-close-settings" class="settings-close-btn" aria-label="Close settings">&times;</button>
+        <div class="button-wrap">
+          <button id="btn-refresh" class="refresh-btn" title="Refresh analysis (R)" aria-label="Refresh analysis">
+            <span>Refresh</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          </button>
+          <div class="button-shadow" aria-hidden="true"></div>
+        </div>
       </div>
+    </div>
 
-      <div class="settings-body">
-
-        <!-- Engine & Depth -->
-        <div class="setting-section-title">Analysis depth</div>
-        <div class="setting-group">
-          <label for="setting-cloud-depth">Candidate lines</label>
-          <select id="setting-cloud-depth">
-            <option value="1">1 line (fastest)</option>
-            <option value="2">2 lines</option>
-            <option value="3">3 lines</option>
-            <option value="5" selected>5 lines (recommended)</option>
-            <option value="7">7 lines</option>
-            <option value="10">10 lines (max)</option>
-          </select>
-          <div class="setting-hint">More lines shows more alternative moves to compare.</div>
-        </div>
-
-        <div class="setting-group">
-          <label for="setting-depth-target">Minimum depth target</label>
-          <select id="setting-depth-target">
-            <option value="0" selected>No minimum (any depth)</option>
-            <option value="15">15 (basic)</option>
-            <option value="20">20 (standard)</option>
-            <option value="25">25 (strong)</option>
-            <option value="30">30 (deep)</option>
-            <option value="40">40 (deepest)</option>
-          </select>
-          <div class="setting-hint">Shows exact-move hints only after the engine reaches this depth. Filters out shallow cached evaluations.</div>
-        </div>
-
-        <!-- Playing Style -->
-        <div class="setting-section-title">Playing style</div>
-        <div class="setting-group">
-          <label for="setting-style">Style</label>
-          <select id="setting-style">
-            <option value="normal" selected>Normal</option>
-            <option value="aggressive">Aggressive: fastest sound win</option>
-            <option value="super_ultra_aggressive">Ultra Super Aggressive Attack: vs &lt;=1100</option>
-          </select>
-          <div class="setting-hint" id="style-description">Objective best play, reliable conversion, and solid defense. This is the engine's strongest recommendation with no style bias.</div>
-        </div>
-
-        <div class="human-mode-card">
-          <div class="human-mode-head">
-            <span class="human-mode-title">Play human</span>
-            <span class="human-mode-status" aria-hidden="true">Off</span>
-          </div>
-          <p class="human-mode-sub">Move the way a person would. Keep it fair to your opponent.</p>
-          <input type="checkbox" id="setting-human-like-mode" class="human-mode-checkbox">
-          <div class="human-mode-segmented" role="radiogroup" aria-label="Move style">
-            <button type="button" class="human-mode-opt" data-mode="off" role="radio" aria-checked="true">Engine</button>
-            <button type="button" class="human-mode-opt" data-mode="on" role="radio" aria-checked="false">Human</button>
-            <span class="human-mode-thumb" aria-hidden="true"></span>
-          </div>
-        </div>
-
-        <div class="setting-group">
-          <label for="setting-white-repertoire">White attacking repertoire</label>
-          <select id="setting-white-repertoire">
-            <option value="none" selected>No preference</option>
-            <option value="white_scotch_evans">Scotch / Evans Gambit, sharp</option>
-            <option value="white_smith_morra">Smith–Morra Gambit, sharp</option>
-            <option value="white_milner_barry">Milner–Barry Gambit, sharp</option>
-            <option value="white_panov">Panov Attack: sound aggressive</option>
-            <option value="white_austrian">Austrian Attack: sound aggressive</option>
-          </select>
-        </div>
-        <div class="setting-group">
-          <label for="setting-black-repertoire">Black attacking repertoire</label>
-          <select id="setting-black-repertoire">
-            <option value="none" selected>No preference</option>
-            <option value="black_najdorf">Sicilian Najdorf, sharp</option>
-            <option value="black_dragon">Sicilian Dragon, sharp</option>
-            <option value="black_kings_indian">King's Indian Defense, sharp</option>
-            <option value="black_benoni">Modern Benoni, sharp</option>
-            <option value="black_dutch">Dutch Leningrad, sharp</option>
-          </select>
-          <div class="setting-hint">A soft preference: the engine keeps mate safety and never forces a move that loses more than half a pawn.</div>
-        </div>
-
-        <!-- Analysis Sources -->
-        <div class="setting-section-title">Analysis sources</div>
-        <div class="setting-group">
-          <label class="toggle-label">
-            <input type="checkbox" id="setting-use-chess-api" checked>
-            <span>Use Chess-API.com</span>
-          </label>
-        </div>
-        <div class="setting-group">
-          <label class="toggle-label">
-            <input type="checkbox" id="setting-use-lichess-cloud" checked>
-            <span>Use Lichess Cloud Evaluation</span>
-          </label>
-        </div>
-        <div class="setting-group">
-          <label class="toggle-label">
-            <input type="checkbox" id="setting-use-masters-explorer" checked>
-            <span>Use Lichess Masters Database</span>
-          </label>
-          <div class="setting-hint">After the first five moves, engine sources are preferred: Chess-API, then Lichess Cloud, then Masters. Disabled sources are excluded from cache lookup and failover.</div>
-        </div>
-
-        <!-- Cloud API Status -->
-        <div class="setting-section-title">Cloud API status</div>
-        <div class="setting-group">
-          <div id="api-health-status" class="api-health-status">
-            <div class="api-health-row">
-              <span class="api-name">Chess-API.com</span>
-              <span id="health-chessapi" class="api-status unknown">No recent data</span>
+    <!-- Settings Panel — Full Glass Sheet -->
+    <div id="settings-panel" class="settings-panel" style="display:none" role="dialog" aria-label="Settings" aria-modal="true">
+      <div class="settings-backdrop" id="settings-backdrop"></div>
+      <div class="settings-sheet glass-container glass-container--sheet">
+        <div class="glass-filter"></div>
+        <div class="glass-overlay"></div>
+        <div class="glass-specular"></div>
+        <div class="glass-content settings-content">
+          <div class="sheet-handle" aria-hidden="true"></div>
+          <div class="settings-header">
+            <div class="settings-header-left">
+              <div class="settings-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              </div>
+              <div>
+                <h3>Settings</h3>
+                <span class="settings-saved">Saved automatically</span>
+              </div>
             </div>
-            <div class="api-health-row">
-              <span class="api-name">Lichess Cloud</span>
-              <span id="health-lichess" class="api-status unknown">No recent data</span>
-            </div>
-            <div class="api-health-row">
-              <span class="api-name">Masters DB</span>
-              <span id="health-masters" class="api-status unknown">No recent data</span>
-            </div>
-            <div class="api-health-row">
-              <span class="api-name">Opening Explorer</span>
-              <span id="health-opening" class="api-status unknown">No recent data</span>
-            </div>
-            <div class="api-health-row">
-              <span class="api-name">Tablebase</span>
-              <span id="health-tablebase" class="api-status unknown">No recent data</span>
-            </div>
+            <button id="btn-close-settings" class="icon-btn icon-btn--glass" aria-label="Close settings">×</button>
           </div>
-          <div class="setting-hint" style="margin-top:4px">Status comes from real requests. Refreshing this display does not contact providers.</div>
-          <div class="api-usage-diagnostics" aria-live="polite">
-            <strong>API usage, last 10 minutes</strong>
-            <div><span>Calls avoided by cache</span><span id="api-cache-avoided">0</span></div>
-            <div><span>Requests coalesced</span><span id="api-requests-coalesced">0</span></div>
-            <div><span>Stale results served</span><span id="api-stale-served">0</span></div>
-            <div><span>Stale jobs cancelled</span><span id="api-stale-dropped">0</span></div>
-            <div id="api-provider-calls" class="api-provider-calls">No remote calls yet</div>
+
+          <div class="settings-body">
+            <div class="setting-section-title"><span>Analysis depth</span></div>
+            <div class="glass-card glass-card--inner">
+              <div class="setting-group">
+                <label for="setting-cloud-depth">Candidate lines</label>
+                <div class="select-wrap">
+                  <select id="setting-cloud-depth">
+                    <option value="1">1 line — fastest</option>
+                    <option value="2">2 lines</option>
+                    <option value="3">3 lines</option>
+                    <option value="5" selected>5 lines — recommended</option>
+                    <option value="7">7 lines</option>
+                    <option value="10">10 lines — max</option>
+                  </select>
+                </div>
+                <div class="setting-hint">More lines = more alternatives to compare.</div>
+              </div>
+              <div class="setting-group">
+                <label for="setting-depth-target">Minimum depth target</label>
+                <div class="select-wrap">
+                  <select id="setting-depth-target">
+                    <option value="0" selected>No minimum (any depth)</option>
+                    <option value="15">15 — basic</option>
+                    <option value="20">20 — standard</option>
+                    <option value="25">25 — strong</option>
+                    <option value="30">30 — deep</option>
+                    <option value="40">40 — deepest</option>
+                  </select>
+                </div>
+                <div class="setting-hint">Show exact hints only when depth is reached.</div>
+              </div>
+            </div>
+
+            <div class="setting-section-title"><span>Playing style</span></div>
+            <div class="glass-card glass-card--inner">
+              <div class="setting-group">
+                <label for="setting-style">Style</label>
+                <div class="select-wrap">
+                  <select id="setting-style">
+                    <option value="normal" selected>Normal</option>
+                    <option value="aggressive">Aggressive — fastest sound win</option>
+                    <option value="super_ultra_aggressive">Ultra Aggressive — vs ≤1100</option>
+                  </select>
+                </div>
+                <div class="setting-hint" id="style-description">Objective best play with no bias.</div>
+              </div>
+
+              <div class="human-mode-card">
+                <div class="human-mode-head">
+                  <div>
+                    <span class="human-mode-title">Play human</span>
+                    <p class="human-mode-sub">Natural, human-like moves. Fair to opponents.</p>
+                  </div>
+                  <span class="human-mode-status">Off</span>
+                </div>
+                <input type="checkbox" id="setting-human-like-mode" class="human-mode-checkbox">
+                <div class="human-mode-segmented" role="radiogroup" aria-label="Move style">
+                  <button type="button" class="human-mode-opt" data-mode="off" role="radio" aria-checked="true">Engine</button>
+                  <button type="button" class="human-mode-opt" data-mode="on" role="radio" aria-checked="false">Human</button>
+                  <span class="human-mode-thumb" aria-hidden="true"></span>
+                </div>
+              </div>
+
+              <div class="setting-group">
+                <label for="setting-white-repertoire">White repertoire</label>
+                <div class="select-wrap">
+                  <select id="setting-white-repertoire">
+                    <option value="none" selected>No preference</option>
+                    <option value="white_scotch_evans">Scotch / Evans — sharp</option>
+                    <option value="white_smith_morra">Smith–Morra — sharp</option>
+                    <option value="white_milner_barry">Milner–Barry — sharp</option>
+                    <option value="white_panov">Panov — sound aggressive</option>
+                    <option value="white_austrian">Austrian — sound aggressive</option>
+                  </select>
+                </div>
+              </div>
+              <div class="setting-group">
+                <label for="setting-black-repertoire">Black repertoire</label>
+                <div class="select-wrap">
+                  <select id="setting-black-repertoire">
+                    <option value="none" selected>No preference</option>
+                    <option value="black_najdorf">Sicilian Najdorf — sharp</option>
+                    <option value="black_dragon">Sicilian Dragon — sharp</option>
+                    <option value="black_kings_indian">King's Indian — sharp</option>
+                    <option value="black_benoni">Modern Benoni — sharp</option>
+                    <option value="black_dutch">Dutch Leningrad — sharp</option>
+                  </select>
+                </div>
+                <div class="setting-hint">Soft preference — never sacrifices over ½ pawn.</div>
+              </div>
+            </div>
+
+            <div class="setting-section-title"><span>Analysis sources</span></div>
+            <div class="glass-card glass-card--inner">
+              <label class="toggle-row">
+                <div class="toggle-label">
+                  <span>Chess-API.com</span>
+                  <span class="toggle-sub">Primary cloud engine</span>
+                </div>
+                <input type="checkbox" id="setting-use-chess-api" checked>
+                <span class="ios-switch" aria-hidden="true"></span>
+              </label>
+              <label class="toggle-row">
+                <div class="toggle-label">
+                  <span>Lichess Cloud</span>
+                  <span class="toggle-sub">Community evals</span>
+                </div>
+                <input type="checkbox" id="setting-use-lichess-cloud" checked>
+                <span class="ios-switch" aria-hidden="true"></span>
+              </label>
+              <label class="toggle-row">
+                <div class="toggle-label">
+                  <span>Masters Database</span>
+                  <span class="toggle-sub">Grandmaster moves</span>
+                </div>
+                <input type="checkbox" id="setting-use-masters-explorer" checked>
+                <span class="ios-switch" aria-hidden="true"></span>
+              </label>
+              <div class="setting-hint">After move 5, engine sources are preferred.</div>
+            </div>
+
+            <div class="setting-section-title"><span>Cloud API status</span></div>
+            <div class="glass-card glass-card--inner">
+              <div id="api-health-status" class="api-health-status">
+                <div class="api-health-row"><span class="api-name">Chess-API</span><span id="health-chessapi" class="api-status unknown">No recent data</span></div>
+                <div class="api-health-row"><span class="api-name">Lichess Cloud</span><span id="health-lichess" class="api-status unknown">No recent data</span></div>
+                <div class="api-health-row"><span class="api-name">Masters DB</span><span id="health-masters" class="api-status unknown">No recent data</span></div>
+                <div class="api-health-row"><span class="api-name">Opening Explorer</span><span id="health-opening" class="api-status unknown">No recent data</span></div>
+                <div class="api-health-row"><span class="api-name">Tablebase</span><span id="health-tablebase" class="api-status unknown">No recent data</span></div>
+              </div>
+              <div class="api-usage-diagnostics">
+                <strong>Usage — last 10 min</strong>
+                <div class="diag-row"><span>Calls avoided by cache</span><span id="api-cache-avoided" class="mono">0</span></div>
+                <div class="diag-row"><span>Requests coalesced</span><span id="api-requests-coalesced" class="mono">0</span></div>
+                <div class="diag-row"><span>Stale served</span><span id="api-stale-served" class="mono">0</span></div>
+                <div class="diag-row"><span>Stale cancelled</span><span id="api-stale-dropped" class="mono">0</span></div>
+                <div id="api-provider-calls" class="api-provider-calls">No remote calls yet</div>
+              </div>
+              <div class="btn-row">
+                <button id="btn-health-check" class="btn-secondary">Refresh status</button>
+                <button id="btn-clear-caches" class="btn-secondary">Clear caches</button>
+              </div>
+            </div>
+
+            <div class="setting-section-title"><span>What to show</span></div>
+            <div class="glass-card glass-card--inner">
+              <label class="toggle-row">
+                <div class="toggle-label"><span>Auto-analyze</span><span class="toggle-sub">Automatically analyze — uncheck to stop all API calls</span></div>
+                <input type="checkbox" id="setting-auto-analyze" checked>
+                <span class="ios-switch" aria-hidden="true"></span>
+              </label>
+              <div class="setting-hint" style="margin-top:-4px">Default is <strong>your turn only</strong> — never analyzes on opponent's turn. Turn this off to pause all automatic analysis (manual Refresh still works).</div>
+              <label class="toggle-row">
+                <div class="toggle-label"><span>Threat alerts</span><span class="toggle-sub">Show immediate threats</span></div>
+                <input type="checkbox" id="setting-show-threats" checked>
+                <span class="ios-switch" aria-hidden="true"></span>
+              </label>
+              <label class="toggle-row">
+                <div class="toggle-label"><span>Critical moments</span><span class="toggle-sub">Highlight blunders & brilliancies</span></div>
+                <input type="checkbox" id="setting-show-critical-moments" checked>
+                <span class="ios-switch" aria-hidden="true"></span>
+              </label>
+            </div>
+
+            <div class="setting-disclaimer glass-card glass-card--inner">
+              <strong>Request protection is always on:</strong> canonical caching, serialized queues, persistent quotas, strict cooldowns and bounded retries are enforced centrally and cannot be bypassed.
+            </div>
+
+            <div style="height: 24px" aria-hidden="true"></div>
           </div>
-          <div class="btn-row">
-            <button id="btn-health-check" class="btn-secondary">Refresh status</button>
-            <button id="btn-clear-caches" class="btn-secondary">Clear caches</button>
-          </div>
         </div>
-
-        <!-- Display Settings -->
-        <div class="setting-section-title">What to show</div>
-
-        <div class="setting-group">
-          <label class="toggle-label">
-            <input type="checkbox" id="setting-auto-analyze" checked>
-            <span>Auto-analyze on your turn</span>
-          </label>
-          <div class="setting-hint">Analyzes only on your turn. No API calls during the opponent's turn.</div>
-        </div>
-
-        <div class="setting-group">
-          <label class="toggle-label">
-            <input type="checkbox" id="setting-show-threats" checked>
-            <span>Threat alerts</span>
-          </label>
-        </div>
-
-        <div class="setting-group">
-          <label class="toggle-label">
-            <input type="checkbox" id="setting-show-critical-moments" checked>
-            <span>Critical moment alerts</span>
-          </label>
-        </div>
-
-        <!-- Performance & Reliability -->
-        <div class="setting-section-title">Reliability</div>
-        <div class="setting-disclaimer">
-          <strong>Request protection is always on:</strong> analysis uses canonical caching, serialized provider queues, persistent quotas, strict cooldowns, stale-result fallback, and bounded retries. These safeguards cannot be disabled by refresh or cache controls.
-        </div>
-
-      </div><!-- /settings-body -->
-    </div><!-- /settings-panel -->
+      </div>
+    </div>
 
   </div><!-- /app -->
 

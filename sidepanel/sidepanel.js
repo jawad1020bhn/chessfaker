@@ -113,7 +113,11 @@
     criticalMomentSection: $('#critical-moment-section'),
     criticalMomentText: $('#critical-moment-text'),
     criticalMomentDetail: $('#critical-moment-detail'),
-    correlationStat: $('#correlation-stat')
+    correlationStat: $('#correlation-stat'),
+    autoQuick: $('#auto-quick'),
+    autoQuickToggle: $('#auto-analyze-quick-toggle'),
+    autoQuickState: $('#auto-quick-state'),
+    autoQuickSub: $('#auto-quick-sub')
   };
 
   // ─── Turn-Based State ──────────────────────────────────────────────
@@ -342,6 +346,17 @@
     ]);
   }
 
+  function updateAutoQuickUI() {
+    const on = !!settings.autoAnalyze;
+    if (dom.autoQuickToggle) dom.autoQuickToggle.checked = on;
+    if (dom.autoQuick) dom.autoQuick.classList.toggle('off', !on);
+    if (dom.autoQuickState) {
+      dom.autoQuickState.textContent = on ? 'ON' : 'OFF';
+      dom.autoQuickState.className = `auto-quick-state ${on ? 'on' : 'off'}`;
+    }
+    if (dom.autoQuickSub) dom.autoQuickSub.textContent = on ? 'Your turn only' : 'Paused — tap to resume';
+  }
+
   function applySettingsToUI() {
     const mapping = {
       'setting-cloud-depth': settings.cloudDepth,
@@ -369,6 +384,7 @@
       const active = (btn.dataset.mode === 'on') === settings.humanLikeMode;
       btn.setAttribute('aria-checked', active ? 'true' : 'false');
     });
+    updateAutoQuickUI();
     updateStyleDescription();
   }
 
@@ -453,8 +469,10 @@
       if (help) help.style.display = 'none';
       shortcutHelpVisible = false;
     });
-    if (dom.btnSettings) dom.btnSettings.addEventListener('click', () => { if (dom.settingsPanel) dom.settingsPanel.style.display = 'block'; runHealthCheck(); });
+    if (dom.btnSettings) dom.btnSettings.addEventListener('click', () => { if (dom.settingsPanel) dom.settingsPanel.style.display = 'flex'; runHealthCheck(); });
     if (dom.btnCloseSettings) dom.btnCloseSettings.addEventListener('click', () => { if (dom.settingsPanel) dom.settingsPanel.style.display = 'none'; });
+    const settingsBackdrop = document.getElementById('settings-backdrop');
+    if (settingsBackdrop) settingsBackdrop.addEventListener('click', () => { if (dom.settingsPanel) dom.settingsPanel.style.display = 'none'; });
 
     const settingEls = {
       'setting-cloud-depth': (v) => { settings.cloudDepth = parseInt(v); },
@@ -483,6 +501,14 @@
           humanPlanState = null;
           renderAnalysis(lastAnalysis);
         }
+        if (id === 'setting-auto-analyze') {
+          if (val && currentFen && isPlayerTurn) {
+            savePromise.finally(() => requestAnalysis(true));
+          } else if (!val) {
+            updateEngineStatus('online', 'Auto-analyze off — press Refresh');
+            if (dom.hintText) dom.hintText.textContent = 'Auto-analyze is off. Press Refresh to analyze this position.';
+          }
+        }
         if (['setting-use-chess-api', 'setting-use-lichess-cloud', 'setting-use-masters-explorer'].includes(id) && currentFen) {
           // Ensure the worker sees the new source policy before it routes.
           savePromise.finally(() => requestAnalysis(true));
@@ -491,6 +517,31 @@
     });
 
     chrome.runtime.onMessage.addListener(handleMessage);
+
+    // Quick Auto Toggle on main page — creative liquid glass shortcut
+    if (dom.autoQuickToggle) {
+      dom.autoQuickToggle.addEventListener('change', () => {
+        const on = !!dom.autoQuickToggle.checked;
+        settings.autoAnalyze = on;
+        saveSettings().then(() => applySettingsToUI());
+        if (on && currentFen && isPlayerTurn) {
+          requestAnalysis(true);
+          showToast('Auto-analyze resumed', 'success', 1800);
+        } else if (!on) {
+          updateEngineStatus('online', 'Auto-analyze off — press Refresh');
+          if (dom.hintText) dom.hintText.textContent = 'Auto-analyze is off. Press Refresh to analyze this position.';
+          showToast('Auto-analyze paused — no API calls', 'info', 2200);
+        }
+      });
+    }
+    if (dom.autoQuick) {
+      dom.autoQuick.addEventListener('click', (e) => {
+        if (e.target.closest('.quick-switch') || e.target.closest('input') || e.target.closest('label')) return;
+        if (!dom.autoQuickToggle) return;
+        dom.autoQuickToggle.checked = !dom.autoQuickToggle.checked;
+        dom.autoQuickToggle.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    }
 
     // Human-mode segmented control (Engine | Human) drives the hidden checkbox.
     $$('.human-mode-opt').forEach(btn => {
@@ -674,15 +725,24 @@
       return;
     }
 
+    // Default: analyze only on your turn, never on opponent's turn.
+    // Auto-analyze toggle (checked by default) controls *all* automatic calls.
+    // When OFF: no API calls at all until manual Refresh.
     if (isPlayerTurn) {
-      // It's the player's turn — request analysis
-      if (positionChanged && (settings.autoAnalyze || turnJustChanged)) {
+      if (settings.autoAnalyze && positionChanged) {
         requestAnalysis();
+        updateEngineStatus(wasPlayerTurn ? 'online' : 'analyzing', turnJustChanged ? 'Your turn: analyzing...' : 'Your turn');
+      } else if (!settings.autoAnalyze) {
+        updateEngineStatus('online', 'Auto-analyze off — press Refresh');
+        if (dom.hintText && !lastAnalysis) {
+          dom.hintText.textContent = 'Auto-analyze is off. Press Refresh to analyze this position.';
+        }
+      } else {
+        // autoAnalyze ON but position hasn't changed — just idle on your turn
+        updateEngineStatus('online', 'Your turn');
       }
-      updateEngineStatus(wasPlayerTurn ? 'online' : 'analyzing', turnJustChanged ? 'Your turn: analyzing...' : 'Your turn');
     } else {
-      // It's the opponent's turn — show waiting status, no API calls
-      const playerLabel = effectiveColor === 'w' ? 'White' : 'Black';
+      // It's the opponent's turn — never analyze, regardless of autoAnalyze
       updateEngineStatus('online', `Opponent's turn: waiting...`);
       if (dom.hintText && !lastAnalysis) {
         dom.hintText.textContent = `Waiting for opponent's move...`;
@@ -753,7 +813,12 @@
     }
 
     if (isPlayerTurn) {
-      updateEngineStatus('analyzing', 'Your turn: analyzing...');
+      if (!settings.autoAnalyze) {
+        updateEngineStatus('online', 'Auto-analyze off — press Refresh');
+        if (dom.hintText && !lastAnalysis) dom.hintText.textContent = 'Auto-analyze is off. Press Refresh to analyze this position.';
+      } else {
+        updateEngineStatus('analyzing', 'Your turn: analyzing...');
+      }
     } else {
       updateEngineStatus('online', "Opponent's turn: waiting...");
       if (dom.hintText && !lastAnalysis) {
@@ -978,11 +1043,15 @@
     const isWhite = effectiveColor === 'w';
     const displayScore = isWhite ? score : -score;
     const winPct = window.ChessHintEngine.formatEvalBar(score, scoreType, true) / 100;
+    const whitePct = Math.max(0, Math.min(1, winPct));
+    const blackPct = Math.max(0, Math.min(1, 1 - winPct));
     if (dom.evalBarWhite) {
-      dom.evalBarWhite.style.transform = `scale(${winPct}, ${winPct})`;
+      dom.evalBarWhite.style.setProperty('--w', String(whitePct));
+      dom.evalBarWhite.style.transform = `scaleX(${whitePct})`;
     }
     if (dom.evalBarBlack) {
-      dom.evalBarBlack.style.transform = `scale(${1 - winPct}, ${1 - winPct})`;
+      dom.evalBarBlack.style.setProperty('--b', String(blackPct));
+      dom.evalBarBlack.style.transform = `scaleX(${blackPct})`;
     }
     const scoreStr = scoreType === 'mate'
       ? (displayScore > 0 ? `+M${displayScore}` : `-M${Math.abs(displayScore)}`)
