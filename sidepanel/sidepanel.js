@@ -453,8 +453,10 @@
       if (help) help.style.display = 'none';
       shortcutHelpVisible = false;
     });
-    if (dom.btnSettings) dom.btnSettings.addEventListener('click', () => { if (dom.settingsPanel) dom.settingsPanel.style.display = 'block'; runHealthCheck(); });
+    if (dom.btnSettings) dom.btnSettings.addEventListener('click', () => { if (dom.settingsPanel) dom.settingsPanel.style.display = 'flex'; runHealthCheck(); });
     if (dom.btnCloseSettings) dom.btnCloseSettings.addEventListener('click', () => { if (dom.settingsPanel) dom.settingsPanel.style.display = 'none'; });
+    const settingsBackdrop = document.getElementById('settings-backdrop');
+    if (settingsBackdrop) settingsBackdrop.addEventListener('click', () => { if (dom.settingsPanel) dom.settingsPanel.style.display = 'none'; });
 
     const settingEls = {
       'setting-cloud-depth': (v) => { settings.cloudDepth = parseInt(v); },
@@ -978,11 +980,15 @@
     const isWhite = effectiveColor === 'w';
     const displayScore = isWhite ? score : -score;
     const winPct = window.ChessHintEngine.formatEvalBar(score, scoreType, true) / 100;
+    const whitePct = Math.max(0, Math.min(1, winPct));
+    const blackPct = Math.max(0, Math.min(1, 1 - winPct));
     if (dom.evalBarWhite) {
-      dom.evalBarWhite.style.transform = `scale(${winPct}, ${winPct})`;
+      dom.evalBarWhite.style.setProperty('--w', String(whitePct));
+      dom.evalBarWhite.style.transform = `scaleX(${whitePct})`;
     }
     if (dom.evalBarBlack) {
-      dom.evalBarBlack.style.transform = `scale(${1 - winPct}, ${1 - winPct})`;
+      dom.evalBarBlack.style.setProperty('--b', String(blackPct));
+      dom.evalBarBlack.style.transform = `scaleX(${blackPct})`;
     }
     const scoreStr = scoreType === 'mate'
       ? (displayScore > 0 ? `+M${displayScore}` : `-M${Math.abs(displayScore)}`)
