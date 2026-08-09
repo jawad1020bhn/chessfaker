@@ -113,7 +113,11 @@
     criticalMomentSection: $('#critical-moment-section'),
     criticalMomentText: $('#critical-moment-text'),
     criticalMomentDetail: $('#critical-moment-detail'),
-    correlationStat: $('#correlation-stat')
+    correlationStat: $('#correlation-stat'),
+    autoQuick: $('#auto-quick'),
+    autoQuickToggle: $('#auto-analyze-quick-toggle'),
+    autoQuickState: $('#auto-quick-state'),
+    autoQuickSub: $('#auto-quick-sub')
   };
 
   // ─── Turn-Based State ──────────────────────────────────────────────
@@ -342,6 +346,17 @@
     ]);
   }
 
+  function updateAutoQuickUI() {
+    const on = !!settings.autoAnalyze;
+    if (dom.autoQuickToggle) dom.autoQuickToggle.checked = on;
+    if (dom.autoQuick) dom.autoQuick.classList.toggle('off', !on);
+    if (dom.autoQuickState) {
+      dom.autoQuickState.textContent = on ? 'ON' : 'OFF';
+      dom.autoQuickState.className = `auto-quick-state ${on ? 'on' : 'off'}`;
+    }
+    if (dom.autoQuickSub) dom.autoQuickSub.textContent = on ? 'Your turn only' : 'Paused — tap to resume';
+  }
+
   function applySettingsToUI() {
     const mapping = {
       'setting-cloud-depth': settings.cloudDepth,
@@ -369,6 +384,7 @@
       const active = (btn.dataset.mode === 'on') === settings.humanLikeMode;
       btn.setAttribute('aria-checked', active ? 'true' : 'false');
     });
+    updateAutoQuickUI();
     updateStyleDescription();
   }
 
@@ -501,6 +517,31 @@
     });
 
     chrome.runtime.onMessage.addListener(handleMessage);
+
+    // Quick Auto Toggle on main page — creative liquid glass shortcut
+    if (dom.autoQuickToggle) {
+      dom.autoQuickToggle.addEventListener('change', () => {
+        const on = !!dom.autoQuickToggle.checked;
+        settings.autoAnalyze = on;
+        saveSettings().then(() => applySettingsToUI());
+        if (on && currentFen && isPlayerTurn) {
+          requestAnalysis(true);
+          showToast('Auto-analyze resumed', 'success', 1800);
+        } else if (!on) {
+          updateEngineStatus('online', 'Auto-analyze off — press Refresh');
+          if (dom.hintText) dom.hintText.textContent = 'Auto-analyze is off. Press Refresh to analyze this position.';
+          showToast('Auto-analyze paused — no API calls', 'info', 2200);
+        }
+      });
+    }
+    if (dom.autoQuick) {
+      dom.autoQuick.addEventListener('click', (e) => {
+        if (e.target.closest('.quick-switch') || e.target.closest('input') || e.target.closest('label')) return;
+        if (!dom.autoQuickToggle) return;
+        dom.autoQuickToggle.checked = !dom.autoQuickToggle.checked;
+        dom.autoQuickToggle.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    }
 
     // Human-mode segmented control (Engine | Human) drives the hidden checkbox.
     $$('.human-mode-opt').forEach(btn => {

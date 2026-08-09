@@ -119,6 +119,36 @@
       </div>
     </div>
 
+    <!-- Quick Auto Toggle — Main Page Shortcut -->
+    <div id="auto-quick" class="auto-quick glass-container glass-container--pill glass-container--small" role="group" aria-label="Auto analyze quick toggle" title="Tap to toggle auto-analyze — when off, no API calls until Refresh">
+      <div class="glass-filter"></div>
+      <div class="glass-overlay"></div>
+      <div class="glass-specular"></div>
+      <div class="glass-content auto-quick-content">
+        <div class="auto-quick-left">
+          <div class="auto-quick-icon" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 3.2 L13.6 8.6 L19 10 L13.6 11.4 L12 16.8 L10.4 11.4 L5 10 L10.4 8.6 Z" fill="white" stroke="white" stroke-linejoin="round" stroke-width="0.6"/>
+              <circle cx="18.2" cy="5.8" r="1.4" fill="white"/>
+              <circle cx="7.2" cy="15.6" r="1" fill="white" opacity="0.9"/>
+            </svg>
+          </div>
+          <div class="auto-quick-text">
+            <span class="auto-quick-label">Auto</span>
+            <span id="auto-quick-sub" class="auto-quick-sub">Your turn only</span>
+          </div>
+        </div>
+        <div class="auto-quick-right">
+          <span id="auto-quick-state" class="auto-quick-state on">ON</span>
+          <label class="quick-switch" aria-label="Toggle auto analyze">
+            <input type="checkbox" id="auto-analyze-quick-toggle" checked>
+            <span class="ios-switch ios-switch--quick" aria-hidden="true"></span>
+          </label>
+        </div>
+      </div>
+      <div class="auto-quick-glow" aria-hidden="true"></div>
+    </div>
+
     <!-- Main Content -->
     <div class="tab-content">
 
