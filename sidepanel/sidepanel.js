@@ -1,6 +1,6 @@
 /**
  * Chess Hint Assistant — Side Panel Controller
- * Turn-Based Analysis Engine. No local Stockfish.
+ * Turn-Based Analysis Engine with cloud providers and a local fallback.
  *
  * EDUCATIONAL USE ONLY — FAIR-PLAY SAFE
  * This project is a study/research tool for building a chess engine that can
@@ -40,14 +40,13 @@
   };
 
   let settings = {
-    cloudDepth: 5,
+    analysisQuality: 'auto',
+    candidateLines: 'auto',
     style: 'normal',
     // Kept as a style-scoped preference. The engine activates it only when
     // style === 'super_ultra_aggressive'; other styles ignore it completely.
     earlyKingHuntEnabled: false,
     humanLikeMode: false,
-    whiteRepertoire: 'none',
-    blackRepertoire: 'none',
     autoAnalyze: true,
     showThreats: true,
     showCriticalMoments: true,
@@ -55,7 +54,6 @@
     // tablebase-backed winning plans); the explore UI is gone.
     showOpeningExplorer: true,
     showTablebase: true,
-    depthTarget: 0,                 // 0 = no minimum; otherwise min depth for exact hints
     useChessApi: true,
     useLichessCloud: true,
     useMastersExplorer: true
@@ -112,6 +110,7 @@
     evalDescription: $('#eval-description'),
     openingName: $('#opening-name'),
     gamePhase: $('#game-phase'),
+    analysisQuality: $('#analysis-quality'),
     analysisDepth: $('#analysis-depth'),
     analysisSource: $('#analysis-source'),
     sourceBadge: $('#source-badge'),
@@ -249,9 +248,9 @@
         case 's':
           e.preventDefault();
           if (dom.settingsPanel && dom.settingsPanel.style.display !== 'none') {
-            dom.settingsPanel.style.display = 'none';
-          } else if (dom.btnSettings) {
-            dom.btnSettings.click();
+            closeSettingsSheet();
+          } else {
+            openSettingsSheet();
           }
           break;
         case 'escape':
@@ -260,7 +259,7 @@
             if (help) help.style.display = 'none';
             shortcutHelpVisible = false;
           } else if (dom.settingsPanel && dom.settingsPanel.style.display !== 'none') {
-            dom.settingsPanel.style.display = 'none';
+            closeSettingsSheet();
           }
           break;
         case '?':
@@ -287,6 +286,7 @@
   // ─── Initialize ────────────────────────────────────────────────────
   function init() {
     loadSettings();
+    applySettingsToUI();
     bindEvents();
     initKeyboardShortcuts();
     initSettingsFocusTrap();
@@ -342,11 +342,20 @@
   function loadSettings() {
     chrome.storage.local.get('settings', (result) => {
       if (result.settings) {
+        const migrated = window.AnalysisPolicy
+          ? window.AnalysisPolicy.migrateLegacySettings(result.settings)
+          : result.settings;
         settings = {
           ...settings,
-          ...result.settings,
-          style: normalizeStyle(result.settings.style),
-          earlyKingHuntEnabled: result.settings.earlyKingHuntEnabled === true
+          ...migrated,
+          style: normalizeStyle(migrated.style),
+          earlyKingHuntEnabled: migrated.earlyKingHuntEnabled === true,
+          analysisQuality: window.AnalysisPolicy
+            ? window.AnalysisPolicy.normalizeQuality(migrated.analysisQuality)
+            : (migrated.analysisQuality || 'auto'),
+          candidateLines: window.AnalysisPolicy
+            ? window.AnalysisPolicy.normalizeCandidateLines(migrated.candidateLines)
+            : (migrated.candidateLines || 'auto')
         };
         applySettingsToUI();
         if (settings.style !== result.settings.style) chrome.storage.local.set({ settings });
@@ -370,13 +379,11 @@
 
   function applySettingsToUI() {
     const mapping = {
-      'setting-cloud-depth': settings.cloudDepth,
-      'setting-depth-target': settings.depthTarget,
+      'setting-analysis-quality': settings.analysisQuality,
+      'setting-candidate-lines': settings.candidateLines,
       'setting-style': settings.style,
       'setting-early-king-hunt': settings.earlyKingHuntEnabled,
       'setting-human-like-mode': settings.humanLikeMode,
-      'setting-white-repertoire': settings.whiteRepertoire,
-      'setting-black-repertoire': settings.blackRepertoire,
       'setting-auto-analyze': settings.autoAnalyze,
       'setting-show-threats': settings.showThreats,
       'setting-show-critical-moments': settings.showCriticalMoments,
@@ -398,6 +405,21 @@
     });
     updateStyleDescription();
     updateEarlyKingHuntUI();
+    syncExpressiveControls();
+  }
+
+  function syncExpressiveControls() {
+    $$('[data-expressive-setting]').forEach((btn) => {
+      const field = $(`#${btn.dataset.expressiveSetting}`);
+      if (!field) return;
+      const selected = String(field.type === 'checkbox' ? field.checked : field.value) === String(btn.dataset.value);
+      btn.classList.toggle('is-selected', selected);
+      btn.setAttribute('aria-checked', selected ? 'true' : 'false');
+    });
+    $$('.human-mode-opt').forEach((btn) => {
+      const active = (btn.dataset.mode === 'on') === settings.humanLikeMode;
+      btn.classList.toggle('is-selected', active);
+    });
   }
 
   // ─── Player Selector ──────────────────────────────────────────────
@@ -481,17 +503,15 @@
       if (help) help.style.display = 'none';
       shortcutHelpVisible = false;
     });
-    if (dom.btnSettings) dom.btnSettings.addEventListener('click', () => { if (dom.settingsPanel) dom.settingsPanel.style.display = 'block'; runHealthCheck(); });
-    if (dom.btnCloseSettings) dom.btnCloseSettings.addEventListener('click', () => { if (dom.settingsPanel) dom.settingsPanel.style.display = 'none'; });
+    if (dom.btnSettings) dom.btnSettings.addEventListener('click', openSettingsSheet);
+    if (dom.btnCloseSettings) dom.btnCloseSettings.addEventListener('click', closeSettingsSheet);
 
     const settingEls = {
-      'setting-cloud-depth': (v) => { settings.cloudDepth = parseInt(v); },
-      'setting-depth-target': (v) => { settings.depthTarget = parseInt(v); },
+      'setting-analysis-quality': (v) => { settings.analysisQuality = v; },
+      'setting-candidate-lines': (v) => { settings.candidateLines = v === 'auto' ? 'auto' : parseInt(v, 10); },
       'setting-style': (v) => { settings.style = normalizeStyle(v); },
       'setting-early-king-hunt': (v) => { settings.earlyKingHuntEnabled = v === true; },
       'setting-human-like-mode': (v) => { settings.humanLikeMode = v; },
-      'setting-white-repertoire': (v) => { settings.whiteRepertoire = v; },
-      'setting-black-repertoire': (v) => { settings.blackRepertoire = v; },
       'setting-auto-analyze': (v) => { settings.autoAnalyze = v; },
       'setting-show-threats': (v) => { settings.showThreats = v; },
       'setting-show-critical-moments': (v) => { settings.showCriticalMoments = v; },
@@ -512,7 +532,7 @@
           humanPlanState = null;
           renderAnalysis(lastAnalysis);
         }
-        if (['setting-use-chess-api', 'setting-use-lichess-cloud', 'setting-use-masters-explorer'].includes(id) && currentFen) {
+        if (['setting-use-chess-api', 'setting-use-lichess-cloud', 'setting-use-masters-explorer', 'setting-analysis-quality', 'setting-candidate-lines'].includes(id) && currentFen) {
           // Ensure the worker sees the new source policy before it routes.
           savePromise.finally(() => requestAnalysis(true));
         }
@@ -530,6 +550,16 @@
         if (el.checked === on) return;
         el.checked = on;
         el.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    });
+
+    $$('[data-expressive-setting]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const field = $(`#${btn.dataset.expressiveSetting}`);
+        if (!field || field.disabled) return;
+        if (String(field.value) === String(btn.dataset.value)) return;
+        field.value = btn.dataset.value;
+        field.dispatchEvent(new Event('change', { bubbles: true }));
       });
     });
   }
@@ -587,7 +617,7 @@
       healthCheckInFlight = false;
       if (dom.btnHealthCheck) {
         dom.btnHealthCheck.disabled = false;
-        dom.btnHealthCheck.textContent = 'Refresh Status';
+        dom.btnHealthCheck.textContent = 'Refresh status';
       }
     };
     const safetyTimer = setTimeout(restoreButton, 5000);
@@ -859,7 +889,7 @@
     // auto-analysis. The `isRefreshing` flag is set when the user clicks
     // Refresh and cleared only when this workflow settles.
     if (data.source && wasUserRefresh) {
-      const sourceNames = { 'chess-api': 'Chess-API', 'lichess-cloud': 'Lichess Cloud', 'masters-explorer': 'Masters DB', 'opening-explorer': 'Opening Cache', 'tablebase': 'Tablebase' };
+      const sourceNames = { 'chess-api': 'Chess-API', 'lichess-cloud': 'Lichess Cloud', 'masters-explorer': 'Masters DB', 'opening-explorer': 'Opening Cache', 'tablebase': 'Tablebase', 'local-engine': 'Local engine' };
       showToast(`Analysis ready via ${sourceNames[data.source] || data.source}`, 'success', 2000);
     }
 
@@ -902,30 +932,34 @@
     const sourceLabels = {
       'chess-api': 'Chess-API.com',
       'lichess-cloud': 'Lichess Cloud',
-      'masters-explorer': 'Masters DB', // Human grandmaster moves
+      'masters-explorer': 'Masters DB',
       'opening-explorer': 'Opening Explorer Cache',
+      'local-engine': 'Local engine',
       'tablebase': 'Tablebase',
       'unknown': '\u2013'
     };
     const label = sourceLabels[source] || source;
-    updateSourceIndicator(source, label, data.depth);
+    updateSourceIndicator(source, label, data.depth, data);
   }
 
-  function updateSourceIndicator(source, label, depth) {
-    // Source badge distinguishes engine, human/opening, tablebase, and unknown sources.
+  function updateSourceIndicator(source, label, depth, data = {}) {
+    const quality = window.AnalysisPolicy
+      ? window.AnalysisPolicy.describeQuality(data.qualityClass || window.AnalysisPolicy.qualityClassFor(data))
+      : { badge: source === 'tablebase' ? 'TB' : (source === 'local-engine' ? 'LOCAL' : 'CLOUD') };
     if (dom.sourceBadge) {
       const badgeClass = source === 'tablebase' ? 'tb'
-        : (source === 'masters-explorer' || source === 'opening-explorer' ? 'human' : 'cloud');
+        : source === 'local-engine' ? 'local'
+        : (source === 'masters-explorer' || source === 'opening-explorer' ? 'human'
+        : (data.stale ? 'minimal' : 'cloud'));
       dom.sourceBadge.className = `source-badge source-${badgeClass}`;
-      dom.sourceBadge.textContent = source === 'tablebase' ? 'TB'
-        : (source === 'masters-explorer' ? 'HUMAN'
-        : (source === 'opening-explorer' ? 'OPENING'
-        : (source === 'unknown' ? '\u2013' : 'CLOUD')));
+      dom.sourceBadge.textContent = quality.badge || 'CLOUD';
+      if (quality.label) dom.sourceBadge.title = quality.label;
     }
     if (dom.analysisSource) {
       const depthStr = depth ? ` (depth ${depth})` : '';
       dom.analysisSource.textContent = `${label}${depthStr}`;
       const sourceClass = source === 'tablebase' ? 'tb'
+        : source === 'local-engine' ? 'local'
         : (source === 'masters-explorer' || source === 'opening-explorer' ? 'human' : 'cloud');
       dom.analysisSource.className = `info-value source-indicator source-${sourceClass}`;
     }
@@ -940,7 +974,9 @@
       type: 'request_analysis',
       fen: currentFen,
       playerColor: colorToSend,
-      multiPv: settings.cloudDepth || 3,
+      multiPv: window.AnalysisPolicy
+        ? window.AnalysisPolicy.resolveMultiPv(settings, { earlyKingHunt: isEarlyKingHuntActive() })
+        : 3,
       hintLevel: EXACT_HINT_LEVEL,
       refresh: refresh,
       tabId: activeTabId,
@@ -1014,10 +1050,10 @@
     const displayScore = isWhite ? score : -score;
     const winPct = window.ChessHintEngine.formatEvalBar(score, scoreType, true) / 100;
     if (dom.evalBarWhite) {
-      dom.evalBarWhite.style.transform = `scale(${winPct}, ${winPct})`;
+      dom.evalBarWhite.style.transform = `scaleX(${winPct})`;
     }
     if (dom.evalBarBlack) {
-      dom.evalBarBlack.style.transform = `scale(${1 - winPct}, ${1 - winPct})`;
+      dom.evalBarBlack.style.transform = `scaleX(${1 - winPct})`;
     }
     const scoreStr = scoreType === 'mate'
       ? (displayScore > 0 ? `+M${displayScore}` : `-M${Math.abs(displayScore)}`)
@@ -1044,6 +1080,19 @@
   function updateEngineStatus(status, text) {
     if (dom.statusDot) dom.statusDot.className = `status-dot ${status}`;
     if (dom.statusText) dom.statusText.textContent = text;
+    const app = document.getElementById('app');
+    if (app) app.classList.toggle('analyzing', status === 'analyzing' || status === 'connecting');
+  }
+
+  function openSettingsSheet() {
+    if (!dom.settingsPanel) return;
+    dom.settingsPanel.style.display = 'flex';
+    runHealthCheck();
+  }
+
+  function closeSettingsSheet() {
+    if (!dom.settingsPanel) return;
+    dom.settingsPanel.style.display = 'none';
   }
 
   function renderPositionInfo(data) {
@@ -1058,6 +1107,15 @@
     if (dom.gamePhase && data.fen) {
       const phase = window.ChessHintEngine.detectGamePhase(data.fen);
       dom.gamePhase.textContent = phase.charAt(0).toUpperCase() + phase.slice(1);
+    }
+    if (dom.analysisQuality) {
+      const quality = window.AnalysisPolicy
+        ? window.AnalysisPolicy.describeQuality(data.qualityClass || window.AnalysisPolicy.qualityClassFor(data))
+        : { label: data.qualityLabel || '—' };
+      const stale = data.stale ? ' · stale' : '';
+      const confidence = Number.isFinite(data.confidence) ? ` · ${Math.round(data.confidence * 100)}%` : '';
+      dom.analysisQuality.textContent = `${quality.label}${stale}${confidence}`;
+      dom.analysisQuality.title = quality.detail || '';
     }
     if (dom.analysisDepth && data.depth) {
       const sourceLabel = currentSource === 'chess-api' ? ' (api)' : (currentSource === 'lichess-cloud' ? ' (cloud)' : (currentSource === 'tablebase' ? ' (TB)' : ''));
@@ -1142,7 +1200,7 @@
       effectiveHintLevel,
       effectiveColor,
       settings.style,
-      effectiveColor === 'w' ? settings.whiteRepertoire : settings.blackRepertoire,
+      null,
       settings.humanLikeMode,
       {
         activePlan: humanPlanState?.activePlan || null,
