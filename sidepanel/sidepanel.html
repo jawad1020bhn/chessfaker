@@ -41,9 +41,10 @@
         </div>
       </div>
       <div class="md-app-bar__actions">
-        <div id="player-selector" class="md-btn-group md-btn-group--connected" role="radiogroup" aria-label="Which side to coach">
-          <button type="button" class="player-btn md-btn-group__item is-selected" data-color="w" role="radio" aria-checked="true">White</button>
-          <button type="button" class="player-btn md-btn-group__item" data-color="b" role="radio" aria-checked="false">Black</button>
+        <div id="player-selector" class="md-segmented md-btn-group md-btn-group--connected" role="radiogroup" aria-label="Which side to coach" data-selected="w">
+          <span class="md-segmented__indicator" aria-hidden="true"></span>
+          <button type="button" class="player-btn md-btn-group__item is-selected" data-color="w" role="radio" aria-checked="true"><span class="piece-dot piece-dot--light" aria-hidden="true"></span>White</button>
+          <button type="button" class="player-btn md-btn-group__item" data-color="b" role="radio" aria-checked="false"><span class="piece-dot piece-dot--dark" aria-hidden="true"></span>Black</button>
         </div>
         <button id="btn-settings" class="md-icon-btn md-icon-btn--tonal" type="button" title="Settings (S)" aria-label="Open settings">
           <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.2 7.2 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.59.22-1.14.53-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.48a.5.5 0 0 0 .12.64L4.86 10.7c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.23.4.32.64.22l2.39-.96c.5.41 1.04.72 1.63.94l.36 2.54c.05.24.25.42.49.42h3.8c.24 0 .44-.18.49-.42l.36-2.54c.59-.22 1.14-.53 1.63-.94l2.39.96c.24.1.51 0 .64-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"/></svg>
@@ -57,8 +58,7 @@
       </span>
       <span class="status-dot connecting" aria-hidden="true"></span>
       <span class="status-text">Connecting…</span>
-      <div id="position-context" class="md-status__meta pending" aria-label="Position source and turn">
-        <span id="position-source" class="md-assist-chip context-chip pending">Board</span>
+      <div id="position-context" class="md-status__meta pending" aria-label="Turn status">
         <span id="position-turn" class="md-typescale-label-md context-turn">Waiting for a game</span>
       </div>
     </div>
@@ -67,18 +67,24 @@
       <section id="hint-section" class="md-hero" aria-label="Recommended move">
         <div class="md-hero__meta">
           <span class="md-typescale-label-md md-hero__kicker">Your move</span>
-          <span id="source-badge" class="md-assist-chip source-badge source-local">Local</span>
         </div>
         <div id="hint-card" class="hint-card md-hero__stage exact-move" aria-live="polite">
           <p id="hint-text" class="hint-text md-typescale-display-sm-em">Waiting for a board…</p>
           <div id="hint-fromto" class="hint-fromto md-hero__squares" style="display:none" aria-label="Move squares"></div>
-          <div id="threat-pill" class="threat-pill md-banner md-banner--tertiary" style="display:none" role="alert">
+          <div id="threat-pill" class="threat-pill md-banner md-banner--tertiary md-banner--iconed" style="display:none" role="alert">
+            <span class="md-banner__icon" aria-hidden="true"></span>
             <span id="threat-pill-text" class="threat-pill-text"></span>
           </div>
-          <div id="fair-play-warning" class="fair-play-warning md-banner md-banner--error" style="display:none" role="alert">
+          <div id="fair-play-warning" class="fair-play-warning md-banner md-banner--error md-banner--iconed" style="display:none" role="alert">
+            <span class="md-banner__icon" aria-hidden="true"></span>
             <span id="fair-play-warning-text" class="warning-text"></span>
           </div>
         </div>
+      </section>
+
+      <section id="idea-section" class="md-idea" hidden aria-label="Why this move">
+        <h2 class="md-typescale-label-md md-idea__title">Why this move</h2>
+        <div id="idea-list" class="md-idea__list" role="list"></div>
       </section>
 
       <section id="eval-section" class="md-card md-eval" aria-label="Position evaluation">
@@ -100,6 +106,7 @@
 
       <section id="critical-moment-section" class="md-banner md-banner--primary critical-moment-section" style="display:none" role="alert" aria-label="Critical moment">
         <p class="md-typescale-label-md md-banner__kicker">Critical moment</p>
+        <span class="md-banner__icon md-banner__icon--float" aria-hidden="true"></span>
         <p id="critical-moment-text" class="critical-moment-text md-typescale-title-sm"></p>
         <p id="critical-moment-detail" class="critical-moment-detail md-typescale-body-md"></p>
       </section>
@@ -184,7 +191,8 @@
               <span class="human-mode-status visually-hidden">Off</span>
             </div>
             <input type="checkbox" id="setting-human-like-mode" class="human-mode-checkbox visually-hidden">
-            <div class="md-btn-group md-btn-group--connected human-mode-segmented" role="radiogroup" aria-label="Move voice">
+            <div class="md-segmented md-btn-group md-btn-group--connected human-mode-segmented" role="radiogroup" aria-label="Move voice">
+              <span class="md-segmented__indicator" aria-hidden="true"></span>
               <button type="button" class="human-mode-opt md-btn-group__item is-selected" data-mode="off" role="radio" aria-checked="true">Engine</button>
               <button type="button" class="human-mode-opt md-btn-group__item" data-mode="on" role="radio" aria-checked="false">Human</button>
             </div>
@@ -201,7 +209,8 @@
             <option value="deep">Deep</option>
           </select>
           <p class="md-field-label">Quality</p>
-          <div class="md-btn-group md-btn-group--wrap" role="radiogroup" aria-label="Analysis quality">
+          <div class="md-segmented md-btn-group md-btn-group--wrap" role="radiogroup" aria-label="Analysis quality">
+            <span class="md-segmented__indicator" aria-hidden="true"></span>
             <button type="button" class="md-btn-group__item" data-expressive-setting="setting-analysis-quality" data-value="auto" role="radio">Auto</button>
             <button type="button" class="md-btn-group__item" data-expressive-setting="setting-analysis-quality" data-value="fast" role="radio">Fast</button>
             <button type="button" class="md-btn-group__item" data-expressive-setting="setting-analysis-quality" data-value="balanced" role="radio">Balanced</button>
@@ -216,7 +225,8 @@
             <option value="5">5</option>
           </select>
           <p class="md-field-label">Candidate lines</p>
-          <div class="md-btn-group" role="radiogroup" aria-label="Candidate lines">
+          <div class="md-segmented md-btn-group" role="radiogroup" aria-label="Candidate lines">
+            <span class="md-segmented__indicator" aria-hidden="true"></span>
             <button type="button" class="md-btn-group__item" data-expressive-setting="setting-candidate-lines" data-value="auto" role="radio">Auto</button>
             <button type="button" class="md-btn-group__item" data-expressive-setting="setting-candidate-lines" data-value="3" role="radio">3</button>
             <button type="button" class="md-btn-group__item" data-expressive-setting="setting-candidate-lines" data-value="5" role="radio">5</button>

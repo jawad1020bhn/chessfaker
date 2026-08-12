@@ -80,13 +80,16 @@ assert.equal(superUltraChoice.pv[0], 'd3h7');
 assert.equal(superUltraChoice._styleAnalysis.sacrificeSoundness, 'speculative');
 
 const aggressiveHint = engine.generateHints({ fen: attackFen, pvs: [quiet, forcingCheck], moveHistory: [] }, 5, 'w', 'aggressive', 'none');
-assert.match(aggressiveHint.main, /Aggressive choice: Qh5\+/);
-assert.match(aggressiveHint.main, /Fast-win idea:/);
+assert.equal(aggressiveHint.main, 'Qh5+', 'the hero leads with the move itself — no style-name label');
+assert.ok(!/choice:/i.test(aggressiveHint.main), 'no "… choice:" prefix ever reaches the hero');
+const aggressiveIdea = aggressiveHint.captions.find(c => c.kind === 'idea');
+assert.equal(aggressiveIdea?.label, 'Fast-win idea', 'the style idea travels as a caption item, outside the hero');
+assert.ok(aggressiveIdea?.text.length > 0, 'the idea caption carries the reason text');
 assert.equal(aggressiveHint.pvs[0].pv[0], 'd1h5');
 
 const legacyLevelHint = engine.generateHints({ fen: attackFen, pvs: [quiet], moveHistory: [] }, 1, 'w', 'normal', 'none');
 assert.equal(legacyLevelHint.level, 5, 'exact-only mode normalizes legacy level requests');
-assert.match(legacyLevelHint.main, /^Best:/, 'legacy level requests still receive the exact move');
+assert.equal(legacyLevelHint.main, 'Qd2', 'legacy level requests receive the exact move with no label prefix');
 assert.ok(legacyLevelHint.bestMoveFromTo?.includes('d1 → d2'));
 
 // Human-like mode stays inside objective/style budgets but prefers natural plans.
@@ -167,6 +170,18 @@ assert.match(humanChaosHint.main, /^[a-hNBRQK]/);
 assert.doesNotMatch(humanChaosHint.main, /Why it feels natural/, 'verbose reason list removed');
 assert.doesNotMatch(humanChaosHint.main, /Human plan:/, 'plan merged into the move line');
 assert.ok(!/^Chaos Attack \(vs <=1100\) choice:/.test(humanChaosHint.main), 'raw engine-prefix must not leak in human mode');
+
+// Ultra Super Aggressive must never prefix the hero with its style name: the
+// user picked the style in settings, so the panel leads with the move.
+const ultraHint = engine.generateHints(
+  { fen: chaosRefFen, pvs: [attackSacMove, safeQuietMove], moveHistory: [] },
+  5, 'w', 'super_ultra_aggressive', 'none'
+);
+assert.ok(!/Ultra Super Aggressive/i.test(ultraHint.main), 'no "Ultra Super Aggressive Attack choice:" label in the hero');
+assert.match(ultraHint.main, /^Q/, 'the hero leads with the move itself');
+const ultraIdea = ultraHint.captions.find(c => c.kind === 'idea');
+assert.equal(ultraIdea?.label, 'Maximum-pressure idea', 'pressure idea surfaces as a caption item outside the hero');
+assert.ok(ultraHint.captions.some(c => c.kind === 'sacrifice'), 'sacrifice context surfaces as a caption item');
 
 // ── Grafted Berserker-vocabulary features (Chaos Attack additions) ──
 const chaosWeights = engine.PLAYING_STYLES.super_ultra_aggressive.weights;
