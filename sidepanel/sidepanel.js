@@ -248,9 +248,9 @@
         case 's':
           e.preventDefault();
           if (dom.settingsPanel && dom.settingsPanel.style.display !== 'none') {
-            dom.settingsPanel.style.display = 'none';
-          } else if (dom.btnSettings) {
-            dom.btnSettings.click();
+            closeSettingsSheet();
+          } else {
+            openSettingsSheet();
           }
           break;
         case 'escape':
@@ -259,7 +259,7 @@
             if (help) help.style.display = 'none';
             shortcutHelpVisible = false;
           } else if (dom.settingsPanel && dom.settingsPanel.style.display !== 'none') {
-            dom.settingsPanel.style.display = 'none';
+            closeSettingsSheet();
           }
           break;
         case '?':
@@ -286,6 +286,7 @@
   // ─── Initialize ────────────────────────────────────────────────────
   function init() {
     loadSettings();
+    applySettingsToUI();
     bindEvents();
     initKeyboardShortcuts();
     initSettingsFocusTrap();
@@ -404,6 +405,21 @@
     });
     updateStyleDescription();
     updateEarlyKingHuntUI();
+    syncExpressiveControls();
+  }
+
+  function syncExpressiveControls() {
+    $$('[data-expressive-setting]').forEach((btn) => {
+      const field = $(`#${btn.dataset.expressiveSetting}`);
+      if (!field) return;
+      const selected = String(field.type === 'checkbox' ? field.checked : field.value) === String(btn.dataset.value);
+      btn.classList.toggle('is-selected', selected);
+      btn.setAttribute('aria-checked', selected ? 'true' : 'false');
+    });
+    $$('.human-mode-opt').forEach((btn) => {
+      const active = (btn.dataset.mode === 'on') === settings.humanLikeMode;
+      btn.classList.toggle('is-selected', active);
+    });
   }
 
   // ─── Player Selector ──────────────────────────────────────────────
@@ -487,8 +503,8 @@
       if (help) help.style.display = 'none';
       shortcutHelpVisible = false;
     });
-    if (dom.btnSettings) dom.btnSettings.addEventListener('click', () => { if (dom.settingsPanel) dom.settingsPanel.style.display = 'block'; runHealthCheck(); });
-    if (dom.btnCloseSettings) dom.btnCloseSettings.addEventListener('click', () => { if (dom.settingsPanel) dom.settingsPanel.style.display = 'none'; });
+    if (dom.btnSettings) dom.btnSettings.addEventListener('click', openSettingsSheet);
+    if (dom.btnCloseSettings) dom.btnCloseSettings.addEventListener('click', closeSettingsSheet);
 
     const settingEls = {
       'setting-analysis-quality': (v) => { settings.analysisQuality = v; },
@@ -534,6 +550,16 @@
         if (el.checked === on) return;
         el.checked = on;
         el.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    });
+
+    $$('[data-expressive-setting]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const field = $(`#${btn.dataset.expressiveSetting}`);
+        if (!field || field.disabled) return;
+        if (String(field.value) === String(btn.dataset.value)) return;
+        field.value = btn.dataset.value;
+        field.dispatchEvent(new Event('change', { bubbles: true }));
       });
     });
   }
@@ -591,7 +617,7 @@
       healthCheckInFlight = false;
       if (dom.btnHealthCheck) {
         dom.btnHealthCheck.disabled = false;
-        dom.btnHealthCheck.textContent = 'Refresh Status';
+        dom.btnHealthCheck.textContent = 'Refresh status';
       }
     };
     const safetyTimer = setTimeout(restoreButton, 5000);
@@ -1024,10 +1050,10 @@
     const displayScore = isWhite ? score : -score;
     const winPct = window.ChessHintEngine.formatEvalBar(score, scoreType, true) / 100;
     if (dom.evalBarWhite) {
-      dom.evalBarWhite.style.transform = `scale(${winPct}, ${winPct})`;
+      dom.evalBarWhite.style.transform = `scaleX(${winPct})`;
     }
     if (dom.evalBarBlack) {
-      dom.evalBarBlack.style.transform = `scale(${1 - winPct}, ${1 - winPct})`;
+      dom.evalBarBlack.style.transform = `scaleX(${1 - winPct})`;
     }
     const scoreStr = scoreType === 'mate'
       ? (displayScore > 0 ? `+M${displayScore}` : `-M${Math.abs(displayScore)}`)
@@ -1054,6 +1080,19 @@
   function updateEngineStatus(status, text) {
     if (dom.statusDot) dom.statusDot.className = `status-dot ${status}`;
     if (dom.statusText) dom.statusText.textContent = text;
+    const app = document.getElementById('app');
+    if (app) app.classList.toggle('analyzing', status === 'analyzing' || status === 'connecting');
+  }
+
+  function openSettingsSheet() {
+    if (!dom.settingsPanel) return;
+    dom.settingsPanel.style.display = 'flex';
+    runHealthCheck();
+  }
+
+  function closeSettingsSheet() {
+    if (!dom.settingsPanel) return;
+    dom.settingsPanel.style.display = 'none';
   }
 
   function renderPositionInfo(data) {
