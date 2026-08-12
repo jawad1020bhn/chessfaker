@@ -80,6 +80,21 @@
 
   --md-comp-state-hover: color-mix(in oklab, var(--md-sys-color-on-surface) 8%, transparent);
   --md-comp-state-focus: color-mix(in oklab, var(--md-sys-color-primary) 16%, transparent);
+
+  /* ── Component icon masks (Material symbols, data-URI) ── */
+  --md-icon-check: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M9.55 17.3 4.8 12.55l1.4-1.4 3.35 3.35 8.25-8.25 1.4 1.4Z'/%3E%3C/svg%3E");
+  --md-icon-warning: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M1 21h22L12 2 1 21Zm12-3h-2v-2h2v2Zm0-4h-2v-4h2v4Z'/%3E%3C/svg%3E");
+  --md-icon-error: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm1 15h-2v-2h2v2Zm0-4h-2V7h2v6Z'/%3E%3C/svg%3E");
+  --md-icon-bolt: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M7 2v11h3v9l7-12h-4l4-8Z'/%3E%3C/svg%3E");
+  --md-icon-bulb: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1Zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26C17.81 13.47 19 11.38 19 9c0-3.86-3.14-7-7-7Z'/%3E%3C/svg%3E");
+  --md-icon-crosshair: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4Zm8.94 3c-.46-4.17-3.77-7.48-7.94-7.94V1h-2v3.06C6.83 4.52 3.52 7.83 3.06 12H1v2h3.06c.46 4.17 3.77 7.48 7.94 7.94V23h2v-3.06c4.17-.46 7.48-3.77 7.94-7.94H23v-2h-3.06ZM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7Z'/%3E%3C/svg%3E");
+  --md-icon-flag: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M14.4 6 14 4H5v17h2v-7h5.6l.4 2h7V6Z'/%3E%3C/svg%3E");
+  --md-icon-trend-down: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='m16 18 2.29-2.29-4.88-4.88-4 4L2 7.41 3.41 6l6 6 4-4 5.88 5.88L22 11.17V18h-6Z'/%3E%3C/svg%3E");
+  --md-icon-info: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm1 15h-2v-6h2v6Zm0-8h-2V9h2V7Z'/%3E%3C/svg%3E");
+
+  /* Chess-piece identity neutrals — theme-independent on purpose. */
+  --md-piece-light: #f7f4ee;
+  --md-piece-light-on: #1c1b17;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -217,7 +232,19 @@ body {
 }
 
 .md-app.no-position #eval-section,
-.md-app.no-position #position-info { display: none; }
+.md-app.no-position #position-info,
+.md-app.no-position #idea-section { display: none; }
+
+.md-canvas > * { animation: mdRise var(--md-sys-motion-med) var(--md-sys-motion-spatial) both; }
+.md-canvas > *:nth-child(2) { animation-delay: 30ms; }
+.md-canvas > *:nth-child(3) { animation-delay: 60ms; }
+.md-canvas > *:nth-child(4) { animation-delay: 90ms; }
+.md-canvas > *:nth-child(5) { animation-delay: 120ms; }
+.md-canvas > *:nth-child(6) { animation-delay: 150ms; }
+@keyframes mdRise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
 
 .md-app.analyzing .md-loading { display: inline-flex; }
 .md-app.analyzing .status-dot { display: none; }
@@ -307,6 +334,7 @@ body {
 .md-btn-row { display: flex; gap: var(--md-sys-space-2); flex-wrap: wrap; margin-top: var(--md-sys-space-4); }
 
 .md-btn-group {
+  position: relative;
   display: flex;
   gap: 2px;
   padding: 3px;
@@ -315,8 +343,41 @@ body {
 }
 .md-btn-group--wrap { flex-wrap: wrap; border-radius: var(--md-sys-shape-xl); }
 .md-btn-group--connected { gap: 0; }
+
+/* Sliding selection pill. JS measures the checked item and writes
+   --seg-x / --seg-y / --seg-w / --seg-h; the pill springs between options
+   with the expressive spatial curve instead of swapping paint on items. */
+.md-segmented__indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--seg-w, 0px);
+  height: var(--seg-h, 100%);
+  transform: translate(var(--seg-x, 3px), var(--seg-y, 3px));
+  border-radius: var(--md-sys-shape-full);
+  background: var(--seg-role-bg, var(--md-sys-color-secondary-container));
+  box-shadow: var(--seg-ring, none);
+  opacity: 0;
+  transition:
+    transform var(--md-sys-motion-med) var(--md-sys-motion-spatial),
+    width var(--md-sys-motion-med) var(--md-sys-motion-spatial),
+    height var(--md-sys-motion-med) var(--md-sys-motion-spatial),
+    background-color var(--md-sys-motion-fast) var(--md-sys-motion-effects),
+    box-shadow var(--md-sys-motion-fast) var(--md-sys-motion-effects),
+    opacity 120ms var(--md-sys-motion-effects);
+  will-change: transform, width;
+  pointer-events: none;
+}
+.md-segmented.is-ready .md-segmented__indicator { opacity: 1; }
+
 .md-btn-group__item {
   appearance: none;
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   border: 0;
   background: transparent;
   color: var(--md-sys-color-on-surface-variant);
@@ -327,21 +388,43 @@ body {
   min-height: 36px;
   border-radius: var(--md-sys-shape-full);
   cursor: pointer;
-  transition: background-color var(--md-sys-motion-fast) var(--md-sys-motion-effects),
+  transition:
     color var(--md-sys-motion-fast) var(--md-sys-motion-effects),
-    border-radius var(--md-sys-motion-med) var(--md-sys-motion-spatial);
+    transform var(--md-sys-motion-med) var(--md-sys-motion-spatial);
 }
+.md-btn-group__item:hover { color: var(--md-sys-color-on-surface); }
+.md-btn-group__item:active { transform: scale(0.92); }
 .md-btn-group__item.is-selected,
 .md-btn-group__item[aria-checked="true"],
 .player-btn.active {
-  background: var(--md-sys-color-secondary-container);
-  color: var(--md-sys-color-on-secondary-container);
+  color: var(--seg-role-fg, var(--md-sys-color-on-secondary-container));
 }
-.player-btn[data-color="b"].active,
-.player-btn[data-color="b"][aria-checked="true"] {
-  background: var(--md-sys-color-inverse-surface);
-  color: var(--md-sys-color-inverse-on-surface);
+
+/* Side selector — the pill itself carries the chess-piece identity:
+   a light piece pill for White, a dark piece pill for Black. */
+#player-selector {
+  --seg-role-bg: var(--md-piece-light);
+  --seg-role-fg: var(--md-piece-light-on);
+  --seg-ring: inset 0 0 0 1.5px var(--md-sys-color-outline-variant);
 }
+#player-selector[data-selected="b"] {
+  --seg-role-bg: var(--md-sys-color-inverse-surface);
+  --seg-role-fg: var(--md-sys-color-inverse-on-surface);
+  --seg-ring: none;
+}
+.piece-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: transform var(--md-sys-motion-med) var(--md-sys-motion-spatial),
+    border-color var(--md-sys-motion-fast) var(--md-sys-motion-effects);
+}
+.piece-dot--light { background: var(--md-piece-light); border: 1.5px solid var(--md-sys-color-outline); }
+.piece-dot--dark { background: var(--md-piece-light-on); border: 1.5px solid transparent; }
+.player-btn[aria-checked="true"] .piece-dot { transform: scale(1.2); }
+.player-btn[data-color="w"][aria-checked="true"] .piece-dot--light { border-color: var(--md-sys-color-on-surface); }
+.player-btn[data-color="b"][aria-checked="true"] .piece-dot--dark { border-color: var(--md-piece-light); }
 
 /* ── Status ── */
 .md-status {
@@ -381,24 +464,11 @@ body {
   100% { border-radius: 50%; transform: rotate(180deg); }
 }
 
-.md-assist-chip {
-  display: inline-flex;
-  align-items: center;
-  min-height: 26px;
-  padding: 0 10px;
-  border-radius: var(--md-sys-shape-full);
-  border: 1px solid var(--md-sys-color-outline-variant);
-  background: var(--md-sys-color-surface-container-lowest);
-  color: var(--md-sys-color-on-surface-variant);
-  font-family: var(--md-ref-typeface-plain);
-  font-size: 0.6875rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-.source-badge.source-tb { color: var(--md-sys-color-primary); border-color: color-mix(in oklab, var(--md-sys-color-primary) 40%, var(--md-sys-color-outline-variant)); }
-.source-badge.source-local { color: var(--md-sys-color-tertiary); }
-.source-badge.source-human { color: var(--md-sys-color-secondary); }
+/* Position context is whispered, not tagged: the turn line picks up a
+   state tint and nothing else. */
+.context-turn { transition: color var(--md-sys-motion-fast) var(--md-sys-motion-effects); }
+#position-context.verified .context-turn { color: var(--md-sys-color-primary); }
+#position-context.partial .context-turn { color: var(--md-sys-color-tertiary); }
 
 /* ── Canvas ── */
 .md-canvas {
@@ -417,8 +487,10 @@ body {
   border-radius: var(--md-sys-shape-xl-inc);
   background: var(--md-sys-color-primary-container);
   color: var(--md-sys-color-on-primary-container);
-  min-height: 168px;
+  min-height: 148px;
   overflow: hidden;
+  transition: background-color var(--md-sys-motion-med) var(--md-sys-motion-effects),
+    color var(--md-sys-motion-med) var(--md-sys-motion-effects);
 }
 .md-hero::after {
   content: "";
@@ -428,17 +500,25 @@ body {
   right: -36px;
   top: -48px;
   border-radius: 42% 58% 60% 40%;
-  background: color-mix(in oklab, var(--md-sys-color-primary) 18%, transparent);
+  background: color-mix(in oklab, currentColor 13%, transparent);
   pointer-events: none;
+  transition: background-color var(--md-sys-motion-med) var(--md-sys-motion-effects);
 }
-.md-hero__meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--md-sys-space-3); position: relative; z-index: 1; }
-.md-hero__kicker { opacity: 0.78; }
-.md-hero .source-badge {
-  background: color-mix(in oklab, var(--md-sys-color-on-primary-container) 8%, transparent);
-  border-color: color-mix(in oklab, var(--md-sys-color-on-primary-container) 18%, transparent);
-  color: var(--md-sys-color-on-primary-container);
+.md-hero::before {
+  content: "";
+  position: absolute;
+  width: 110px;
+  height: 110px;
+  left: -42px;
+  bottom: -56px;
+  border-radius: 62% 38% 44% 56%;
+  background: color-mix(in oklab, currentColor 8%, transparent);
+  pointer-events: none;
+  transition: background-color var(--md-sys-motion-med) var(--md-sys-motion-effects);
 }
-.md-hero__stage { position: relative; z-index: 1; min-height: 92px; }
+.md-hero__meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--md-sys-space-2); position: relative; z-index: 1; }
+.md-hero__kicker { opacity: 0.78; letter-spacing: 0.12em; }
+.md-hero__stage { position: relative; z-index: 1; min-height: 84px; }
 .hint-text {
   font-family: var(--md-ref-typeface-brand);
   font-size: clamp(1.6rem, 6vw, 2.2rem);
@@ -456,13 +536,25 @@ body {
 .hint-fromto {
   margin-top: var(--md-sys-space-3);
   display: inline-flex;
-  padding: 6px 12px;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
   border-radius: var(--md-sys-shape-full);
-  background: color-mix(in oklab, var(--md-sys-color-on-primary-container) 10%, transparent);
+  background: color-mix(in oklab, currentColor 10%, transparent);
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
   font-size: 0.75rem;
   font-weight: 700;
+  transition: background-color var(--md-sys-motion-med) var(--md-sys-motion-effects);
 }
+.sq-piece { font-size: 1.05rem; line-height: 1; margin-right: 2px; }
+.sq {
+  padding: 2px 7px;
+  border-radius: var(--md-sys-shape-sm);
+  background: color-mix(in oklab, currentColor 13%, transparent);
+  letter-spacing: 0.04em;
+  transition: background-color var(--md-sys-motion-med) var(--md-sys-motion-effects);
+}
+.sq-arrow { opacity: 0.66; font-weight: 500; }
 .hint-card.blocked .hint-text { color: var(--md-sys-color-error); }
 .hint-card.super-ultra-mode { --hero-shift: 8deg; }
 .hint-card.super-ultra-mode ~ .md-hero__meta,
@@ -476,6 +568,87 @@ body {
 .md-hero:has(.human-mode) {
   background: var(--md-sys-color-secondary-container);
   color: var(--md-sys-color-on-secondary-container);
+}
+
+/* ── Caption rail (The idea) ──
+   Everything that used to be glued onto the hero line — the pressure idea,
+   captures, sacrifice soundness, cost, risk, king-hunt notes — renders here
+   as a staggered M3 list with shape-play icon blobs. */
+.md-idea {
+  display: flex;
+  flex-direction: column;
+  gap: var(--md-sys-space-2);
+  padding: var(--md-sys-space-4);
+  border-radius: var(--md-sys-shape-xl);
+  background: var(--md-sys-color-surface-container-lowest);
+}
+.md-idea[hidden] { display: none; }
+.md-idea__title { color: var(--md-sys-color-on-surface-variant); letter-spacing: 0.1em; }
+.md-idea__list { display: flex; flex-direction: column; gap: var(--md-sys-space-2); }
+.md-idea__row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--md-sys-space-3);
+  padding: 8px 10px;
+  border-radius: var(--md-sys-shape-lg);
+  background: var(--md-sys-color-surface-container-low);
+  animation: mdIdeaIn var(--md-sys-motion-med) var(--md-sys-motion-spatial) both;
+  animation-delay: calc(var(--i, 0) * 45ms);
+}
+@keyframes mdIdeaIn {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.md-idea__icon {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 38% 62% 57% 43% / 44% 38% 62% 56%;
+  background: var(--idea-role-bg, var(--md-sys-color-secondary-container));
+}
+.md-idea__icon::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--idea-role-fg, var(--md-sys-color-on-secondary-container));
+  -webkit-mask: var(--idea-icon, var(--md-icon-info)) center / 18px no-repeat;
+          mask: var(--idea-icon, var(--md-icon-info)) center / 18px no-repeat;
+}
+.md-idea__row--idea {
+  --idea-icon: var(--md-icon-bulb);
+  --idea-role-bg: var(--md-sys-color-primary-container);
+  --idea-role-fg: var(--md-sys-color-on-primary-container);
+}
+.md-idea__row--capture { --idea-icon: var(--md-icon-crosshair); }
+.md-idea__row--sacrifice {
+  --idea-icon: var(--md-icon-bolt);
+  --idea-role-bg: var(--md-sys-color-tertiary-container);
+  --idea-role-fg: var(--md-sys-color-on-tertiary-container);
+}
+.md-idea__row--kinghunt {
+  --idea-icon: var(--md-icon-flag);
+  --idea-role-bg: var(--md-sys-color-tertiary-container);
+  --idea-role-fg: var(--md-sys-color-on-tertiary-container);
+}
+.md-idea__row--cost {
+  --idea-icon: var(--md-icon-trend-down);
+  --idea-role-bg: var(--md-sys-color-error-container);
+  --idea-role-fg: var(--md-sys-color-on-error-container);
+}
+.md-idea__row--risk {
+  --idea-icon: var(--md-icon-warning);
+  --idea-role-bg: var(--md-sys-color-error-container);
+  --idea-role-fg: var(--md-sys-color-on-error-container);
+}
+.md-idea__row--posture { --idea-icon: var(--md-icon-info); }
+.md-idea__texts { display: flex; flex-direction: column; gap: 1px; min-width: 0; padding-top: 1px; }
+.md-idea__label { font-size: 0.8125rem; font-weight: 700; line-height: 1.3; }
+.md-idea__body {
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--md-sys-color-on-surface-variant);
+  overflow-wrap: anywhere;
 }
 
 /* ── Cards ── */
@@ -537,7 +710,25 @@ body {
   gap: var(--md-sys-space-2);
   margin-top: var(--md-sys-space-3);
 }
+.md-banner--iconed { align-items: center; }
+.md-banner__icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  background: currentColor;
+  -webkit-mask: var(--md-icon-warning) center / contain no-repeat;
+          mask: var(--md-icon-warning) center / contain no-repeat;
+}
+.md-banner--error .md-banner__icon { -webkit-mask-image: var(--md-icon-error); mask-image: var(--md-icon-error); }
 .md-banner__kicker { opacity: 0.8; margin-bottom: 4px; }
+.critical-moment-section { position: relative; padding-right: 44px; }
+.md-banner__icon--float {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  -webkit-mask-image: var(--md-icon-bolt);
+          mask-image: var(--md-icon-bolt);
+}
 
 /* ── Facts ── */
 .md-fact-list { display: flex; flex-direction: column; }
@@ -668,10 +859,11 @@ body {
 
 .md-choice-stack { display: flex; flex-direction: column; gap: var(--md-sys-space-2); }
 .md-choice {
+  position: relative;
   text-align: left;
   border: 0;
   cursor: pointer;
-  padding: var(--md-sys-space-3) var(--md-sys-space-4);
+  padding: var(--md-sys-space-3) 48px var(--md-sys-space-3) var(--md-sys-space-4);
   border-radius: var(--md-sys-shape-lg);
   background: var(--md-sys-color-surface-container-high);
   color: var(--md-sys-color-on-surface);
@@ -679,7 +871,28 @@ body {
   flex-direction: column;
   gap: 2px;
   transition: background-color var(--md-sys-motion-fast) var(--md-sys-motion-effects),
+    color var(--md-sys-motion-fast) var(--md-sys-motion-effects),
+    border-radius var(--md-sys-motion-med) var(--md-sys-motion-spatial),
     transform var(--md-sys-motion-med) var(--md-sys-motion-spatial);
+}
+.md-choice:hover { background: color-mix(in oklab, var(--md-sys-color-on-surface) 6%, var(--md-sys-color-surface-container-high)); }
+.md-choice:active { transform: scale(0.97); }
+/* Selection draws a check with a springy pop. */
+.md-choice::after {
+  content: "";
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  transform: translateY(-50%) scale(0.3);
+  border-radius: 50%;
+  background: var(--md-sys-color-on-secondary-container);
+  -webkit-mask: var(--md-icon-check) center / 14px no-repeat;
+          mask: var(--md-icon-check) center / 14px no-repeat;
+  opacity: 0;
+  transition: transform var(--md-sys-motion-med) var(--md-sys-motion-spatial),
+    opacity var(--md-sys-motion-fast) var(--md-sys-motion-effects);
 }
 .md-choice__title { font-weight: 750; }
 .md-choice__sub { font-size: 0.75rem; color: var(--md-sys-color-on-surface-variant); }
@@ -687,6 +900,12 @@ body {
 .md-choice[aria-checked="true"] {
   background: var(--md-sys-color-secondary-container);
   color: var(--md-sys-color-on-secondary-container);
+  border-radius: var(--md-sys-shape-xl);
+}
+.md-choice.is-selected::after,
+.md-choice[aria-checked="true"]::after {
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
 }
 .md-choice.is-selected .md-choice__sub,
 .md-choice[aria-checked="true"] .md-choice__sub {
@@ -701,35 +920,91 @@ body {
   padding: var(--md-sys-space-2) 0;
 }
 .md-switch-row__title { font-weight: 650; }
-.md-switch { position: relative; display: inline-flex; cursor: pointer; }
-.md-switch input { position: absolute; opacity: 0; width: 52px; height: 32px; margin: 0; }
+.md-switch { position: relative; display: inline-flex; cursor: pointer; flex-shrink: 0; }
+/* 52×44 hit area around the 52×32 visual track. */
+.md-switch input { position: absolute; inset: -6px 0; width: 52px; height: 44px; margin: 0; opacity: 0; cursor: pointer; z-index: 2; }
 .md-switch__track {
+  position: relative;
   width: 52px;
   height: 32px;
   border-radius: var(--md-sys-shape-full);
   background: var(--md-sys-color-surface-container-highest);
   border: 2px solid var(--md-sys-color-outline);
-  display: flex;
-  align-items: center;
-  padding: 2px;
   transition: background-color var(--md-sys-motion-fast) var(--md-sys-motion-effects),
     border-color var(--md-sys-motion-fast) var(--md-sys-motion-effects);
 }
+/* Thumb rides on `left` + size so the spatial spring can overshoot both
+   position and the 16→24px grow in one motion. */
 .md-switch__thumb {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
+  position: absolute;
+  top: 50%;
+  left: 6px;
+  width: 16px;
+  height: 16px;
+  transform: translateY(-50%);
+  border-radius: var(--md-sys-shape-full);
   background: var(--md-sys-color-outline);
-  transition: transform var(--md-sys-motion-med) var(--md-sys-motion-spatial),
+  transition: left var(--md-sys-motion-med) var(--md-sys-motion-spatial),
+    width var(--md-sys-motion-med) var(--md-sys-motion-spatial),
+    height var(--md-sys-motion-med) var(--md-sys-motion-spatial),
     background-color var(--md-sys-motion-fast) var(--md-sys-motion-effects);
+}
+/* State-layer halo behind the thumb on hover / focus / press. */
+.md-switch__thumb::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%) scale(0.6);
+  background: color-mix(in oklab, var(--md-sys-color-on-surface) 10%, transparent);
+  opacity: 0;
+  transition: transform var(--md-sys-motion-fast) var(--md-sys-motion-effects),
+    opacity var(--md-sys-motion-fast) var(--md-sys-motion-effects);
+}
+.md-switch:hover .md-switch__thumb::before,
+.md-switch input:focus-visible + .md-switch__track .md-switch__thumb::before,
+.md-switch input:active:not(:disabled) + .md-switch__track .md-switch__thumb::before {
+  transform: translate(-50%, -50%) scale(1);
+  opacity: 1;
+}
+/* Check mark pops inside the thumb when on. */
+.md-switch__thumb::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--md-sys-color-on-primary-container);
+  -webkit-mask: var(--md-icon-check) center / 12px no-repeat;
+          mask: var(--md-icon-check) center / 12px no-repeat;
+  opacity: 0;
+  transform: scale(0.5);
+  transition: opacity var(--md-sys-motion-fast) var(--md-sys-motion-effects),
+    transform var(--md-sys-motion-fast) var(--md-sys-motion-spatial);
 }
 .md-switch input:checked + .md-switch__track {
   background: var(--md-sys-color-primary);
   border-color: var(--md-sys-color-primary);
 }
 .md-switch input:checked + .md-switch__track .md-switch__thumb {
-  transform: translateX(20px);
+  left: calc(100% - 28px);   /* 24px thumb + 4px end inset */
+  width: 24px;
+  height: 24px;
   background: var(--md-sys-color-on-primary);
+}
+.md-switch input:checked + .md-switch__track .md-switch__thumb::before {
+  background: color-mix(in oklab, var(--md-sys-color-primary) 16%, transparent);
+}
+.md-switch input:checked + .md-switch__track .md-switch__thumb::after {
+  opacity: 1;
+  transform: scale(1);
+}
+/* Pressed: the thumb stretches in the direction of travel (M3 squeeze). */
+.md-switch input:active:not(:disabled):not(:checked) + .md-switch__track .md-switch__thumb { width: 24px; }
+.md-switch input:checked:active:not(:disabled) + .md-switch__track .md-switch__thumb {
+  width: 28px;
+  left: calc(100% - 32px);
 }
 .md-switch input:disabled + .md-switch__track { opacity: 0.38; }
 .md-switch input:focus-visible + .md-switch__track { outline: 3px solid var(--md-sys-color-secondary); outline-offset: 2px; }
@@ -859,6 +1134,11 @@ kbd {
 /* ── Settings display fallback (JS toggles inline display) ── */
 #settings-panel { display: none; }
 #settings-panel[style*="display: block"] { display: flex; }
+#settings-panel[style*="display: flex"] { animation: mdSheetIn 340ms var(--md-sys-motion-spatial); }
+@keyframes mdSheetIn {
+  from { opacity: 0.4; transform: translateY(28px); }
+  to { opacity: 1; transform: none; }
+}
 #shortcut-help { display: none; }
 #shortcut-help[style*="display: block"] { display: block; }
 

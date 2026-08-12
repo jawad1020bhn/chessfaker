@@ -100,7 +100,6 @@
     statusDot: $('.status-dot'),
     statusText: $('.status-text'),
     positionContext: $('#position-context'),
-    positionSource: $('#position-source'),
     positionTurn: $('#position-turn'),
     evalBarBlack: $('#eval-bar-black'),
     evalBarWhite: $('#eval-bar-white'),
@@ -113,10 +112,11 @@
     analysisQuality: $('#analysis-quality'),
     analysisDepth: $('#analysis-depth'),
     analysisSource: $('#analysis-source'),
-    sourceBadge: $('#source-badge'),
     materialBalance: $('#material-balance'),
     hintText: $('#hint-text'),
     hintFromTo: $('#hint-fromto'),
+    ideaSection: $('#idea-section'),
+    ideaList: $('#idea-list'),
     hintCard: $('#hint-card'),
     threatPill: $('#threat-pill'),
     threatPillText: $('#threat-pill-text'),
@@ -288,6 +288,7 @@
     loadSettings();
     applySettingsToUI();
     bindEvents();
+    initSegmentedControls();
     initKeyboardShortcuts();
     initSettingsFocusTrap();
     chrome.runtime.sendMessage({ type: 'panel_state', open: true }).catch(() => {});
@@ -406,6 +407,7 @@
     updateStyleDescription();
     updateEarlyKingHuntUI();
     syncExpressiveControls();
+    syncAllSegments();
   }
 
   function syncExpressiveControls() {
@@ -430,6 +432,57 @@
       btn.classList.toggle('active', selected);
       btn.setAttribute('aria-checked', selected ? 'true' : 'false');
     });
+    // The pill picks up the piece identity (light for White, dark for Black)
+    dom.playerSelector.dataset.selected = assistedPlayerColor || 'w';
+    layoutSegmented(dom.playerSelector);
+  }
+
+  // ─── Segmented controls: sliding selection pill ────────────────────
+  // One shared pill per radiogroup springs to the checked option. Measuring
+  // happens in JS so the motion stays GPU-friendly (transform + width only).
+  const segmentedGroups = [];
+
+  function layoutSegmented(group) {
+    if (!group) return;
+    const indicator = group.querySelector('.md-segmented__indicator');
+    const selected = group.querySelector('[aria-checked="true"]');
+    if (!indicator || !selected) return;
+    // Groups inside the hidden settings sheet measure as zero — stay
+    // transparent and re-measure when the sheet opens.
+    if (group.offsetWidth === 0 || selected.offsetWidth === 0) {
+      group.classList.remove('is-ready');
+      return;
+    }
+    group.style.setProperty('--seg-x', `${selected.offsetLeft}px`);
+    group.style.setProperty('--seg-y', `${selected.offsetTop}px`);
+    group.style.setProperty('--seg-w', `${selected.offsetWidth}px`);
+    group.style.setProperty('--seg-h', `${selected.offsetHeight}px`);
+    group.classList.add('is-ready');
+  }
+
+  function syncAllSegments() {
+    segmentedGroups.forEach(layoutSegmented);
+  }
+
+  function initSegmentedControls() {
+    $$('.md-btn-group[role="radiogroup"]').forEach((group) => {
+      if (!group.querySelector('.md-segmented__indicator')) {
+        const indicator = document.createElement('span');
+        indicator.className = 'md-segmented__indicator';
+        indicator.setAttribute('aria-hidden', 'true');
+        group.prepend(indicator);
+      }
+      segmentedGroups.push(group);
+      // Re-measure when the panel itself resizes (text wraps change targets)
+      if (typeof ResizeObserver === 'function') {
+        new ResizeObserver(() => layoutSegmented(group)).observe(group);
+      }
+    });
+    // Fonts shift metrics — re-layout once they settle.
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(() => syncAllSegments()).catch(() => {});
+    }
+    requestAnimationFrame(syncAllSegments);
   }
 
   // ─── Event Binding ─────────────────────────────────────────────────
@@ -562,6 +615,21 @@
         field.dispatchEvent(new Event('change', { bubbles: true }));
       });
     });
+
+    // APG radiogroup pattern: arrow keys rove between options and select.
+    $$('.md-btn-group[role="radiogroup"]').forEach((group) => {
+      group.addEventListener('keydown', (e) => {
+        if (!['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].includes(e.key)) return;
+        const items = Array.from(group.querySelectorAll('[role="radio"]'));
+        const index = items.indexOf(document.activeElement);
+        if (index === -1) return;
+        e.preventDefault();
+        const dir = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : -1;
+        const next = items[(index + dir + items.length) % items.length];
+        next.focus();
+        next.click();
+      });
+    });
   }
 
   // ─── Passive Provider Status and Local Usage Diagnostics ─────────────
@@ -654,15 +722,13 @@
   }
 
   function updatePositionContext() {
-    if (!dom.positionContext || !dom.positionSource || !dom.positionTurn) return;
+    if (!dom.positionContext || !dom.positionTurn) return;
     const verified = positionReliable && turnReliable;
     dom.positionContext.classList.toggle('verified', verified);
     dom.positionContext.classList.toggle('partial', !positionReliable && turnReliable);
     dom.positionContext.classList.toggle('pending', !turnReliable);
-    dom.positionSource.className = `context-chip ${positionReliable ? 'verified' : 'partial'}`;
-    dom.positionSource.textContent = positionReliable ? 'VERIFIED FEN' : 'BOARD SNAPSHOT';
     dom.positionTurn.textContent = !turnReliable
-      ? 'Turn unavailable'
+      ? 'Waiting for a game'
       : (isPlayerTurn ? 'Your turn' : 'Opponent turn');
   }
 
@@ -730,6 +796,7 @@
       waitingForOpponent = false;
       updateEngineStatus('unknown', 'Turn unavailable: waiting for a verified position');
       if (dom.hintText) dom.hintText.textContent = 'Turn information is unavailable for this board.';
+      hideIdeaRail();
       return;
     }
 
@@ -845,7 +912,6 @@
 
     const source = data.source || 'unknown';
     currentSource = source;
-    updateSourceFromResult(source, data);
 
     if (data.pvs && data.pvs.length > 0) {
       const bestPV = data.pvs[0];
@@ -915,6 +981,7 @@
       // Do not suggest Refresh for a state where it cannot help.
       dom.hintText.textContent = errorMsg;
     }
+    hideIdeaRail();
   }
 
   function handleOpeningDataUpdate(data) {
@@ -925,43 +992,6 @@
       if (dom.openingName && data.openingData.opening) {
         dom.openingName.textContent = data.openingData.opening;
       }
-    }
-  }
-
-  function updateSourceFromResult(source, data) {
-    const sourceLabels = {
-      'chess-api': 'Chess-API.com',
-      'lichess-cloud': 'Lichess Cloud',
-      'masters-explorer': 'Masters DB',
-      'opening-explorer': 'Opening Explorer Cache',
-      'local-engine': 'Local engine',
-      'tablebase': 'Tablebase',
-      'unknown': '\u2013'
-    };
-    const label = sourceLabels[source] || source;
-    updateSourceIndicator(source, label, data.depth, data);
-  }
-
-  function updateSourceIndicator(source, label, depth, data = {}) {
-    const quality = window.AnalysisPolicy
-      ? window.AnalysisPolicy.describeQuality(data.qualityClass || window.AnalysisPolicy.qualityClassFor(data))
-      : { badge: source === 'tablebase' ? 'TB' : (source === 'local-engine' ? 'LOCAL' : 'CLOUD') };
-    if (dom.sourceBadge) {
-      const badgeClass = source === 'tablebase' ? 'tb'
-        : source === 'local-engine' ? 'local'
-        : (source === 'masters-explorer' || source === 'opening-explorer' ? 'human'
-        : (data.stale ? 'minimal' : 'cloud'));
-      dom.sourceBadge.className = `source-badge source-${badgeClass}`;
-      dom.sourceBadge.textContent = quality.badge || 'CLOUD';
-      if (quality.label) dom.sourceBadge.title = quality.label;
-    }
-    if (dom.analysisSource) {
-      const depthStr = depth ? ` (depth ${depth})` : '';
-      dom.analysisSource.textContent = `${label}${depthStr}`;
-      const sourceClass = source === 'tablebase' ? 'tb'
-        : source === 'local-engine' ? 'local'
-        : (source === 'masters-explorer' || source === 'opening-explorer' ? 'human' : 'cloud');
-      dom.analysisSource.className = `info-value source-indicator source-${sourceClass}`;
     }
   }
 
@@ -1087,6 +1117,8 @@
   function openSettingsSheet() {
     if (!dom.settingsPanel) return;
     dom.settingsPanel.style.display = 'flex';
+    // The sheet was hidden, so its segmented groups measured as zero.
+    requestAnimationFrame(() => requestAnimationFrame(syncAllSegments));
     runHealthCheck();
   }
 
@@ -1170,12 +1202,82 @@
     if (dom.criticalMomentDetail) dom.criticalMomentDetail.textContent = alert.detail;
   }
 
+  // ─── Caption rail ("Why this move") ────────────────────────────────
+  // The hero shows only the move. Every supporting sentence the engine
+  // produces travels as a caption item and renders here, outside the hero.
+  const IDEA_KINDS = new Set(['idea', 'capture', 'sacrifice', 'cost', 'risk', 'kinghunt', 'posture']);
+
+  function renderIdeaRail(captions) {
+    if (!dom.ideaSection || !dom.ideaList) return;
+    const items = Array.isArray(captions) ? captions.filter(c => c && c.text) : [];
+    if (items.length === 0) {
+      hideIdeaRail();
+      return;
+    }
+    dom.ideaList.textContent = '';
+    items.forEach((caption, index) => {
+      const kind = IDEA_KINDS.has(caption.kind) ? caption.kind : 'posture';
+      const row = document.createElement('div');
+      row.className = `md-idea__row md-idea__row--${kind}`;
+      row.setAttribute('role', 'listitem');
+      row.style.setProperty('--i', String(index));
+      const icon = document.createElement('span');
+      icon.className = 'md-idea__icon';
+      icon.setAttribute('aria-hidden', 'true');
+      const texts = document.createElement('div');
+      texts.className = 'md-idea__texts';
+      if (caption.label) {
+        const label = document.createElement('span');
+        label.className = 'md-idea__label';
+        label.textContent = caption.label;
+        texts.appendChild(label);
+      }
+      const body = document.createElement('span');
+      body.className = 'md-idea__body';
+      body.textContent = caption.text;
+      texts.appendChild(body);
+      row.append(icon, texts);
+      dom.ideaList.appendChild(row);
+    });
+    dom.ideaSection.hidden = false;
+  }
+
+  function hideIdeaRail() {
+    if (!dom.ideaSection) return;
+    dom.ideaSection.hidden = true;
+    if (dom.ideaList) dom.ideaList.textContent = '';
+  }
+
+  // "White: knight: d1 → f3" becomes a piece-glyph + squares lockup.
+  // Anything that isn't that shape falls back to plain text.
+  const PIECE_GLYPHS = {
+    White: { pawn: '\u2659', knight: '\u2658', bishop: '\u2657', rook: '\u2656', queen: '\u2655', king: '\u2654' },
+    Black: { pawn: '\u265F', knight: '\u265E', bishop: '\u265D', rook: '\u265C', queen: '\u265B', king: '\u265A' }
+  };
+
+  function renderFromTo(raw) {
+    if (!dom.hintFromTo) return;
+    const match = /^(White|Black): ([a-z]+): ([a-h][1-8]) \u2192 ([a-h][1-8])$/.exec(raw || '');
+    if (!match) {
+      dom.hintFromTo.textContent = raw;
+      return;
+    }
+    const [, side, pieceName, from, to] = match;
+    const glyph = (PIECE_GLYPHS[side] || PIECE_GLYPHS.White)[pieceName] || '';
+    dom.hintFromTo.innerHTML =
+      `<span class="sq-piece">${glyph}</span>` +
+      `<span class="sq">${h(from)}</span>` +
+      `<span class="sq-arrow" aria-hidden="true">\u2192</span>` +
+      `<span class="sq">${h(to)}</span>`;
+  }
+
   // ─── Hint Rendering ────────────────────────────────────────────────
   function renderHints(data) {
     if (data.exactHintBlocked) {
       if (dom.hintText) dom.hintText.textContent = data.exactHintBlocked.message;
       if (dom.hintFromTo) dom.hintFromTo.style.display = 'none';
       if (dom.hintCard) dom.hintCard.className = 'hint-card exact-move blocked';
+      hideIdeaRail();
       const warningEl = document.getElementById('fair-play-warning');
       const warningText = document.getElementById('fair-play-warning-text');
       if (warningEl) warningEl.style.display = 'flex';
@@ -1184,6 +1286,7 @@
     }
     if (!data.pvs || data.pvs.length === 0) {
       if (dom.hintText) dom.hintText.textContent = 'Waiting for analysis...';
+      hideIdeaRail();
       return;
     }
 
@@ -1217,10 +1320,12 @@
       setTimeout(() => dom.hintText.classList.remove('fade-in'), 300);
     }
 
+    renderIdeaRail(hints.captions);
+
     if (dom.hintFromTo) {
       if (hints.bestMoveFromTo) {
-        dom.hintFromTo.style.display = 'block';
-        dom.hintFromTo.textContent = hints.bestMoveFromTo;
+        dom.hintFromTo.style.display = '';
+        renderFromTo(hints.bestMoveFromTo);
       } else {
         dom.hintFromTo.style.display = 'none';
       }

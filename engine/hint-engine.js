@@ -1775,6 +1775,7 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
       level: hintLevel,
       levelName: HINT_LEVELS[hintLevel]?.name || 'Unknown',
       main: '',
+      captions: [],
       threat: '',
       positionAssessment: position,
       pvs: formatPVs(rankedPVs, isWhite, hintLevel, fen),
@@ -1827,32 +1828,32 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
       return hints;
     }
 
-    // Exact-move-only primary hint.
-    hints.main = generateExactMoveHint(bestPV, position, evalScore, scoreType, playerColor, fen || '', currentStyle, null, analysisData.moveHistory);
+    // Exact-move-only primary hint. The hero shows the move itself; every
+    // supporting sentence travels separately in `hints.captions` so the UI
+    // can render a dedicated caption rail outside the hero.
+    const moveHint = generateExactMoveHint(bestPV, position, evalScore, scoreType, playerColor, fen || '', currentStyle, null, analysisData.moveHistory);
+    hints.main = moveHint.text;
+    hints.captions.push(...moveHint.captions);
 
-    // Explain why the selected move fits the requested mode. This keeps lower
-    // hint levels educational and gives exact/deep hints concrete compensation.
+    // Explain why the selected move fits the requested mode as caption
+    // items. This keeps lower hint levels educational and gives exact/deep
+    // hints concrete compensation — without crowding the hero move.
     if (bestPV?._styleAnalysis) {
       const meta = bestPV._styleAnalysis;
       hints.styleAnalysis = meta;
-      if (humanLikeMode) {
-        if (hintLevel === EXACT_HINT_LEVEL) {
-          // Human-like hints lead with the move itself, not a style label.
-          // No verbose plan / continuation / risk sentences: the hint card
-          // stays minimal and the threat pill carries the tactical alert.
-          hints.main = hints.main.replace(/^[^:]+: /, '');
-        }
-      } else if (currentStyle.id !== 'normal') {
+      if (!humanLikeMode && currentStyle.id !== 'normal') {
         const reasons = (meta.reasons || []).slice(0, 3);
         const risks = (meta.risks || []).slice(0, 2);
         if (reasons.length) {
-          const prefix = currentStyle.id === 'aggressive' ? 'Fast-win idea' : 'Maximum-pressure idea';
-          hints.main += ` ${prefix}: ${reasons.join(', ')}.`;
+          const label = currentStyle.id === 'aggressive' ? 'Fast-win idea' : 'Maximum-pressure idea';
+          hints.captions.push({ kind: 'idea', label, text: `${reasons.join(', ')}.` });
         }
         if (hintLevel === EXACT_HINT_LEVEL && Number.isFinite(meta.evalLoss) && meta.evalLoss > 0) {
-          hints.main += ` Objective cost: ${(meta.evalLoss / 100).toFixed(1)} pawn${meta.evalLoss === 100 ? '' : 's'}.`;
+          hints.captions.push({ kind: 'cost', label: 'Objective cost', text: `${(meta.evalLoss / 100).toFixed(1)} pawn${meta.evalLoss === 100 ? '' : 's'} versus the strongest continuation` });
         }
-        if (hintLevel === EXACT_HINT_LEVEL && risks.length) hints.main += ` Risk: ${risks.join(', ')}.`;
+        if (hintLevel === EXACT_HINT_LEVEL && risks.length) {
+          hints.captions.push({ kind: 'risk', label: 'Risk', text: `${risks.join(', ')}.` });
+        }
       }
     }
 
@@ -1960,9 +1961,14 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
   }
 
   // ─── Exact Move Hint (Player-First) ───────────────────────────────
+  // Returns structured output: `text` is the hero line (the move itself,
+  // nothing else) and `captions` is an ordered list of supporting detail
+  // items ({ kind, label, text }) that the UI renders in its own caption
+  // rail outside the hero. The user already chose the style in settings, so
+  // the hero leads with the move — never with a style-name label.
   function generateExactMoveHint(bestPV, position, evalScore, scoreType, playerColor, fen, style, repertoire, moveHistory) {
-    if (!bestPV || !bestPV.pv || bestPV.pv.length === 0) return 'Analysis in progress...';
-    if (!fen) return 'Waiting for position...';
+    if (!bestPV || !bestPV.pv || bestPV.pv.length === 0) return { text: 'Analysis in progress...', captions: [] };
+    if (!fen) return { text: 'Waiting for position...', captions: [] };
 
     const board = parseFENPlacement(fen.split(' ')[0]);
     const uci = bestPV.pv[0];
@@ -1977,11 +1983,8 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     const currentStyle = style || PLAYING_STYLES.normal;
 
     // uciToSan already includes the promotion suffix.
-    const moveStr = san;
-    const choiceLabel = currentStyle.id === 'normal' ? 'Best' : `${currentStyle.name} choice`;
-    // Hero stays compact: the from-to squares and the evaluation are already
-    // rendered by dedicated UI elements, so repeating them here adds noise.
-    let hint = `${choiceLabel}: ${moveStr}`;
+    const captions = [];
+    let hint = san;
 
     if (scoreType === 'mate') {
       hint += ` \u2014 MATE IN ${Math.abs(evalScore)}`;
@@ -1993,12 +1996,13 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
       // Sacrifice annotation comes from PV-validated material loss.
       if (isOppPiece) {
         if (bestPV._styleAnalysis?.sacrifice) {
-          hint += ` | ${bestPV._styleAnalysis.sacrificeSoundness === 'sound' ? 'Sound' : (bestPV._styleAnalysis.sacrificeSoundness === 'speculative' ? 'Speculative' : 'Unsound')} sacrifice: takes opponent's ${capturedName}`;
+          const soundness = bestPV._styleAnalysis.sacrificeSoundness === 'sound' ? 'Sound' : (bestPV._styleAnalysis.sacrificeSoundness === 'speculative' ? 'Speculative' : 'Unsound');
+          captions.push({ kind: 'sacrifice', label: `${soundness} sacrifice`, text: `Gives material to take the opponent's ${capturedName}` });
         } else {
-          hint += ` | Captures opponent's ${capturedName}`;
+          captions.push({ kind: 'capture', label: 'Capture', text: `Takes the opponent's ${capturedName}` });
         }
       } else {
-        hint += ` | Captures ${capturedName}`;
+        captions.push({ kind: 'capture', label: 'Capture', text: `Takes the ${capturedName}` });
       }
     }
 
@@ -2012,11 +2016,13 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
       if (oppKingPos) {
         const toCoords = squareToCoords(to);
         const distToKing = Math.abs(toCoords.row - oppKingPos.row) + Math.abs(toCoords.col - oppKingPos.col);
-        if (distToKing <= 2) hint += ' | King hunt!';
+        if (distToKing <= 2) {
+          captions.push({ kind: 'kinghunt', label: 'King hunt', text: 'Lands within striking distance of the enemy king' });
+        }
       }
     }
 
-    return hint;
+    return { text: hint, captions };
   }
 
   // ─── Opponent's Turn Hints (Player-First Design) ─────────────────
@@ -2064,15 +2070,17 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
       // Determine the actual side of the response piece
       const isRespWhitePiece = piece && piece === piece.toUpperCase();
       const respPieceLabel = isRespWhitePiece ? 'White' : 'Black';
-      // Compact primary hint — mirrors the clean format used on the
-      // assisted player's own turn (e.g. "Best: Nc6"), never the verbose
-      // piece narrative.
-      responseHint = `Best: ${responseSan}`;
+      // Compact primary hint: the move itself. Any capture detail rides in
+      // the caption rail instead of crowding the hero line.
+      responseHint = responseSan;
       if (captured) {
         const capturedName = PIECE_NAMES[captured.toLowerCase()] || 'piece';
         const isOppPiece = isRespWhitePiece ? (captured === captured.toLowerCase()) : (captured === captured.toUpperCase());
-        if (isOppPiece) responseHint += ` | Captures opponent's ${capturedName}`;
-        else responseHint += ` | Captures ${capturedName}`;
+        hints.captions.push({
+          kind: 'capture',
+          label: 'Capture',
+          text: isOppPiece ? `Takes the opponent's ${capturedName}` : `Takes the ${capturedName}`
+        });
       }
       responseFromToHint = `${respPieceLabel}: ${pieceName}: ${from} \u2192 ${to}`;
     }
@@ -2080,22 +2088,20 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     // Build main hint — PLAYER-FIRST design:
     // Always lead with the player's best response, compact and clean.
     // Opponent's expected move is contextual/secondary (threat pill).
+    const postureText = evalScore > 100 ? "You're clearly better"
+      : evalScore > 0 ? 'Slight advantage for you'
+      : evalScore < -100 ? 'Be careful — the opponent is pressing'
+      : evalScore < 0 ? 'Slight disadvantage'
+      : 'Equal position';
     let mainHint = '';
     if (responseUci) {
-      // PRIMARY: Show the player's best response
+      // PRIMARY: the player's best response — the hero shows the move itself.
       mainHint = responseHint;
-      if (evalScore > 100) mainHint += ` \u2014 You're better!`;
-      else if (evalScore > 0) mainHint += ` \u2014 Slight advantage for you`;
-      else if (evalScore < -100) mainHint += ` \u2014 Be careful!`;
-      else if (evalScore < 0) mainHint += ` \u2014 Slight disadvantage`;
-      else mainHint += ` \u2014 Equal position`;
+      hints.captions.push({ kind: 'posture', label: 'Balance of the game', text: postureText });
     } else if (oppMoveUci) {
       // No response PV line available — still show player-focused message
       mainHint = `Waiting for ${oppColor}'s move. Expect: ${oppMoveHint}`;
-      if (evalScore > 100) mainHint += ` \u2014 You're better!`;
-      else if (evalScore > 0) mainHint += ` \u2014 Slight advantage for you`;
-      else if (evalScore < -100) mainHint += ` \u2014 Be careful!`;
-      else if (evalScore < 0) mainHint += ` \u2014 Slight disadvantage`;
+      if (evalScore !== 0) hints.captions.push({ kind: 'posture', label: 'Balance of the game', text: postureText });
     } else {
       mainHint = `Waiting for ${oppColor} to move`;
     }
