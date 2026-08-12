@@ -25,7 +25,7 @@
       confidence: 0.93,
       qualityClass: 'deep-engine',
       openingData: { opening: "Scholar's Mate Attack" },
-      moveHistory: [],
+      moveHistory: ['e4', 'e5', 'Bc4', 'Nc6', 'Qh5', 'Nf6'],
       pvs: [
         { score: 1, scoreType: 'mate', depth: 24, pv: ['h5f7'] },
         { score: 320, scoreType: 'cp', depth: 22, pv: ['h5g6'] },

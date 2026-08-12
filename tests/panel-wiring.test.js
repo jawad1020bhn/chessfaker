@@ -32,6 +32,8 @@ assert.match(balanceHtml, /class="md-balance"/, 'Balance section uses the .md-ba
 assert.match(balanceHtml, /md-balance__orb/, 'decorative orbs present');
 assert.match(balanceHtml, /md-balance__head/, 'head (kicker + score + description) present');
 assert.match(balanceHtml, /id="eval-score"/, 'score headline element present (was missing)');
+assert.match(balanceHtml, /id="eval-win-prob"/, 'win-probability headline element present');
+assert.match(balanceHtml, /id="eval-stale-badge"/, 'stale cache badge element present');
 assert.match(balanceHtml, /md-balance__ribbon/, 'ribbon container present');
 assert.match(balanceHtml, /md-balance__fulcrum/, 'morphing fulcrum present (was missing)');
 assert.match(balanceHtml, /eval-side/, 'piece-identity side labels present');
@@ -40,16 +42,24 @@ assert.ok(!css.includes('.eval-bar-black'), 'no dead .eval-bar-black rule in CSS
 assert.match(css, /\.md-balance__fulcrum \{[\s\S]*?left: calc\(var\(--eval-pct/, 'fulcrum position reads --eval-pct');
 assert.match(js, /dom\.evalSection\.style\.setProperty\('--eval-pct'/, 'JS sets --eval-pct on the tile (ancestor of the fulcrum)');
 assert.ok(!js.includes("dom.evalSection.style.setProperty('--eval-pct', String(pct));\n      dom.evalBar"), '--eval-pct is not set on the bar itself');
+assert.ok(css.includes('.md-balance__win-prob'), '.md-balance__win-prob rule exists');
+assert.ok(css.includes('.md-skeleton'), '.md-skeleton shimmer rule exists in CSS');
+assert.match(js, /dom\.evalWinProb/, 'JS sets win-probability text');
 
 // ── 3. Last-move verdict tile contract ──
 const verdictHtml = html.match(/<section id="move-class-section"[\s\S]*?<\/section>/)[0];
 assert.match(verdictHtml, /aria-live="polite"/, 'verdict tile announces updates politely');
 assert.doesNotMatch(verdictHtml, /class="move-class-display/, 'dead .move-class-display alias class removed (id kept for JS)');
 assert.ok(css.includes('.md-verdict__stage'), '.md-verdict__stage rule exists');
+assert.ok(css.includes('.md-verdict__empty'), '.md-verdict__empty rule exists');
+assert.ok(css.includes('.md-verdict__mover'), '.md-verdict__mover rule exists');
+assert.match(verdictHtml, /md-verdict__empty/, 'empty ghost state present in HTML');
 assert.ok(!css.includes('.class-badge') && !css.includes('.class-accuracy'), 'legacy .class-* chip rules removed from CSS');
 assert.ok(!js.includes('class-badge') && !js.includes('class-accuracy'), 'legacy .class-* chip classes removed from JS');
 assert.match(js, /md-verdict__symbol/, 'JS renders the annotation symbol in its own expressive span');
+assert.match(js, /md-verdict__mover/, 'JS renders the move identity line');
 assert.match(js, /md-verdict__ring-val/, 'JS renders the accuracy figure without the muted .class-accuracy override');
+assert.match(js, /renderMoveClassificationEmpty/, 'JS provides empty state handler');
 
 // ── 4. Every component class used by the two tiles has a CSS rule ──
 const classUses = new Set();
