@@ -1775,7 +1775,16 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
       level: hintLevel,
       levelName: HINT_LEVELS[hintLevel]?.name || 'Unknown',
       main: '',
+      moveSan: bestPV && bestPV.pv && bestPV.pv.length > 0 ? uciToSan(bestPV.pv[0], fen) : (bestMove || ''),
       threat: '',
+      pressureIdea: '',
+      pressurePrefix: currentStyle.id === 'aggressive' ? 'Fast-win idea' : 'Maximum-pressure idea',
+      costPawns: null,
+      risks: [],
+      captureInfo: null,
+      sacrificeInfo: null,
+      isKingHunt: false,
+      mateIn: (scoreType === 'mate') ? Math.abs(evalScore) : null,
       positionAssessment: position,
       pvs: formatPVs(rankedPVs, isWhite, hintLevel, fen),
       bestMove: formatMove(bestPV && bestPV.pv && bestPV.pv.length > 0 ? bestPV.pv[0] : bestMove, fen),
@@ -1830,6 +1839,34 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     // Exact-move-only primary hint.
     hints.main = generateExactMoveHint(bestPV, position, evalScore, scoreType, playerColor, fen || '', currentStyle, null, analysisData.moveHistory);
 
+    // Populate capture & sacrifice details
+    if (bestPV && bestPV.pv && bestPV.pv.length > 0 && fen) {
+      const board = parseFENPlacement(fen.split(' ')[0]);
+      const uci = bestPV.pv[0];
+      const to = uci.substring(2, 4);
+      const captured = getPieceAt(board, to);
+      if (captured) {
+        const capturedName = PIECE_NAMES[captured.toLowerCase()] || 'piece';
+        const isOppPiece = isWhite ? (captured === captured.toLowerCase()) : (captured === captured.toUpperCase());
+        hints.captureInfo = isOppPiece ? `Takes opponent's ${capturedName}` : `Takes ${capturedName}`;
+      }
+      if (bestPV._styleAnalysis?.sacrifice) {
+        hints.sacrificeInfo = bestPV._styleAnalysis.sacrificeSoundness === 'sound' ? 'Sound sacrifice' : 'Speculative sacrifice';
+      }
+      if (currentStyle.kingHuntBonus > 0 && !captured) {
+        const oppKingColor = isWhite ? 'k' : 'K';
+        let oppKingPos = null;
+        for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+          if (board[r][c] === oppKingColor) oppKingPos = { row: r, col: c };
+        }
+        if (oppKingPos) {
+          const toCoords = squareToCoords(to);
+          const distToKing = Math.abs(toCoords.row - oppKingPos.row) + Math.abs(toCoords.col - oppKingPos.col);
+          if (distToKing <= 2) hints.isKingHunt = true;
+        }
+      }
+    }
+
     // Explain why the selected move fits the requested mode. This keeps lower
     // hint levels educational and gives exact/deep hints concrete compensation.
     if (bestPV?._styleAnalysis) {
@@ -1840,19 +1877,25 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
           // Human-like hints lead with the move itself, not a style label.
           // No verbose plan / continuation / risk sentences: the hint card
           // stays minimal and the threat pill carries the tactical alert.
-          hints.main = hints.main.replace(/^[^:]+: /, '');
+          hints.main = hints.main.replace(/^(?:[^:]+ choice|Best):\s*/i, '');
         }
       } else if (currentStyle.id !== 'normal') {
         const reasons = (meta.reasons || []).slice(0, 3);
         const risks = (meta.risks || []).slice(0, 2);
         if (reasons.length) {
           const prefix = currentStyle.id === 'aggressive' ? 'Fast-win idea' : 'Maximum-pressure idea';
+          hints.pressureIdea = reasons.join(', ');
+          hints.pressurePrefix = prefix;
           hints.main += ` ${prefix}: ${reasons.join(', ')}.`;
         }
         if (hintLevel === EXACT_HINT_LEVEL && Number.isFinite(meta.evalLoss) && meta.evalLoss > 0) {
+          hints.costPawns = `${(meta.evalLoss / 100).toFixed(1)} pawn${meta.evalLoss === 100 ? '' : 's'}`;
           hints.main += ` Objective cost: ${(meta.evalLoss / 100).toFixed(1)} pawn${meta.evalLoss === 100 ? '' : 's'}.`;
         }
-        if (hintLevel === EXACT_HINT_LEVEL && risks.length) hints.main += ` Risk: ${risks.join(', ')}.`;
+        if (hintLevel === EXACT_HINT_LEVEL && risks.length) {
+          hints.risks = risks;
+          hints.main += ` Risk: ${risks.join(', ')}.`;
+        }
       }
     }
 
@@ -1978,10 +2021,12 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
 
     // uciToSan already includes the promotion suffix.
     const moveStr = san;
-    const choiceLabel = currentStyle.id === 'normal' ? 'Best' : `${currentStyle.name} choice`;
+    const choiceLabel = currentStyle.id === 'normal'
+      ? 'Best'
+      : (currentStyle.id === 'super_ultra_aggressive' ? '' : `${currentStyle.name} choice`);
     // Hero stays compact: the from-to squares and the evaluation are already
     // rendered by dedicated UI elements, so repeating them here adds noise.
-    let hint = `${choiceLabel}: ${moveStr}`;
+    let hint = choiceLabel ? `${choiceLabel}: ${moveStr}` : moveStr;
 
     if (scoreType === 'mate') {
       hint += ` \u2014 MATE IN ${Math.abs(evalScore)}`;

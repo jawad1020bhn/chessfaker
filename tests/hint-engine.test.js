@@ -79,6 +79,10 @@ const superUltraChoice = engine.selectPVForStyle([safeQueenMove, speculativeQuee
 assert.equal(superUltraChoice.pv[0], 'd3h7');
 assert.equal(superUltraChoice._styleAnalysis.sacrificeSoundness, 'speculative');
 
+const superUltraHint = engine.generateHints({ fen: sacrificeFen, pvs: [speculativeQueenSac, safeQueenMove], moveHistory: [] }, 5, 'w', 'super_ultra_aggressive', 'none', false);
+assert.doesNotMatch(superUltraHint.main, /Ultra Super Aggressive Attack choice:/i, 'phrase Ultra Super Aggressive Attack choice must be removed');
+assert.match(superUltraHint.main, /^Qxh7\+/, 'Ultra Super Aggressive leads directly with the move SAN');
+
 const aggressiveHint = engine.generateHints({ fen: attackFen, pvs: [quiet, forcingCheck], moveHistory: [] }, 5, 'w', 'aggressive', 'none');
 assert.match(aggressiveHint.main, /Aggressive choice: Qh5\+/);
 assert.match(aggressiveHint.main, /Fast-win idea:/);

@@ -129,7 +129,7 @@
 
   const QUALITY_LABELS = Object.freeze({
     perfect: { id: 'perfect', label: 'Perfect', badge: 'TB', detail: 'Tablebase, exact play' },
-    'deep-engine': { id: 'deep-engine', label: 'Deep engine', badge: 'ENGINE', detail: 'Live engine evaluation' },
+    'deep-engine': { id: 'deep-engine', label: 'Deep engine', badge: 'CLOUD', detail: 'Live engine evaluation' },
     'cloud-cached': { id: 'cloud-cached', label: 'Cloud cached', badge: 'CLOUD', detail: 'Fresh cached engine evaluation' },
     'local-engine': { id: 'local-engine', label: 'Local engine', badge: 'LOCAL', detail: 'On-device search fallback' },
     'shallow-engine': { id: 'shallow-engine', label: 'Shallow engine', badge: 'SHALLOW', detail: 'Limited depth, use with care' },
