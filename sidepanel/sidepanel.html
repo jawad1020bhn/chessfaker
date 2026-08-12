@@ -197,6 +197,14 @@
           <div class="setting-hint" id="style-description">Objective best play, reliable conversion, and solid defense. This is the engine's strongest recommendation with no style bias.</div>
         </div>
 
+        <div id="early-king-hunt-setting" class="setting-group early-king-hunt-setting" hidden aria-hidden="true">
+          <label class="toggle-label" for="setting-early-king-hunt">
+            <input type="checkbox" id="setting-early-king-hunt" disabled>
+            <span>Early King Hunt</span>
+          </label>
+          <div class="setting-hint">When enabled, Ultra Super Aggressive style will attempt an extremely early and forceful direct attack against the opponent's king or main target.</div>
+        </div>
+
         <div class="human-mode-card">
           <div class="human-mode-head">
             <span class="human-mode-title">Play human</span>
@@ -335,6 +343,7 @@
 
   <script src="../engine/core-utils.js"></script>
   <script src="../engine/chaos-attack.js"></script>
+  <script src="../engine/early-king-hunt.js"></script>
   <script src="../engine/cloud-engine.js"></script>
   <script src="../engine/hint-engine.js"></script>
   <script src="sidepanel.js"></script>

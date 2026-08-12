@@ -42,6 +42,9 @@
   let settings = {
     cloudDepth: 5,
     style: 'normal',
+    // Kept as a style-scoped preference. The engine activates it only when
+    // style === 'super_ultra_aggressive'; other styles ignore it completely.
+    earlyKingHuntEnabled: false,
     humanLikeMode: false,
     whiteRepertoire: 'none',
     blackRepertoire: 'none',
@@ -68,6 +71,24 @@
     const el = $('#style-description');
     if (!el) return;
     el.textContent = STYLE_DESCRIPTIONS[settings.style] || STYLE_DESCRIPTIONS.normal;
+  }
+
+  function isEarlyKingHuntActive() {
+    return settings.style === 'super_ultra_aggressive' && settings.earlyKingHuntEnabled === true;
+  }
+
+  // The preference is preserved when the user changes style, but the control
+  // is unavailable outside Ultra Super Aggressive and the engine receives a
+  // true flag only through the exact style-scoped predicate above.
+  function updateEarlyKingHuntUI() {
+    const container = $('#early-king-hunt-setting');
+    const checkbox = $('#setting-early-king-hunt');
+    if (!container || !checkbox) return;
+    const styleAllowsSetting = settings.style === 'super_ultra_aggressive';
+    container.hidden = !styleAllowsSetting;
+    container.setAttribute('aria-hidden', styleAllowsSetting ? 'false' : 'true');
+    checkbox.disabled = !styleAllowsSetting;
+    checkbox.checked = settings.earlyKingHuntEnabled === true;
   }
 
   // ─── DOM References ─────────────────────────────────────────────────
@@ -321,7 +342,12 @@
   function loadSettings() {
     chrome.storage.local.get('settings', (result) => {
       if (result.settings) {
-        settings = { ...settings, ...result.settings, style: normalizeStyle(result.settings.style) };
+        settings = {
+          ...settings,
+          ...result.settings,
+          style: normalizeStyle(result.settings.style),
+          earlyKingHuntEnabled: result.settings.earlyKingHuntEnabled === true
+        };
         applySettingsToUI();
         if (settings.style !== result.settings.style) chrome.storage.local.set({ settings });
         if (lastAnalysis) renderAnalysis(lastAnalysis);
@@ -347,6 +373,7 @@
       'setting-cloud-depth': settings.cloudDepth,
       'setting-depth-target': settings.depthTarget,
       'setting-style': settings.style,
+      'setting-early-king-hunt': settings.earlyKingHuntEnabled,
       'setting-human-like-mode': settings.humanLikeMode,
       'setting-white-repertoire': settings.whiteRepertoire,
       'setting-black-repertoire': settings.blackRepertoire,
@@ -370,6 +397,7 @@
       btn.setAttribute('aria-checked', active ? 'true' : 'false');
     });
     updateStyleDescription();
+    updateEarlyKingHuntUI();
   }
 
   // ─── Player Selector ──────────────────────────────────────────────
@@ -459,7 +487,8 @@
     const settingEls = {
       'setting-cloud-depth': (v) => { settings.cloudDepth = parseInt(v); },
       'setting-depth-target': (v) => { settings.depthTarget = parseInt(v); },
-      'setting-style': (v) => { settings.style = v; },
+      'setting-style': (v) => { settings.style = normalizeStyle(v); },
+      'setting-early-king-hunt': (v) => { settings.earlyKingHuntEnabled = v === true; },
       'setting-human-like-mode': (v) => { settings.humanLikeMode = v; },
       'setting-white-repertoire': (v) => { settings.whiteRepertoire = v; },
       'setting-black-repertoire': (v) => { settings.blackRepertoire = v; },
@@ -479,7 +508,7 @@
         handler(val);
         const savePromise = saveSettings();
         applySettingsToUI();
-        if ((id === 'setting-style' || id === 'setting-human-like-mode') && lastAnalysis) {
+        if ((id === 'setting-style' || id === 'setting-human-like-mode' || id === 'setting-early-king-hunt') && lastAnalysis) {
           humanPlanState = null;
           renderAnalysis(lastAnalysis);
         }
@@ -924,14 +953,20 @@
   function renderAnalysis(data) {
     const effectiveColor = assistedPlayerColor || playerColor || 'w';
     const objectivePvs = data.pvs || [];
-    const styledPvs = objectivePvs.length > 0 && data.source !== 'tablebase' && (objectivePvs.length > 1 || settings.humanLikeMode)
+    const earlyKingHuntActive = isEarlyKingHuntActive();
+    const styledPvs = objectivePvs.length > 0 && data.source !== 'tablebase' &&
+      (objectivePvs.length > 1 || settings.humanLikeMode || earlyKingHuntActive)
       ? window.ChessHintEngine.selectPVForStyle(
           objectivePvs,
           data.fen,
           settings.style,
           effectiveColor,
           settings.humanLikeMode,
-          { activePlan: humanPlanState?.activePlan || null, openingData: data.openingData }
+          {
+            activePlan: humanPlanState?.activePlan || null,
+            openingData: data.openingData,
+            earlyKingHuntEnabled: earlyKingHuntActive
+          }
         )
       : objectivePvs;
     const viewData = { ...data, pvs: styledPvs };
@@ -1109,7 +1144,10 @@
       settings.style,
       effectiveColor === 'w' ? settings.whiteRepertoire : settings.blackRepertoire,
       settings.humanLikeMode,
-      { activePlan: humanPlanState?.activePlan || null }
+      {
+        activePlan: humanPlanState?.activePlan || null,
+        earlyKingHuntEnabled: isEarlyKingHuntActive()
+      }
     );
     if (settings.humanLikeMode && hints.styleAnalysis?.plan) {
       humanPlanState = { activePlan: hints.styleAnalysis.plan, startedAtFen: data.fen };
