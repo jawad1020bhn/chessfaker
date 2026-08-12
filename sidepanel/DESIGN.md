@@ -36,6 +36,15 @@ travels, stretches on press, a check pops inside when on, and a 40px state
 layer blooms on hover/focus/press. Style choice cards morph their corner
 radius (lg → xl) and pop a check when selected.
 
+**Balance and Last move are fully wired, one layer to the next.** Earlier the
+Expressive CSS for both tiles existed while the markup still spoke the legacy
+`.md-card .md-eval` dialect: `#eval-score` and the fulcrum were missing from
+the HTML, the hidden `#eval-bar-black` dual-bar remnant was still being
+transformed, and `--eval-pct` was written to the bar instead of the tile the
+fulcrum inherits from. The HTML, CSS, and JS now implement one contract each,
+and `tests/panel-wiring.test.js` locks the three layers together so a future
+edit cannot silently disconnect them again.
+
 ## Expressive tactics used
 
 | Tactic | Application |
@@ -71,7 +80,16 @@ effects curve for color/opacity.
 - **Hero** — primary container; switches to secondary (human) or tertiary (ultra); displays only the SAN move
 - **Caption rail** — "Why this move": idea, capture/sacrifice, cost, risk, king-hunt, balance posture
 - **Squares lockup** — piece glyph + from/to square chips inside the hero
-- **Balance card** — single-ended meter (white fill from the left)
+- **Balance tile** — the score is the only display type on the tile; kicker +
+  player-perspective score headline + prose description; a 32dp dual-identity
+  ribbon (white fill from the left, inverse-surface remainder) with a morphing
+  fulcrum riding the split; White/Black piece-identity labels; lean
+  (you / opp / even) retints the whole tile and re-roots its corner radii
+- **Last move verdict tile** — the surface *is* the judgment: role container
+  (primary for good moves, tertiary for inaccuracy/mistake, error for blunder),
+  organic radius that sharpens as the verdict worsens, emphasized verdict word
+  with a quieter annotation symbol, win-chance swing metric, and a morphing
+  blob accuracy ring with a prominent accuracy figure + `acc` cap
 - **Banners** — primary / tertiary / error containers with leading icons
 - **Fact list** — opening, phase, quality, material, natural play
 - **FAB** — refresh; morphs toward a circle on hover

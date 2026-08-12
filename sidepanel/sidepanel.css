@@ -674,6 +674,7 @@ body {
   --balance-role-bg: var(--md-sys-color-surface-container-lowest);
   --balance-role-fg: var(--md-sys-color-on-surface);
   --balance-role-muted: var(--md-sys-color-on-surface-variant);
+  --eval-pct: 50;   /* fulcrum rests centered until the first analysis */
   position: relative;
   overflow: hidden;
   padding: var(--md-sys-space-5);
@@ -722,6 +723,7 @@ body {
 .md-balance__kicker { color: var(--balance-role-muted); letter-spacing: 0.12em; }
 .md-balance__score {
   margin-top: 2px;
+  font-family: var(--md-ref-typeface-brand);
   font-size: clamp(2rem, 8vw, 2.75rem);
   font-weight: 800;
   letter-spacing: -0.045em;
@@ -751,7 +753,8 @@ body {
   transform-origin: left center;
   transition: transform var(--md-sys-motion-slow) var(--md-sys-motion-spatial);
 }
-.eval-bar-black { display: none; }
+/* The morphing fulcrum rides the White/Black split. `--eval-pct` is set on
+   the tile (an ancestor) so the value inherits down to this absolute child. */
 .md-balance__fulcrum {
   position: absolute;
   top: 50%;
@@ -790,8 +793,12 @@ body {
   gap: 8px;
   min-height: 28px;
 }
-.eval-label { font-weight: 750; }
-.eval-label.black { color: var(--balance-role-muted); }
+/* Both side labels carry the same emphasized weight — the piece dots carry
+   identity, so neither side is muted into secondary status. */
+.eval-label {
+  font-weight: 750;
+  color: var(--balance-role-fg);
+}
 
 /* ── Banners ── */
 .md-banner {
@@ -932,8 +939,7 @@ body {
   letter-spacing: 0.12em;
   margin-bottom: var(--md-sys-space-2);
 }
-.md-verdict__stage,
-.move-class-display {
+.md-verdict__stage {
   position: relative;
   z-index: 1;
   display: flex;
@@ -948,6 +954,15 @@ body {
   font-weight: 800;
   letter-spacing: -0.03em;
   line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+/* Chess annotation symbol (!!, ?!, …) — quieter than the verdict word so
+   the label stays the hero, but never dropped to disabled opacity. */
+.md-verdict__symbol {
+  font-weight: 800;
+  letter-spacing: 0;
+  opacity: 0.85;
+  margin-left: 2px;
 }
 .md-verdict__metric {
   font-size: 0.8125rem;
@@ -1004,23 +1019,6 @@ body {
   color: var(--verdict-role-muted);
   margin-top: 2px;
 }
-.class-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.class-badge {
-  display: inline-flex;
-  align-items: center;
-  font-family: var(--md-ref-typeface-brand);
-  font-size: clamp(1.35rem, 5.4vw, 1.75rem);
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  line-height: 1.1;
-  text-transform: none;
-  background: transparent;
-  color: inherit;
-  padding: 0;
-  min-height: 0;
-  border-radius: 0;
-}
-.class-accuracy, .class-metric { color: var(--verdict-role-muted); font-size: 0.8125rem; font-weight: 650; }
 
 /* ── Toolbar + FAB ── */
 .md-toolbar {
