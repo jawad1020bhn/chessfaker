@@ -83,13 +83,17 @@
         <div id="idea-list" class="md-idea__list" role="list"></div>
       </section>
 
-      <section id="eval-section" class="md-balance" aria-label="Position evaluation" data-lean="even">
+      <section id="eval-section" class="md-balance" aria-label="Position evaluation" data-lean="even" data-state="empty">
         <span class="md-balance__orb md-balance__orb--a" aria-hidden="true"></span>
         <span class="md-balance__orb md-balance__orb--b" aria-hidden="true"></span>
         <div class="md-balance__head">
-          <p class="md-typescale-label-md md-balance__kicker">Balance</p>
-          <p id="eval-score" class="md-balance__score">0.0</p>
-          <p id="eval-description" class="eval-description md-typescale-body-md">Position is equal</p>
+          <div class="md-balance__kicker-row">
+            <p class="md-typescale-label-md md-balance__kicker">Balance</p>
+            <span id="eval-stale-badge" class="md-balance__stale" style="display:none">cached</span>
+          </div>
+          <p id="eval-score" class="md-balance__score">—</p>
+          <p id="eval-win-prob" class="md-balance__win-prob">—</p>
+          <p id="eval-description" class="eval-description md-typescale-body-md">Waiting for analysis…</p>
         </div>
         <div class="md-balance__ribbon">
           <div id="eval-bar" class="eval-bar" role="meter" aria-label="Evaluation" aria-valuemin="-10" aria-valuemax="10" aria-valuenow="0" aria-valuetext="0.0">
@@ -100,10 +104,10 @@
         <div class="eval-labels">
           <span class="eval-side">
             <span class="piece-dot piece-dot--light" aria-hidden="true"></span>
-            <span id="eval-white-label" class="eval-label md-typescale-label-lg">0.0</span>
+            <span id="eval-white-label" class="eval-label md-typescale-label-lg">—</span>
           </span>
           <span class="eval-side">
-            <span id="eval-black-label" class="eval-label md-typescale-label-lg">0.0</span>
+            <span id="eval-black-label" class="eval-label md-typescale-label-lg">—</span>
             <span class="piece-dot piece-dot--dark" aria-hidden="true"></span>
           </span>
         </div>
@@ -116,10 +120,14 @@
         <p id="critical-moment-detail" class="critical-moment-detail md-typescale-body-md"></p>
       </section>
 
-      <section id="move-class-section" class="md-verdict" data-verdict="best" style="display:none" aria-label="Last move classification" aria-live="polite">
+      <section id="move-class-section" class="md-verdict" data-verdict="none" data-state="empty" aria-label="Last move classification" aria-live="polite">
         <span class="md-verdict__burst" aria-hidden="true"></span>
         <p class="md-typescale-label-md md-verdict__kicker">Last move</p>
-        <div id="move-class-display" class="md-verdict__stage"></div>
+        <div id="move-class-display" class="md-verdict__stage">
+          <div class="md-verdict__empty">
+            <p class="md-verdict__empty-text">Play a move to see how it rated</p>
+          </div>
+        </div>
       </section>
 
       <section id="position-info" class="md-card md-facts" aria-label="Position facts">

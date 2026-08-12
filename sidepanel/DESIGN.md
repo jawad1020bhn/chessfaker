@@ -80,16 +80,19 @@ effects curve for color/opacity.
 - **Hero** — primary container; switches to secondary (human) or tertiary (ultra); displays only the SAN move
 - **Caption rail** — "Why this move": idea, capture/sacrifice, cost, risk, king-hunt, balance posture
 - **Squares lockup** — piece glyph + from/to square chips inside the hero
-- **Balance tile** — the score is the only display type on the tile; kicker +
-  player-perspective score headline + prose description; a 32dp dual-identity
-  ribbon (white fill from the left, inverse-surface remainder) with a morphing
-  fulcrum riding the split; White/Black piece-identity labels; lean
-  (you / opp / even) retints the whole tile and re-roots its corner radii
-- **Last move verdict tile** — the surface *is* the judgment: role container
+- **Balance tile** — content-first scorecard: kicker + player-perspective
+  score headline + win-probability line (`You 64% · Opp 36%`) + prose description;
+  a 32dp dual-identity ribbon (white fill from the left, inverse-surface remainder)
+  with a morphing fulcrum riding the split; White/Black piece-identity labels;
+  4-state lifecycle (`empty → loading → data → error/stale`) with skeleton shimmer;
+  lean (you / opp / even) retints the whole tile and re-roots its corner radii
+- **Last move verdict tile** — the rate and judgment as the hero: role container
   (primary for good moves, tertiary for inaccuracy/mistake, error for blunder),
-  organic radius that sharpens as the verdict worsens, emphasized verdict word
-  with a quieter annotation symbol, win-chance swing metric, and a morphing
-  blob accuracy ring with a prominent accuracy figure + `acc` cap
+  organic radius that sharpens as the verdict worsens, move identity line
+  (`You played Nf6` / `Opponent played exd5`), emphasized verdict word with a quieter
+  annotation symbol, win-chance swing metric, morphing blob accuracy ring with a
+  large accuracy figure + `/ 100` cap, and an explicit empty ghost state
+  (`Play a move to see how it rated`) before moves are classified
 - **Banners** — primary / tertiary / error containers with leading icons
 - **Fact list** — opening, phase, quality, material, natural play
 - **FAB** — refresh; morphs toward a circle on hover

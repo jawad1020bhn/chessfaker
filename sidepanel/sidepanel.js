@@ -16,6 +16,8 @@
 
   // ─── State ─────────────────────────────────────────────────────────
   let currentFen = null;
+  let lastPositionFen = null;
+  let lastAnalyzedFen = null;
   let playerColor = null;          // Auto-detected from board orientation
   let assistedPlayerColor = null;  // User-selected: which player to assist (null = not yet set)
   let activeTabId = 'active';       // Included in position-generation tokens
@@ -104,6 +106,8 @@
     evalBar: $('#eval-bar'),
     evalSection: $('#eval-section'),
     evalScore: $('#eval-score'),
+    evalWinProb: $('#eval-win-prob'),
+    evalStaleBadge: $('#eval-stale-badge'),
     evalWhiteLabel: $('#eval-white-label'),
     evalBlackLabel: $('#eval-black-label'),
     evalDescription: $('#eval-description'),
@@ -279,6 +283,71 @@
     isRefreshing = false;
   }
 
+  function inferMoveSan(prevFen, currFen) {
+    if (!prevFen || !currFen || !window.ChessCore || typeof window.ChessCore.inferTransition !== 'function') return null;
+    const t = window.ChessCore.inferTransition(prevFen, currFen);
+    if (!t || !t.from || !t.to) return null;
+    const fromSquare = String.fromCharCode(97 + t.from.c) + (8 - t.from.r);
+    const toSquare = String.fromCharCode(97 + t.to.c) + (8 - t.to.r);
+    let promo = '';
+    if (t.from.before && t.from.before.toLowerCase() === 'p' && (t.to.r === 0 || t.to.r === 7)) {
+      if (t.to.after && t.to.after.toLowerCase() !== 'p') {
+        promo = t.to.after.toLowerCase();
+      }
+    }
+    const uci = fromSquare + toSquare + promo;
+    if (window.ChessHintEngine && typeof window.ChessHintEngine.uciToSan === 'function') {
+      return window.ChessHintEngine.uciToSan(uci, prevFen);
+    }
+    return uci;
+  }
+
+  function setBalanceLoadingState(hasPrevScore = false) {
+    if (dom.evalSection) {
+      dom.evalSection.dataset.state = 'loading';
+    }
+    if (!hasPrevScore) {
+      if (dom.evalScore) dom.evalScore.innerHTML = '<span class="md-skeleton">…</span>';
+      if (dom.evalWinProb) dom.evalWinProb.innerHTML = '<span class="md-skeleton">…</span>';
+      if (dom.evalDescription) dom.evalDescription.textContent = 'Analyzing position…';
+      if (dom.evalWhiteLabel) dom.evalWhiteLabel.textContent = '—';
+      if (dom.evalBlackLabel) dom.evalBlackLabel.textContent = '—';
+      if (dom.evalStaleBadge) dom.evalStaleBadge.style.display = 'none';
+    } else {
+      if (dom.evalDescription) dom.evalDescription.textContent = 'Analyzing position…';
+    }
+  }
+
+  function setBalanceErrorState(errorMsg = 'Analysis unavailable') {
+    if (dom.evalSection) {
+      dom.evalSection.dataset.state = 'error';
+      dom.evalSection.dataset.lean = 'even';
+      dom.evalSection.style.setProperty('--eval-pct', '50');
+    }
+    if (dom.evalScore) dom.evalScore.textContent = '—';
+    if (dom.evalWinProb) dom.evalWinProb.textContent = '—';
+    if (dom.evalDescription) dom.evalDescription.textContent = errorMsg;
+    if (dom.evalStaleBadge) dom.evalStaleBadge.style.display = 'none';
+    if (dom.evalWhiteLabel) dom.evalWhiteLabel.textContent = '—';
+    if (dom.evalBlackLabel) dom.evalBlackLabel.textContent = '—';
+    if (dom.evalBarWhite) dom.evalBarWhite.style.transform = 'scaleX(0.5)';
+  }
+
+  function setBalanceEmptyState() {
+    if (dom.evalSection) {
+      dom.evalSection.dataset.state = 'empty';
+      dom.evalSection.dataset.lean = 'even';
+      dom.evalSection.style.setProperty('--eval-pct', '50');
+    }
+    if (dom.evalScore) dom.evalScore.textContent = '—';
+    if (dom.evalWinProb) dom.evalWinProb.textContent = '—';
+    if (dom.evalDescription) dom.evalDescription.textContent = 'Waiting for analysis…';
+    if (dom.evalStaleBadge) dom.evalStaleBadge.style.display = 'none';
+    if (dom.evalWhiteLabel) dom.evalWhiteLabel.textContent = '—';
+    if (dom.evalBlackLabel) dom.evalBlackLabel.textContent = '—';
+    if (dom.evalBarWhite) dom.evalBarWhite.style.transform = 'scaleX(0.5)';
+  }
+
   // ─── Initialize ────────────────────────────────────────────────────
   function init() {
     loadSettings();
@@ -293,6 +362,8 @@
     }, { once: true });
     startBoardReading();
     syncWelcome();
+    setBalanceEmptyState();
+    renderMoveClassificationEmpty();
     updateEngineStatus('connecting', 'Connecting to cloud...');
     updateCorrelationStat();   // initialise "0 / 0 (0%)" display
     runHealthCheck();          // passive status only; does not call providers
@@ -738,6 +809,9 @@
   function handlePositionUpdate(message) {
     const prevFen = currentFen;
     currentFen = message.fen;
+    if (prevFen && prevFen !== currentFen) {
+      lastPositionFen = prevFen;
+    }
     syncWelcome();
     const positionChanged = !prevFen || prevFen.split(' ').slice(0, 4).join(' ') !== currentFen.split(' ').slice(0, 4).join(' ');
     playerColor = message.playerColor || 'w';
@@ -753,8 +827,12 @@
       prevEval = null;
       prevScoreType = 'cp';
       lastCriticalAlert = null;
+      lastPositionFen = null;
+      lastAnalyzedFen = null;
       isPlayerTurn = true;
       waitingForOpponent = false;
+      renderMoveClassificationEmpty();
+      setBalanceEmptyState();
       // Reset the engine-side correlation tracker + sacrifice history.
       chrome.runtime.sendMessage({ type: 'reset_correlation' }).catch(() => {});
       if (window.ChessHintEngine && typeof window.ChessHintEngine.resetSacrificeHistory === 'function') {
@@ -922,14 +1000,34 @@
         const currWhite = effectiveColor === 'w' ? evalScore : -evalScore;
         const fenActiveColor = (data.fen || '').split(' ')[1] || 'w';
         const moverColor = fenActiveColor === 'w' ? 'b' : 'w';
+
+        let moveSan = null;
+        if (lastAnalyzedFen && data.fen && lastAnalyzedFen !== data.fen) {
+          moveSan = inferMoveSan(lastAnalyzedFen, data.fen);
+        } else if (lastPositionFen && data.fen && lastPositionFen !== data.fen) {
+          moveSan = inferMoveSan(lastPositionFen, data.fen);
+        }
+        if (!moveSan && Array.isArray(data.moveHistory) && data.moveHistory.length > 0) {
+          const lastMove = data.moveHistory[data.moveHistory.length - 1];
+          if (typeof lastMove === 'string' && lastMove) {
+            moveSan = lastMove.length >= 4 && /^[a-h][1-8][a-h][1-8]/.test(lastMove) && window.ChessHintEngine?.uciToSan
+              ? window.ChessHintEngine.uciToSan(lastMove, data.fen)
+              : lastMove;
+          }
+        }
+
         renderMoveClassification(prevWhite, currWhite, {
           moverColor,
+          moveSan,
           scoreTypeBefore: prevScoreType || 'cp',
           scoreTypeAfter: bestPV.scoreType
         });
+      } else {
+        renderMoveClassificationEmpty();
       }
       prevEval = evalScore;
       prevScoreType = bestPV.scoreType;
+      lastAnalyzedFen = data.fen;
 
       // Remember the engine's first-choice move +
       // the FEN it was recommended for, so when the player makes their move
@@ -967,6 +1065,7 @@
     const errorMsg = data.error || 'Cloud analysis unavailable.';
     if (isRefreshing) finishRefresh();
     updateEngineStatus('error', errorMsg);
+    setBalanceErrorState(errorMsg);
     // Show toast for errors
     showToast(errorMsg, 'error', 4000);
     if (dom.hintText) {
@@ -992,6 +1091,7 @@
   function requestAnalysis(refresh = false) {
     if (!currentFen) return;
     updateEngineStatus('analyzing', refresh ? 'Refreshing...' : 'Analyzing...');
+    setBalanceLoadingState(prevEval !== null);
     const colorToSend = assistedPlayerColor || playerColor || 'w';
     chrome.runtime.sendMessage({
       type: 'request_analysis',
@@ -1051,7 +1151,7 @@
     // uses the same style-selected ordering.
     if (objectivePvs.length > 0) {
       const bestPV = objectivePvs[0];
-      updateEvalBar(bestPV.score, bestPV.scoreType, effectiveColor);
+      updateEvalBar(bestPV.score, bestPV.scoreType, effectiveColor, data.stale === true);
       updateEvalDescription(bestPV.score, bestPV.scoreType, effectiveColor);
     }
     renderPositionInfo(viewData);
@@ -1068,15 +1168,21 @@
     }
   }
 
-  function updateEvalBar(score, scoreType, effectiveColor) {
+  function updateEvalBar(score, scoreType, effectiveColor, isStale = false) {
     const isWhite = effectiveColor === 'w';
     const displayScore = isWhite ? score : -score;
     // Single-ended meter: the white fill grows from the left to White's
     // winning share; the inverse-surface remainder is Black's share.
-    const winPct = window.ChessHintEngine.formatEvalBar(score, scoreType, true) / 100;
+    const whiteWinPct = window.ChessHintEngine.formatEvalBar(score, scoreType, true);
+    const winFraction = whiteWinPct / 100;
     if (dom.evalBarWhite) {
-      dom.evalBarWhite.style.transform = `scaleX(${winPct})`;
+      dom.evalBarWhite.style.transform = `scaleX(${winFraction})`;
     }
+
+    // Win probability from player perspective vs opponent
+    const playerWinPct = Math.round(window.ChessHintEngine.formatEvalBar(score, scoreType, isWhite));
+    const oppWinPct = 100 - playerWinPct;
+
     const scoreStr = scoreType === 'mate'
       ? (displayScore > 0 ? `+M${displayScore}` : `-M${Math.abs(displayScore)}`)
       : (displayScore >= 0 ? `+${(displayScore / 100).toFixed(1)}` : (displayScore / 100).toFixed(1));
@@ -1087,7 +1193,7 @@
       const evalPawns = scoreType === 'mate'
         ? (displayScore > 0 ? 10 : -10) * Math.sign(displayScore || 1)
         : score / 100;
-      const pct = Math.round(winPct * 100);
+      const pct = Math.round(whiteWinPct);
       dom.evalBar.setAttribute('aria-valuenow', String(Math.max(-10, Math.min(10, evalPawns))));
       dom.evalBar.setAttribute('aria-valuetext', `${scoreStr} for ${isWhite ? 'White' : 'Black'}`);
       // The fulcrum reads `--eval-pct` from an ancestor, so it lives on the
@@ -1095,11 +1201,14 @@
       if (dom.evalSection) dom.evalSection.style.setProperty('--eval-pct', String(pct));
     }
     if (dom.evalScore) dom.evalScore.textContent = scoreStr;
+    if (dom.evalWinProb) dom.evalWinProb.textContent = `You ${playerWinPct}% · Opp ${oppWinPct}%`;
+    if (dom.evalStaleBadge) dom.evalStaleBadge.style.display = isStale ? 'inline-flex' : 'none';
     if (dom.evalSection) {
       const lean = scoreType === 'mate'
         ? (displayScore > 0 ? 'you' : 'opp')
         : (displayScore > 30 ? 'you' : (displayScore < -30 ? 'opp' : 'even'));
       dom.evalSection.dataset.lean = lean;
+      dom.evalSection.dataset.state = isStale ? 'stale' : 'data';
     }
     if (dom.evalWhiteLabel) dom.evalWhiteLabel.textContent = isWhite ? scoreStr : oppStr;
     if (dom.evalBlackLabel) dom.evalBlackLabel.textContent = isWhite ? oppStr : scoreStr;
@@ -1357,6 +1466,17 @@
 
   }
 
+  function renderMoveClassificationEmpty() {
+    if (!dom.moveClassSection || !dom.moveClassDisplay) return;
+    dom.moveClassSection.dataset.verdict = 'none';
+    dom.moveClassSection.dataset.state = 'empty';
+    dom.moveClassDisplay.innerHTML = `
+      <div class="md-verdict__empty">
+        <p class="md-verdict__empty-text">Play a move to see how it rated</p>
+      </div>
+    `;
+  }
+
   function renderMoveClassification(evalBefore, evalAfter, opts) {
     if (!dom.moveClassSection || !dom.moveClassDisplay) return;
     const cls = window.ChessHintEngine.classifyMove(evalBefore, evalAfter, opts || {});
@@ -1364,23 +1484,35 @@
       ? `Win −${cls.winChanceLost}%`
       : (cls.winChanceGained > 0 ? `Win +${cls.winChanceGained}%` : 'Held the evaluation');
     const acc = clamp(cls.accuracy, 0, 100, 0);
+    const effectiveColor = assistedPlayerColor || playerColor || 'w';
+    const moverColor = (opts && opts.moverColor) || (effectiveColor === 'w' ? 'b' : 'w');
+    const isPlayerMover = moverColor === effectiveColor;
+
+    let moverText = '';
+    if (opts && opts.moveSan) {
+      moverText = isPlayerMover ? `You played ${opts.moveSan}` : `Opponent played ${opts.moveSan}`;
+    } else {
+      moverText = isPlayerMover ? 'Your last move' : "Opponent's last move";
+    }
+
     dom.moveClassSection.dataset.verdict = cls.label.toLowerCase();
+    dom.moveClassSection.dataset.state = 'data';
     const symbol = cls.symbol
       ? ` <span class="md-verdict__symbol" aria-hidden="true">${h(cls.symbol)}</span>`
       : '';
     dom.moveClassDisplay.innerHTML = `
       <div class="md-verdict__copy">
+        <p class="md-verdict__mover">${h(moverText)}</p>
         <p class="md-verdict__label">${h(cls.label)}${symbol}</p>
         <p class="md-verdict__metric">${h(swing)}</p>
       </div>
-      <div class="md-verdict__ring" style="--acc: ${acc}" role="img" title="Engine accuracy estimate for this move (0-100)" aria-label="Engine accuracy estimate ${acc} of 100">
+      <div class="md-verdict__ring" style="--acc: ${acc}" role="img" title="Engine accuracy estimate for this move (${acc}/100)" aria-label="Engine accuracy estimate ${acc} of 100">
         <span class="md-verdict__ring-stack">
           <span class="md-verdict__ring-val">${h(acc)}</span>
-          <span class="md-verdict__ring-cap">acc</span>
+          <span class="md-verdict__ring-cap">/ 100</span>
         </span>
       </div>
     `;
-    dom.moveClassSection.style.display = 'block';
   }
 
   // ─── Start ─────────────────────────────────────────────────────────
