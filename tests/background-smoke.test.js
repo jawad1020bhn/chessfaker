@@ -68,6 +68,7 @@ const context = {
   async fetch(url) {
     remoteFetches++;
     remoteUrls.push(url);
+
     const makeResponse = data => ({
       status: 200,
       ok: true,
@@ -96,7 +97,7 @@ const context = {
       if (url.includes('cloud-eval')) {
         return makeResponse({
           depth: 30, knodes: 500,
-          pvs: [{ cp: 120, moves: 'e7e5 g1f3 g8f6' }, { cp: 90, moves: 'f8e7 g1f3 g8f6' }]
+          pvs: [{ cp: 120, moves: 'd8e7 g1f3 g8f6' }, { cp: 90, moves: 'f8e8 g1f3 g8f6' }]
         });
       }
       return makeResponse({ type: 'error', error: 'empty' });
@@ -106,8 +107,8 @@ const context = {
     if (remoteMode === 'chessapi') {
       if (url.includes('chess-api.com')) {
         return makeResponse({
-          depth: 18, move: 'f7f5', mate: -3, san: 'f5',
-          continuationArr: ['g1f3', 'g8f6'], fen: '4k3/8/8/8/8/8/8/4K3 b - - 0 1'
+          depth: 18, move: 'e8e7', mate: -3, san: 'Ke7',
+          continuationArr: ['e1d1', 'e7d7'], fen: '4k3/8/8/8/8/8/8/4K3 b - - 0 1'
         });
       }
       return makeResponse({ type: 'error', error: 'empty' });

@@ -199,68 +199,7 @@
     return style === 'super_ultra_aggressive' && enabled === true;
   }
 
-  // ─── Attacking Opening Repertoires ───────────────────────────────────
-  // Every module is a curated, side-specific move tree. A repertoire is a
-  // preference inside the engine/style safety budget, never a forced move.
-  const OPENING_REPERTOIRES = {
-    none: { id: 'none', name: 'No Preference', side: null, risk: 'none', lines: [], plan: '' },
-    white_scotch_evans: { id: 'white_scotch_evans', name: 'Scotch / Evans Gambit', side: 'w', risk: 'sharp', plan: 'Develop rapidly, open the centre, and pressure f7 before Black completes development.', lines: [
-      ['e2e4','e7e5','g1f3','b8c6','d2d4','e5d4','f1c4'],
-      ['e2e4','e7e5','g1f3','b8c6','f1c4','f8c5','b2b4']
-    ]},
-    white_smith_morra: { id: 'white_smith_morra', name: 'Smith–Morra Gambit', side: 'w', risk: 'sharp', plan: 'Open the d-file, finish development quickly, and attack d6 and f7 with active pieces.', lines: [
-      ['e2e4','c7c5','d2d4','c5d4','c2c3']
-    ]},
-    white_milner_barry: { id: 'white_milner_barry', name: 'Milner–Barry Gambit', side: 'w', risk: 'sharp', plan: 'Use the advanced centre to gain tempi, mobilise the kingside, and attack before Black can unwind.', lines: [
-      ['e2e4','e7e6','d2d4','d7d5','b1c3','g8f6','e4e5','f6d7','f2f4']
-    ]},
-    white_panov: { id: 'white_panov', name: 'Panov Attack', side: 'w', risk: 'sound-aggressive', plan: 'Create active isolated-queen-pawn play: develop fast, pressure d5, and use e4 breaks.', lines: [
-      ['e2e4','c7c6','d2d4','d7d5','e4d5','c6d5','c2c4']
-    ]},
-    white_austrian: { id: 'white_austrian', name: 'Austrian Attack', side: 'w', risk: 'sound-aggressive', plan: 'Claim kingside space with f4, restrict central counterplay, then build toward f5 and a direct attack.', lines: [
-      ['e2e4','d7d6','d2d4','g8f6','b1c3','g7g6','f2f4'],
-      ['e2e4','g7g6','d2d4','f8g7','b1c3','d7d6','f2f4']
-    ]},
-    black_najdorf: { id: 'black_najdorf', name: 'Sicilian Najdorf', side: 'b', risk: 'sharp', plan: 'Counterattack with ...a6 and ...b5, retain central flexibility, and challenge White’s kingside initiative.', lines: [
-      ['e2e4','c7c5','g1f3','d7d6','d2d4','c5d4','f3d4','g8f6','b1c3','a7a6']
-    ]},
-    black_dragon: { id: 'black_dragon', name: 'Sicilian Dragon', side: 'b', risk: 'sharp', plan: 'Fianchetto the dark bishop, prepare ...d5, and generate counterplay against White’s attack.', lines: [
-      ['e2e4','c7c5','g1f3','d7d6','d2d4','c5d4','f3d4','g8f6','b1c3','g7g6']
-    ]},
-    black_kings_indian: { id: 'black_kings_indian', name: 'King’s Indian Defense', side: 'b', risk: 'sharp', plan: 'Let White build a centre, then strike with ...e5 and a prepared kingside ...f5 break.', lines: [
-      ['d2d4','g8f6','c2c4','g7g6','b1c3','f8g7']
-    ]},
-    black_benoni: { id: 'black_benoni', name: 'Modern Benoni', side: 'b', risk: 'sharp', plan: 'Use an asymmetric structure, pressure White’s centre, and create counterplay with ...b5 or ...f5.', lines: [
-      ['d2d4','g8f6','c2c4','c7c5','d4d5','e7e6']
-    ]},
-    black_dutch: { id: 'black_dutch', name: 'Dutch Leningrad', side: 'b', risk: 'sharp', plan: 'Build the Leningrad structure, contest e4, and develop kingside pressure with ...e5 and ...f4 ideas.', lines: [
-      ['d2d4','f7f5'], ['c2c4','f7f5']
-    ]}
-  };
-  const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-
-  function repertoireState(fen, repertoire, playerColor) {
-    if (!repertoire || repertoire.id === 'none' || repertoire.side !== playerColor || !fen) return null;
-    const target = fen.split(' ').slice(0, 4).join(' ');
-    const nextMoves = new Set();
-    let matchedPly = 0;
-    for (const line of repertoire.lines || []) {
-      let cursor = START_FEN;
-      if (cursor.split(' ').slice(0, 4).join(' ') === target && line[0]) nextMoves.add(line[0]);
-      for (let index = 0; index < line.length; index++) {
-        cursor = applyMoveToFen(cursor, line[index]);
-        if (!cursor) break;
-        if (cursor.split(' ').slice(0, 4).join(' ') === target) {
-          matchedPly = Math.max(matchedPly, index + 1);
-          const next = line[index + 1];
-          if (next) nextMoves.add(next);
-        }
-      }
-    }
-    return matchedPly || nextMoves.size ? { id: repertoire.id, name: repertoire.name, plan: repertoire.plan, risk: repertoire.risk, matchedPly, nextMoves: [...nextMoves] } : null;
-  }
-
-  // ─── ECO Opening Database (externalised) ───────────────────────────
+  // Opening repertoires were removed. Style ranks legal engine candidates only.\n\n  // ─── ECO Opening Database (externalised) ───────────────────────────
   // Loaded asynchronously from engine/eco.json. Falls back to a minimal
   // inline set if the fetch fails (e.g. CSP, dev environment).
   const ECO_FALLBACK = [
@@ -1467,7 +1406,30 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     // authoritative; this cap is purely a symmetry safety net.
     const synergyCap = (style.sacrificeTolerance || 0) * 6;
     if (synergyCap > 0 && Number.isFinite(bonus)) bonus = Math.min(bonus, synergyCap);
+    const overlap = [
+      candidate.givesCheck,
+      candidate.kingPressureDelta > 0,
+      candidate.opensKingFile,
+      candidate.penetrationDelta > 0
+    ].filter(Boolean).length;
+    if (overlap >= 3 && bonus > 0) bonus /= (1 + (overlap - 2) * 0.12);
+    candidate.attackMomentum = (candidate.kingPressureDelta || 0) +
+      (candidate.penetrationDelta || 0) + (candidate.pawnStormDelta || 0);
     return bonus;
+  }
+
+  // Central style policy. Style may choose among objectively acceptable
+  // candidates. It may never override these facts.
+  function styleSafetyAllows(analysis, evalLoss, profile, objectiveBest) {
+    if (analysis?.invalid) return false;
+    if (!Number.isFinite(evalLoss)) return false;
+    if (objectiveBest?.pv?.scoreType === 'mate' && objectiveBest.score > 0) return evalLoss === 0;
+    if (profile.id !== 'normal' && analysis.ownKingTrapped) return false;
+    if (analysis.earlyKingHuntActive && analysis.earlyKingHuntUnsafe) return false;
+    const budget = riskBudgetFor(profile, objectiveBest?.score || 0);
+    if (evalLoss > budget) return false;
+    if (profile.id !== 'normal' && analysis.losingMate) return false;
+    return true;
   }
 
   function scoreMoveForStyle(uci, fen, rawScore, scoreType, style, playerColor) {
@@ -1610,35 +1572,14 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     const objectiveBest = objective[0];
 
     if (profile.id === 'normal' && !humanLikeMode) {
-      const repertoireMoves = new Set(context.repertoire?.nextMoves || []);
-      const bestScore = objectiveBest.score;
-      const bestIsWinningMate = objectiveBest.pv.scoreType === 'mate' && bestScore > 0;
-      // Repertoire moves are a soft preference only when they remain within
-      // half a pawn of the engine choice. A repertoire can never displace a
-      // forced mate with a centipawn line; among mating lines, keep the fastest.
-      const isSafeRepertoireMove = (entry) => {
-        if (!repertoireMoves.has(entry.pv.pv?.[0])) return false;
-        if (bestIsWinningMate) {
-          return entry.pv.scoreType === 'mate' && entry.score > 0 && Math.abs(entry.score) <= Math.abs(bestScore);
-        }
-        return bestScore - entry.score <= 50;
-      };
-      const ordered = repertoireMoves.size
-        ? [...objective].sort((left, right) => {
-            const leftPreferred = isSafeRepertoireMove(left);
-            const rightPreferred = isSafeRepertoireMove(right);
-            return Number(rightPreferred) - Number(leftPreferred) || right.utility - left.utility;
-          })
-        : objective;
-      return ordered.map((entry, rank) => ({
+      return objective.map((entry, rank) => ({
         ...entry.pv,
         _styleAnalysis: {
-          objectiveRank: objective.findIndex(candidate => candidate.index === entry.index) + 1,
+          objectiveRank: rank + 1,
           styleRank: rank + 1,
-          evalLoss: Math.max(0, bestScore - entry.score),
-          reasons: repertoireMoves.has(entry.pv.pv?.[0]) ? ['matches the active repertoire'] : ['objective best play'],
-          risks: [], mode: profile.id,
-          repertoireMove: repertoireMoves.has(entry.pv.pv?.[0])
+          evalLoss: Math.max(0, objectiveBest.score - entry.score),
+          reasons: ['objective best play'],
+          risks: [], mode: profile.id
         }
       }));
     }
@@ -1671,28 +1612,15 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
       analysis.evalLoss = evalLoss;
       analysis.objectiveRank = rank + 1;
       analysis.mode = profile.id;
-      const eligible = Number.isFinite(evalLoss) && (bestIsWinningMate ? evalLoss === 0 : evalLoss <= budget) &&
-        // H1 — Self-safety hard gate: a candidate that leaves our own
-        // king with zero legal escapes is refused outright (unless it is a
-        // mate-for-us or keeps the initiative). Normal keeps objective purity.
-        (profile.id === 'normal' || !analysis.ownKingTrapped) &&
-        // Early King Hunt accepts risk only when the line has a concrete
-        // attacking reason. A losing mate, trapped king, or unsupported
-        // high-risk sacrifice never becomes eligible merely because the
-        // checkbox is on.
-        (!analysis.earlyKingHuntActive || !analysis.earlyKingHuntUnsafe);
+      const eligible = styleSafetyAllows(analysis, evalLoss, profile, objectiveBest);
       const bonus = eligible ? candidateStyleBonus(analysis, profile) : -Infinity;
       // Aggressive is especially focused on converting quickly: objective cost
       // remains expensive, while checks and sustained forcing play can overcome it.
       const lossWeight = profile.id === 'normal' ? 1.5 : (profile.id === 'aggressive' ? 1.25 : 0.62);
-      const repertoireBonus = context.repertoire?.nextMoves?.includes(firstMove) ? 45 : 0;
-      const styleScore = eligible ? bonus - evalLoss * lossWeight + repertoireBonus : -Infinity;
-      analysis.repertoireMove = repertoireBonus > 0;
-      // C1 — Two-phase re-rank: among budget-eligible candidates, prefer the most
-      // aggressive on concrete attack facts before human-naturalness decides.
-      analysis.attackSubTotal = (analysis.kingPressureDelta || 0) +
-        (analysis.penetrationDelta || 0) + (analysis.pawnStormDelta || 0);
-      return { ...entry, analysis, eligible, bonus: bonus + repertoireBonus, styleScore };
+      const styleScore = eligible ? bonus - evalLoss * lossWeight : -Infinity;
+      analysis.attackSubTotal = analysis.attackMomentum ||
+        ((analysis.kingPressureDelta || 0) + (analysis.penetrationDelta || 0) + (analysis.pawnStormDelta || 0));
+      return { ...entry, analysis, eligible, bonus, styleScore };
     });
 
     let eligible = candidates.filter(candidate => candidate.eligible);
@@ -1798,13 +1726,12 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
   }
 
   // ─── Generate Hints (Main Entry) ───────────────────────────────────
-  function generateHints(analysisData, hintLevel, playerColor, style, openingRepertoire, humanLikeMode = false, humanContext = {}) {
+  function generateHints(analysisData, hintLevel, playerColor, style, _legacyRepertoire, humanLikeMode = false, humanContext = {}) {
     hintLevel = EXACT_HINT_LEVEL;
     const { fen, pvs, bestMove, source, tablebaseData, openingData } = analysisData;
     const position = assessPosition(fen);
     const isWhite = playerColor === 'w';
     const currentStyle = PLAYING_STYLES[style] || PLAYING_STYLES.normal;
-    const currentRepertoire = OPENING_REPERTOIRES[openingRepertoire] || OPENING_REPERTOIRES.none;
     const earlyKingHuntEnabled = earlyKingHuntRequested(currentStyle.id, humanContext.earlyKingHuntEnabled);
 
     // Apply the rebuilt, mate-safe style ranking. Normal also receives objective
@@ -1814,8 +1741,7 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
       : (pvs && pvs.length > 1 ? selectPVForStyle(pvs, fen, style, playerColor, humanLikeMode, {
         ...humanContext,
         earlyKingHuntEnabled,
-        openingData,
-        repertoire: repertoireState(fen, currentRepertoire, playerColor)
+        openingData
       }) : (pvs || []));
     if ((humanLikeMode || earlyKingHuntEnabled) && rankedPVs.length === 1 && !rankedPVs[0]._styleAnalysis) {
       const only = rankedPVs[0];
@@ -1832,7 +1758,7 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
       meta.limitedCandidates = true;
       candidateStyleBonus(meta, currentStyle);
       if (humanLikeMode) {
-        humanNaturalness(meta, currentStyle, { ...humanContext, openingData, repertoire: repertoireState(fen, currentRepertoire, playerColor) }, score);
+        humanNaturalness(meta, currentStyle, { ...humanContext, openingData }, score);
       }
       rankedPVs = [{ ...only, _styleAnalysis: meta }];
     }
@@ -1902,7 +1828,7 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     }
 
     // Exact-move-only primary hint.
-    hints.main = generateExactMoveHint(bestPV, position, evalScore, scoreType, playerColor, fen || '', currentStyle, currentRepertoire, analysisData.moveHistory);
+    hints.main = generateExactMoveHint(bestPV, position, evalScore, scoreType, playerColor, fen || '', currentStyle, null, analysisData.moveHistory);
 
     // Explain why the selected move fits the requested mode. This keeps lower
     // hint levels educational and gives exact/deep hints concrete compensation.
@@ -2088,12 +2014,6 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
         const distToKing = Math.abs(toCoords.row - oppKingPos.row) + Math.abs(toCoords.col - oppKingPos.col);
         if (distToKing <= 2) hint += ' | King hunt!';
       }
-    }
-
-    const state = repertoireState(fen, repertoire, playerColor);
-    if (state) {
-      const inBook = state.nextMoves.includes(uci);
-      hint += ` | ${inBook ? state.name + ' move' : state.name + ' plan'}: ${state.plan}`;
     }
 
     return hint;
@@ -2816,8 +2736,7 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     selectPVForStyle,
     analyzeCandidate,
     PLAYING_STYLES,
-    OPENING_REPERTOIRES,
-    repertoireState,
+    styleSafetyAllows,
     HINT_LEVELS,
     EXACT_HINT_LEVEL,
     resetSacrificeHistory,

@@ -1,4 +1,10 @@
-importScripts('engine/core-utils.js', 'engine/api-coordinator.js');
+importScripts(
+  'engine/core-utils.js',
+  'engine/api-coordinator.js',
+  'engine/analysis-contract.js',
+  'engine/analysis-policy.js',
+  'engine/local-engine.js'
+);
 
 /**
  * Chess Hint Assistant — Background Service Worker
@@ -21,18 +27,16 @@ const KEEPALIVE_ALARM_INTERVAL_MIN = 1;
 
 // ─── Default Settings ────────────────────────────────────────────────
 const DEFAULT_SETTINGS = {
-  cloudDepth: 5,
+  analysisQuality: 'auto',
+  candidateLines: 'auto',
   style: 'normal',
   // Style-scoped preference; the side panel and hint engine require the exact
   // Ultra Super Aggressive style before honoring this flag.
   earlyKingHuntEnabled: false,
   humanLikeMode: false,
-  whiteRepertoire: 'none',
-  blackRepertoire: 'none',
   autoAnalyze: true,
   showThreats: true,
   showCriticalMoments: true,
-  depthTarget: 0,                  // 0 = no minimum; otherwise min depth for exact hints
   // These gate background fetching that feeds opening names and tablebase-backed plans.
   showOpeningExplorer: true,
   showTablebase: true,
@@ -44,20 +48,19 @@ const DEFAULT_SETTINGS = {
 
 function normalizeSettings(value = {}) {
   const candidate = value && typeof value === 'object' ? value : {};
+  const migrated = AnalysisPolicy.migrateLegacySettings(candidate);
   const booleanKeys = [
     'humanLikeMode', 'earlyKingHuntEnabled', 'autoAnalyze', 'showThreats',
     'showCriticalMoments', 'showOpeningExplorer', 'showTablebase',
     'useChessApi', 'useLichessCloud', 'useMastersExplorer'
   ];
   const normalized = { ...DEFAULT_SETTINGS };
-  normalized.cloudDepth = ChessCore.clampNumber(candidate.cloudDepth, 1, 10, DEFAULT_SETTINGS.cloudDepth);
-  normalized.depthTarget = ChessCore.clampNumber(candidate.depthTarget, 0, 40, DEFAULT_SETTINGS.depthTarget);
-  normalized.style = ['normal', 'aggressive', 'super_ultra_aggressive'].includes(candidate.style)
-    ? candidate.style
+  normalized.analysisQuality = AnalysisPolicy.normalizeQuality(migrated.analysisQuality);
+  normalized.candidateLines = AnalysisPolicy.normalizeCandidateLines(migrated.candidateLines);
+  normalized.style = ['normal', 'aggressive', 'super_ultra_aggressive'].includes(migrated.style)
+    ? migrated.style
     : DEFAULT_SETTINGS.style;
-  normalized.whiteRepertoire = typeof candidate.whiteRepertoire === 'string' ? candidate.whiteRepertoire : DEFAULT_SETTINGS.whiteRepertoire;
-  normalized.blackRepertoire = typeof candidate.blackRepertoire === 'string' ? candidate.blackRepertoire : DEFAULT_SETTINGS.blackRepertoire;
-  for (const key of booleanKeys) normalized[key] = typeof candidate[key] === 'boolean' ? candidate[key] : DEFAULT_SETTINGS[key];
+  for (const key of booleanKeys) normalized[key] = typeof migrated[key] === 'boolean' ? migrated[key] : DEFAULT_SETTINGS[key];
   return normalized;
 }
 
@@ -461,12 +464,13 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // ─── Cloud API #1: Chess-API.com ─────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
 async function chessApiEval(fen, multiPv = 3, depth = 12, context = {}) {
+  const thinkMs = Number(context.maxThinkingTime) || 100;
   const cacheKey = analysisCacheKey('chess-api', fen, multiPv, depth);
   const outcome = await apiCoordinator.request({
     provider: 'chessApi',
     endpointClass: 'analysis',
     cacheKey,
-    requestKey: `variants=${Math.min(5, multiPv)}:depth=${depth}`,
+    requestKey: `variants=${Math.min(5, multiPv)}:depth=${depth}:time=${thinkMs}`,
     priority: context.priority || 'current-player-turn',
     positionToken: context.positionToken,
     refresh: Boolean(context.refresh),
@@ -480,7 +484,7 @@ async function chessApiEval(fen, multiPv = 3, depth = 12, context = {}) {
         fen,
         variants: Math.max(1, Math.min(5, multiPv)),
         depth,
-        maxThinkingTime: 100
+        maxThinkingTime: thinkMs
       }),
       timeoutMs: 18000
     },
@@ -888,8 +892,8 @@ function clampMultiPvForSource(source, multiPv) {
   return Math.max(1, Math.min(5, Number(multiPv) || 3));
 }
 
-async function getCachedAnalysisSource(source, fen, multiPv) {
-  const depth = source === 'chess-api' ? 12 : 0;
+async function getCachedAnalysisSource(source, fen, multiPv, depthHint = 0) {
+  const depth = source === 'chess-api' ? (depthHint || 12) : 0;
   const cacheKey = analysisCacheKey(source, fen, clampMultiPvForSource(source, multiPv), depth);
   const provider = source === 'chess-api' ? 'chessApi'
     : source === 'lichess-cloud' ? 'lichessCloud'
@@ -906,10 +910,34 @@ async function getCachedAnalysisSource(source, fen, multiPv) {
 }
 
 async function callAnalysisSource(source, fen, multiPv, context) {
-  if (source === 'chess-api') return chessApiEval(fen, multiPv, 12, context);
+  if (source === 'chess-api') {
+    return chessApiEval(fen, multiPv, context.chessApiDepth || 12, context);
+  }
   if (source === 'lichess-cloud') return lichessCloudEval(fen, multiPv, context);
   if (source === 'masters-explorer') return lichessMastersEval(fen, multiPv, context);
   return null;
+}
+
+function sealAnalysis(raw, fen, extras = {}) {
+  if (!raw || raw.error) return raw;
+  const sealed = AnalysisContract.finalizeAnalysis(raw, fen, extras);
+  if (!sealed.pvs?.length) return null;
+  return AnalysisPolicy.attachQuality(sealed, extras);
+}
+
+function runLocalAnalysis(fen, multiPv, profile) {
+  if (!globalThis.LocalEngine || typeof LocalEngine.analyze !== 'function') return null;
+  try {
+    const raw = LocalEngine.analyze(fen, {
+      multiPv,
+      maxDepth: profile.localDepth,
+      timeMs: profile.localTimeMs
+    });
+    return raw ? sealAnalysis(raw, fen, { source: 'local-engine', qualityClass: AnalysisPolicy.qualityClassFor(raw) }) : null;
+  } catch (error) {
+    console.warn('[Background] Local engine failed:', error?.message || error);
+    return null;
+  }
 }
 
 function providerForAnalysisSource(source) {
@@ -940,9 +968,9 @@ function rankAnalysisSources(sourceOrder, context) {
     .sort((left, right) => left.score - right.score || left.semanticIndex - right.semanticIndex);
 }
 
-async function findCachedAnalysisFallback(sourceOrder, fen, multiPv) {
+async function findCachedAnalysisFallback(sourceOrder, fen, multiPv, depthHint = 0) {
   for (const source of sourceOrder) {
-    const cached = await getCachedAnalysisSource(source, fen, multiPv);
+    const cached = await getCachedAnalysisSource(source, fen, multiPv, depthHint);
     if (cached) return { result: cached, source };
   }
   return null;
@@ -1029,7 +1057,8 @@ async function performCloudAnalysis(fen, playerColor, options = {}) {
 }
 
 async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
-  const multiPv = options.multiPv || 3;
+  const settingsEarly = options.settings || null;
+  const multiPv = AnalysisPolicy.clampProviderLines(options.multiPv || 3);
   const positionToken = options.positionToken || registerPosition(fen, options.tabId || 'active');
   await apiCoordinator.ready;
   if (!hasRecentPanelActivity(options.tabId || positionToken?.tabId || 'active')) {
@@ -1040,11 +1069,21 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
       errorDetail: { type: 'inactive_panel', message: 'Analysis paused because the panel is not active.', suggestion: 'none' }
     };
   }
-  const settings = await new Promise(resolve =>
+  const settings = settingsEarly || await new Promise(resolve =>
     chrome.storage.local.get('settings', result => resolve(normalizeSettings(result.settings)))
   );
+  const quality = AnalysisPolicy.resolveQuality(settings, {
+    earlyKingHunt: settings.style === 'super_ultra_aggressive' && settings.earlyKingHuntEnabled === true
+  });
+  const chessApiParams = AnalysisPolicy.chessApiRequestParams(quality, multiPv);
   const priority = options.refresh ? 'manual-current-position' : 'current-player-turn';
-  const context = { positionToken, refresh: Boolean(options.refresh), priority };
+  const context = {
+    positionToken,
+    refresh: Boolean(options.refresh),
+    priority,
+    chessApiDepth: chessApiParams.depth,
+    maxThinkingTime: chessApiParams.maxThinkingTime
+  };
   // A board-placement snapshot cannot reliably encode castling, en-passant, or
   // move counters. Keep regular engine analysis available, but never use it
   // for state-sensitive databases until the site supplied an authoritative FEN.
@@ -1067,7 +1106,17 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
       result.playerColor = playerColor;
       result.cached = Boolean(tbResult.cached);
       result.stale = Boolean(tbResult.stale);
-      return result;
+      const sealed = sealAnalysis(result, fen, {
+        source: 'tablebase',
+        qualityClass: 'perfect',
+        positionReliable: hasReliablePositionMetadata
+      });
+      if (sealed) {
+        sealed.tablebaseData = tbResult;
+        sealed.moveHistory = options.moveHistory || [];
+        sealed.playerColor = playerColor;
+        return sealed;
+      }
     }
   }
 
@@ -1108,7 +1157,7 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
           }
         }
       }
-      const cached = await getCachedAnalysisSource(source, fen, multiPv);
+      const cached = await getCachedAnalysisSource(source, fen, multiPv, chessApiParams.depth);
       if (cached) {
         bestResult = cached;
         usedSource = source;
@@ -1151,7 +1200,7 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
   if (!bestResult) {
     // Refresh is advisory: if every compliant provider path failed, preserve
     // continuity with any usable fresh or stale result before surfacing error.
-    const fallback = await findCachedAnalysisFallback(sourceOrder, fen, multiPv);
+    const fallback = await findCachedAnalysisFallback(sourceOrder, fen, multiPv, chessApiParams.depth);
     if (fallback) {
       bestResult = fallback.result;
       usedSource = fallback.source;
@@ -1160,6 +1209,12 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
   }
 
   if (!bestResult) {
+    const localFallback = runLocalAnalysis(fen, multiPv, quality);
+    if (localFallback) {
+      localFallback.playerColor = playerColor;
+      localFallback.moveHistory = options.moveHistory || [];
+      return localFallback;
+    }
     return {
       error: true,
       fen,
@@ -1174,6 +1229,43 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
   bestResult.fen = fen;
   bestResult.playerColor = playerColor;
   bestResult.moveHistory = options.moveHistory || [];
+
+  const sealedPrimary = sealAnalysis(bestResult, fen, {
+    source: usedSource,
+    stale: Boolean(bestResult.stale),
+    cached: Boolean(bestResult.cached),
+    cacheAgeMs: bestResult.cacheAgeMs,
+    positionReliable: hasReliablePositionMetadata,
+    scorePerspective: bestResult.scorePerspective || 'white'
+  });
+  if (!sealedPrimary) {
+    const localRescue = runLocalAnalysis(fen, multiPv, quality);
+    if (localRescue) {
+      localRescue.playerColor = playerColor;
+      localRescue.moveHistory = options.moveHistory || [];
+      return localRescue;
+    }
+    return {
+      error: true,
+      fen,
+      playerColor,
+      errorDetail: { type: 'invalid_analysis', message: 'Provider result failed legal-move validation.', suggestion: 'retry' },
+      moveHistory: options.moveHistory || []
+    };
+  }
+  bestResult = sealedPrimary;
+  usedSource = bestResult.source;
+
+  if (AnalysisPolicy.shouldReplaceHumanWithEngine(bestResult, fen, settings)) {
+    const localOverride = runLocalAnalysis(fen, multiPv, quality);
+    if (localOverride?.pvs?.length) {
+      localOverride.openingData = bestResult.openingData || openingDataFromMastersResult(bestResult);
+      localOverride.playerColor = playerColor;
+      localOverride.moveHistory = options.moveHistory || [];
+      localOverride.humanContext = { source: usedSource, qualityClass: bestResult.qualityClass };
+      return localOverride;
+    }
+  }
 
   // Use cached opening data immediately. A remote enrichment is allowed only
   // for a current, plausible opening while the panel feature is enabled and
@@ -1400,7 +1492,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       const effectiveHintLevel = 5;
+      const quality = AnalysisPolicy.resolveQuality(settings, {
+        earlyKingHunt: settings.style === 'super_ultra_aggressive' && settings.earlyKingHuntEnabled === true
+      });
+      const resolvedMultiPv = AnalysisPolicy.resolveMultiPv(settings, {
+        earlyKingHunt: settings.style === 'super_ultra_aggressive' && settings.earlyKingHuntEnabled === true
+      });
       let exactHintBlocked = null;
+      if (message.positionReliable !== true) {
+        exactHintBlocked = {
+          reason: 'unreliable_position',
+          message: 'Exact-move hints need a verified FEN. This board snapshot is incomplete.'
+        };
+      }
 
       // Refresh is deliberately non-destructive: caches, cooldowns, quotas and
       // passive health remain intact. The coordinator decides whether the
@@ -1434,7 +1538,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       turnState.analysisInProgress = true;
 
       performCloudAnalysis(message.fen, assistedPlayerColor, {
-        multiPv: message.multiPv || settings.cloudDepth || 3,
+        multiPv: resolvedMultiPv,
+        settings,
+        quality,
         moveHistory: message.gameInfo?.moveHistory || [],
         refresh: Boolean(message.refresh),
         positionToken,
@@ -1449,17 +1555,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           turnState.consecutiveFailures = 0;
 
           cloudResult.hintLevel = effectiveHintLevel;
-
-          // Exact-only mode has no lower-detail fallback. Guards withhold the
-          // move rather than leaking it through a downgraded hint level.
-          const depthTarget = settings.depthTarget || 0;
-          if (!exactHintBlocked && depthTarget > 0) {
-            const actualDepth = cloudResult.depth || 0;
-            if (actualDepth < depthTarget && actualDepth < 100) {
-              exactHintBlocked = { reason: 'depth_target', message: `Exact-move hints require depth ${depthTarget}; current depth is ${actualDepth}.` };
-            }
+          cloudResult.analysisQuality = quality.id;
+          cloudResult.requestedMultiPv = resolvedMultiPv;
+          if (!cloudResult.qualityClass) {
+            AnalysisPolicy.attachQuality(cloudResult, { positionReliable: message.positionReliable === true });
           }
-
+          if (!exactHintBlocked && cloudResult.qualityClass === 'unreliable') {
+            exactHintBlocked = {
+              reason: 'unreliable_position',
+              message: 'Exact-move hints need a verified FEN. This board snapshot is incomplete.'
+            };
+          }
           cloudResult.exactHintBlocked = exactHintBlocked;
 
           // Record the engine's first-choice move so that when the
@@ -1650,20 +1756,18 @@ chrome.runtime.onInstalled.addListener(() => {
       if (s.earlyKingHuntEnabled === undefined) { s.earlyKingHuntEnabled = false; updated = true; }
       else if (typeof s.earlyKingHuntEnabled !== 'boolean') { s.earlyKingHuntEnabled = Boolean(s.earlyKingHuntEnabled); updated = true; }
       if (s.hintLevel !== undefined) { delete s.hintLevel; updated = true; }
-      if (s.repertoire !== undefined) {
-        // Preserve a legacy repertoire as the equivalent White selection.
-        if (s.whiteRepertoire === undefined) s.whiteRepertoire = s.repertoire;
-        delete s.repertoire;
-        updated = true;
-      }
-      if (s.whiteRepertoire === undefined) { s.whiteRepertoire = 'none'; updated = true; }
-      if (s.blackRepertoire === undefined) { s.blackRepertoire = 'none'; updated = true; }
+      if (s.repertoire !== undefined) { delete s.repertoire; updated = true; }
+      if (s.whiteRepertoire !== undefined) { delete s.whiteRepertoire; updated = true; }
+      if (s.blackRepertoire !== undefined) { delete s.blackRepertoire; updated = true; }
       for (const obsolete of ['coachModeEnabled', 'coachModeMaxHints']) {
         if (s[obsolete] !== undefined) { delete s[obsolete]; updated = true; }
       }
 
-      // Ensure new fields exist on migrated settings
-      if (s.depthTarget === undefined) { s.depthTarget = 0; updated = true; }
+      const migratedQuality = AnalysisPolicy.migrateLegacySettings(s);
+      if (s.analysisQuality !== migratedQuality.analysisQuality) { s.analysisQuality = migratedQuality.analysisQuality; updated = true; }
+      if (s.candidateLines !== migratedQuality.candidateLines) { s.candidateLines = migratedQuality.candidateLines; updated = true; }
+      if (s.depthTarget !== undefined) { delete s.depthTarget; updated = true; }
+      if (s.cloudDepth !== undefined) { delete s.cloudDepth; updated = true; }
       if (s.correlationThreshold !== undefined) { delete s.correlationThreshold; updated = true; }
       if (s.useChessApi === undefined) { s.useChessApi = true; updated = true; }
       if (s.useLichessCloud === undefined) { s.useLichessCloud = true; updated = true; }

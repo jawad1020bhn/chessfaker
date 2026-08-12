@@ -127,6 +127,7 @@
         <section id="position-info" class="position-info" aria-label="Position information">
           <div class="info-row"><span class="info-label">Opening</span><span id="opening-name" class="info-value">&ndash;</span></div>
           <div class="info-row"><span class="info-label">Phase</span><span id="game-phase" class="info-value">&ndash;</span></div>
+          <div class="info-row"><span class="info-label">Quality</span><span id="analysis-quality" class="info-value">&ndash;</span></div>
           <div class="info-row"><span class="info-label">Material</span><span id="material-balance" class="info-value">Equal</span></div>
           <div class="info-row"><span class="info-label">Sensible moves</span><span id="correlation-stat" class="info-value" title="Human-like play guard: share of your moves that played naturally rather than blindly copying the engine's exact top pick. Keep this high to stay fair-play safe.">0 / 0 (0%)</span></div>
         </section>
@@ -157,32 +158,27 @@
 
       <div class="settings-body">
 
-        <!-- Engine & Depth -->
-        <div class="setting-section-title">Analysis depth</div>
+        <!-- Analysis quality -->
+        <div class="setting-section-title">Analysis quality</div>
         <div class="setting-group">
-          <label for="setting-cloud-depth">Candidate lines</label>
-          <select id="setting-cloud-depth">
-            <option value="1">1 line (fastest)</option>
-            <option value="2">2 lines</option>
-            <option value="3">3 lines</option>
-            <option value="5" selected>5 lines (recommended)</option>
-            <option value="7">7 lines</option>
-            <option value="10">10 lines (max)</option>
+          <label for="setting-analysis-quality">Quality</label>
+          <select id="setting-analysis-quality">
+            <option value="auto" selected>Auto (recommended)</option>
+            <option value="fast">Fast</option>
+            <option value="balanced">Balanced</option>
+            <option value="deep">Deep</option>
           </select>
-          <div class="setting-hint">More lines shows more alternative moves to compare.</div>
+          <div class="setting-hint">Chooses source-specific effort: engine depth or time, cloud confidence, opening statistics, or tablebase. Auto never withholds a useful result just because a depth number is low.</div>
         </div>
 
         <div class="setting-group">
-          <label for="setting-depth-target">Minimum depth target</label>
-          <select id="setting-depth-target">
-            <option value="0" selected>No minimum (any depth)</option>
-            <option value="15">15 (basic)</option>
-            <option value="20">20 (standard)</option>
-            <option value="25">25 (strong)</option>
-            <option value="30">30 (deep)</option>
-            <option value="40">40 (deepest)</option>
+          <label for="setting-candidate-lines">Candidate lines</label>
+          <select id="setting-candidate-lines">
+            <option value="auto" selected>Auto (by style)</option>
+            <option value="3">3 lines</option>
+            <option value="5">5 lines (provider maximum)</option>
           </select>
-          <div class="setting-hint">Shows exact-move hints only after the engine reaches this depth. Filters out shallow cached evaluations.</div>
+          <div class="setting-hint">Auto uses 1–2 lines for Normal, 3 for Aggressive, and 5 for Ultra Super Aggressive or Early King Hunt. Providers cannot return more than 5 lines.</div>
         </div>
 
         <!-- Playing Style -->
@@ -217,30 +213,6 @@
             <button type="button" class="human-mode-opt" data-mode="on" role="radio" aria-checked="false">Human</button>
             <span class="human-mode-thumb" aria-hidden="true"></span>
           </div>
-        </div>
-
-        <div class="setting-group">
-          <label for="setting-white-repertoire">White attacking repertoire</label>
-          <select id="setting-white-repertoire">
-            <option value="none" selected>No preference</option>
-            <option value="white_scotch_evans">Scotch / Evans Gambit, sharp</option>
-            <option value="white_smith_morra">Smith–Morra Gambit, sharp</option>
-            <option value="white_milner_barry">Milner–Barry Gambit, sharp</option>
-            <option value="white_panov">Panov Attack: sound aggressive</option>
-            <option value="white_austrian">Austrian Attack: sound aggressive</option>
-          </select>
-        </div>
-        <div class="setting-group">
-          <label for="setting-black-repertoire">Black attacking repertoire</label>
-          <select id="setting-black-repertoire">
-            <option value="none" selected>No preference</option>
-            <option value="black_najdorf">Sicilian Najdorf, sharp</option>
-            <option value="black_dragon">Sicilian Dragon, sharp</option>
-            <option value="black_kings_indian">King's Indian Defense, sharp</option>
-            <option value="black_benoni">Modern Benoni, sharp</option>
-            <option value="black_dutch">Dutch Leningrad, sharp</option>
-          </select>
-          <div class="setting-hint">A soft preference: the engine keeps mate safety and never forces a move that loses more than half a pawn.</div>
         </div>
 
         <!-- Analysis Sources -->

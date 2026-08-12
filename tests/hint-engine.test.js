@@ -26,19 +26,8 @@ const engine = sandbox.window.ChessHintEngine;
 const start = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 assert.equal(engine.uciToSan('e2e4', start), 'e4');
 assert.equal(engine.applyMoveToFen(start, 'e2e4'), 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1');
-const morra = engine.OPENING_REPERTOIRES.white_smith_morra;
-const morraStart = engine.repertoireState(start, morra, 'w');
-assert.deepEqual(JSON.parse(JSON.stringify(morraStart.nextMoves)), ['e2e4']);
-const afterSicilian = engine.applyMoveToFen(engine.applyMoveToFen(start, 'e2e4'), 'c7c5');
-const morraReply = engine.repertoireState(afterSicilian, morra, 'w');
-assert.ok(morraReply.nextMoves.includes('d2d4'), 'repertoire matches a known branch from the current FEN');
-assert.equal(engine.repertoireState(afterSicilian, morra, 'b'), null, 'a White repertoire never activates for Black');
-const repertoirePvs = [
-  { score: 30, scoreType: 'cp', depth: 20, pv: ['d2d4'] },
-  { score: 10, scoreType: 'cp', depth: 20, pv: ['e2e4'] }
-];
-const repertoireRanked = engine.selectPVForStyle(repertoirePvs, start, 'normal', 'w', false, { repertoire: morraStart });
-assert.equal(repertoireRanked[0].pv[0], 'e2e4', 'a repertoire move within the half-pawn safety budget is preferred');
+assert.equal(engine.OPENING_REPERTOIRES, undefined, 'attacking repertoires are removed from the engine API');
+assert.equal(typeof engine.styleSafetyAllows, 'function');
 
 const castleCheck = '5k2/8/8/8/8/8/8/4K2R w K - 0 1';
 assert.equal(engine.uciToSan('e1g1', castleCheck), 'O-O+');
@@ -134,15 +123,14 @@ const onePvHumanHint = engine.generateHints({ fen: naturalFen, pvs: [naturalDeve
 assert.doesNotMatch(onePvHumanHint.main, /^Human choice:/, 'human-like hint leads with the move, not a style label');
 assert.match(onePvHumanHint.main, /^[a-hNBRQK]/);
 assert.equal(onePvHumanHint.styleAnalysis.limitedCandidates, true);
-// A repertoire preference must never replace a forced mate with a non-mating line.
+// Style policy must never replace a forced mate with a non-mating line.
 const forcedMateFen = '6k1/5Q2/6K1/8/8/8/8/8 w - - 0 1';
 const forcedMatePv = { score: 1, scoreType: 'mate', depth: 28, pv: ['f7g7'] };
-const highCpRepertoirePv = { score: 900, scoreType: 'cp', depth: 28, pv: ['f7f8'] };
-const mateSafeRepertoire = engine.selectPVForStyle(
-  [forcedMatePv, highCpRepertoirePv], forcedMateFen, 'normal', 'w', false,
-  { repertoire: { nextMoves: ['f7f8'] } }
+const highCpOtherPv = { score: 900, scoreType: 'cp', depth: 28, pv: ['f7f8'] };
+const mateSafe = engine.selectPVForStyle(
+  [forcedMatePv, highCpOtherPv], forcedMateFen, 'normal', 'w', false
 );
-assert.equal(mateSafeRepertoire[0].pv[0], 'f7g7', 'a repertoire line cannot displace a forced mate');
+assert.equal(mateSafe[0].pv[0], 'f7g7', 'style policy cannot displace a forced mate');
 
 // Chaos Attack should recognize concrete attack features instead of only checks.
 const stormFen = '6k1/6pp/6P1/5P2/8/8/6PP/6K1 w - - 0 1';

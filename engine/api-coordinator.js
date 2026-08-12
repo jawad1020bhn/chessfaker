@@ -94,11 +94,14 @@
       'lichess-cloud': enabled.lichessCloud,
       'masters-explorer': enabled.mastersExplorer
     };
+    const analysisSources = preferredSources.filter(source => providerEnabled[source]);
     return {
       tablebaseEligible,
       openingEligible,
       earlyOpening,
-      analysisSources: preferredSources.filter(source => providerEnabled[source])
+      analysisSources,
+      engineSources: analysisSources.filter(source => source === 'chess-api' || source === 'lichess-cloud'),
+      humanSources: analysisSources.filter(source => source === 'masters-explorer')
     };
   }
 

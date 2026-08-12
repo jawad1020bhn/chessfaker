@@ -948,7 +948,24 @@
       add(candidate.attackerTradeOff, 'attackerTradePenalty', weights.attackerTradePenalty,
         'bargains away an attacker for a mere tempo');
 
-      return amount;
+      return calibrateAttackScore(amount, candidate, weights);
+    }
+
+    function calibrateAttackScore(raw, candidate, weights) {
+      const overlap = [
+        candidate.givesCheck,
+        candidate.kingPressureDelta > 0,
+        candidate.opensKingFile,
+        candidate.contactCheck,
+        candidate.penetrationDelta > 0
+      ].filter(Boolean).length;
+      const damped = overlap >= 3 ? raw / (1 + (overlap - 2) * 0.14) : raw;
+      const sacrificeCap = Math.max(220, Math.abs(weights.soundSacrifice || 300) + Math.abs(weights.speculativeSacrifice || 180));
+      const afterSacrifice = candidate.sacrifice ? Math.min(damped, sacrificeCap + Math.abs(raw) * 0.15) : damped;
+      const opening = candidate.fen && detectGamePhase(candidate.fen) === 'opening';
+      const phaseCap = opening ? 820 : 980;
+      candidate.attackMomentum = Math.round(Math.max(0, overlap));
+      return Math.max(-420, Math.min(phaseCap, Math.round(afterSacrifice)));
     }
 
     // ── Human-like coach (attacker rewards) ───────────────────────────
