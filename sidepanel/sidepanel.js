@@ -104,6 +104,8 @@
     evalBarBlack: $('#eval-bar-black'),
     evalBarWhite: $('#eval-bar-white'),
     evalBar: $('#eval-bar'),
+    evalSection: $('#eval-section'),
+    evalScore: $('#eval-score'),
     evalWhiteLabel: $('#eval-white-label'),
     evalBlackLabel: $('#eval-black-label'),
     evalDescription: $('#eval-description'),
@@ -118,8 +120,6 @@
     ideaSection: $('#idea-section'),
     ideaList: $('#idea-list'),
     hintCard: $('#hint-card'),
-    threatPill: $('#threat-pill'),
-    threatPillText: $('#threat-pill-text'),
     moveClassSection: $('#move-class-section'),
     moveClassDisplay: $('#move-class-display'),
     settingsPanel: $('#settings-panel'),
@@ -581,7 +581,7 @@
         handler(val);
         const savePromise = saveSettings();
         applySettingsToUI();
-        if ((id === 'setting-style' || id === 'setting-human-like-mode' || id === 'setting-early-king-hunt') && lastAnalysis) {
+        if ((id === 'setting-style' || id === 'setting-human-like-mode' || id === 'setting-early-king-hunt' || id === 'setting-show-threats') && lastAnalysis) {
           humanPlanState = null;
           renderAnalysis(lastAnalysis);
         }
@@ -1095,8 +1095,17 @@
       const evalPawns = scoreType === 'mate'
         ? (displayScore > 0 ? 10 : -10) * Math.sign(displayScore || 1)
         : score / 100;
+      const pct = Math.round(winPct * 100);
+      dom.evalBar.style.setProperty('--eval-pct', String(pct));
       dom.evalBar.setAttribute('aria-valuenow', String(Math.max(-10, Math.min(10, evalPawns))));
       dom.evalBar.setAttribute('aria-valuetext', `${scoreStr} for ${isWhite ? 'White' : 'Black'}`);
+    }
+    if (dom.evalScore) dom.evalScore.textContent = scoreStr;
+    if (dom.evalSection) {
+      const lean = scoreType === 'mate'
+        ? (displayScore > 0 ? 'you' : 'opp')
+        : (displayScore > 30 ? 'you' : (displayScore < -30 ? 'opp' : 'even'));
+      dom.evalSection.dataset.lean = lean;
     }
     if (dom.evalWhiteLabel) dom.evalWhiteLabel.textContent = isWhite ? scoreStr : oppStr;
     if (dom.evalBlackLabel) dom.evalBlackLabel.textContent = isWhite ? oppStr : scoreStr;
@@ -1205,7 +1214,7 @@
   // ─── Caption rail ("Why this move") ────────────────────────────────
   // The hero shows only the move. Every supporting sentence the engine
   // produces travels as a caption item and renders here, outside the hero.
-  const IDEA_KINDS = new Set(['idea', 'capture', 'sacrifice', 'cost', 'risk', 'kinghunt', 'posture']);
+  const IDEA_KINDS = new Set(['idea', 'capture', 'sacrifice', 'cost', 'risk', 'kinghunt', 'posture', 'reply']);
 
   function renderIdeaRail(captions) {
     if (!dom.ideaSection || !dom.ideaList) return;
@@ -1320,7 +1329,22 @@
       setTimeout(() => dom.hintText.classList.remove('fade-in'), 300);
     }
 
-    renderIdeaRail(hints.captions);
+    const captions = Array.isArray(hints.captions) ? hints.captions.slice() : [];
+    if (settings.showThreats && hints.threat) {
+      const alreadyCaptioned = captions.some((caption) => caption.kind === 'reply');
+      if (!alreadyCaptioned) {
+        captions.push({
+          kind: 'reply',
+          label: hints.threatLabel || 'Best reply',
+          text: hints.threat
+        });
+      }
+    } else {
+      for (let i = captions.length - 1; i >= 0; i--) {
+        if (captions[i].kind === 'reply') captions.splice(i, 1);
+      }
+    }
+    renderIdeaRail(captions);
 
     if (dom.hintFromTo) {
       if (hints.bestMoveFromTo) {
@@ -1341,29 +1365,28 @@
       dom.hintCard.className = 'hint-card exact-move' + styleClass + humanClass;
     }
 
-    if (dom.threatPill && dom.threatPillText) {
-      if (settings.showThreats && hints.threat) {
-        dom.threatPillText.textContent = hints.threat;
-        dom.threatPill.style.display = 'flex';
-      } else {
-        dom.threatPill.style.display = 'none';
-        dom.threatPillText.textContent = '';
-      }
-    }
-
   }
 
   function renderMoveClassification(evalBefore, evalAfter, opts) {
     if (!dom.moveClassSection || !dom.moveClassDisplay) return;
     const cls = window.ChessHintEngine.classifyMove(evalBefore, evalAfter, opts || {});
     const classKey = cls.label.toLowerCase();
-    const lost = cls.winChanceLost > 0 ? `Win −${cls.winChanceLost}%` : (cls.winChanceGained > 0 ? `Win +${cls.winChanceGained}%` : '');
+    const swing = cls.winChanceLost > 0
+      ? `Win −${cls.winChanceLost}%`
+      : (cls.winChanceGained > 0 ? `Win +${cls.winChanceGained}%` : 'Held the evaluation');
+    const acc = clamp(cls.accuracy, 0, 100, 0);
+    dom.moveClassSection.dataset.verdict = classKey;
     dom.moveClassDisplay.innerHTML = `
-      <div class="class-main">
-        <span class="class-badge class-${classKey}">${h(cls.label)} ${h(cls.symbol)}</span>
-        <span class="class-accuracy" title="Engine accuracy estimate for this move (0-100)">Acc ${h(cls.accuracy)}</span>
+      <div class="md-verdict__copy class-main">
+        <p class="md-verdict__label class-badge class-${classKey}">${h(cls.label)}${cls.symbol ? ` ${h(cls.symbol)}` : ''}</p>
+        <p class="md-verdict__metric class-metric">${h(swing)}</p>
       </div>
-      ${lost ? `<span class="class-metric">${h(lost)}</span>` : ''}
+      <div class="md-verdict__ring" style="--acc: ${acc}" title="Engine accuracy estimate for this move (0-100)" aria-label="Accuracy ${acc}">
+        <span class="md-verdict__ring-stack">
+          <span class="md-verdict__ring-val class-accuracy">${h(acc)}</span>
+          <span class="md-verdict__ring-cap">acc</span>
+        </span>
+      </div>
     `;
     dom.moveClassSection.style.display = 'block';
   }

@@ -57,7 +57,21 @@
       case 'request_analysis':
         // Simulate provider latency, then push an analysis_update like background.js does
         await delay(600);
-        dispatch({ type: 'analysis_update', data: mockAnalysis(message.fen || PREVIEW_FEN) });
+        const fen = message.fen || PREVIEW_FEN;
+        // A quieter first snapshot, then the mate net — so Last move can
+        // classify the swing (Brilliant) in the preview.
+        dispatch({
+          type: 'analysis_update',
+          data: {
+            ...mockAnalysis(fen),
+            pvs: [
+              { score: 40, scoreType: 'cp', depth: 18, pv: ['b1c3'] },
+              { score: 20, scoreType: 'cp', depth: 18, pv: ['d2d3'] }
+            ]
+          }
+        });
+        await delay(480);
+        dispatch({ type: 'analysis_update', data: mockAnalysis(fen) });
         return null;
       case 'health_check':
         return {};

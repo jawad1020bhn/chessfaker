@@ -91,6 +91,7 @@
   --md-icon-flag: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M14.4 6 14 4H5v17h2v-7h5.6l.4 2h7V6Z'/%3E%3C/svg%3E");
   --md-icon-trend-down: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='m16 18 2.29-2.29-4.88-4.88-4 4L2 7.41 3.41 6l6 6 4-4 5.88 5.88L22 11.17V18h-6Z'/%3E%3C/svg%3E");
   --md-icon-info: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm1 15h-2v-6h2v6Zm0-8h-2V9h2V7Z'/%3E%3C/svg%3E");
+  --md-icon-reply: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z'/%3E%3C/svg%3E");
 
   /* Chess-piece identity neutrals — theme-independent on purpose. */
   --md-piece-light: #f7f4ee;
@@ -642,6 +643,11 @@ body {
   --idea-role-fg: var(--md-sys-color-on-error-container);
 }
 .md-idea__row--posture { --idea-icon: var(--md-icon-info); }
+.md-idea__row--reply {
+  --idea-icon: var(--md-icon-reply);
+  --idea-role-bg: var(--md-sys-color-tertiary-container);
+  --idea-role-fg: var(--md-sys-color-on-tertiary-container);
+}
 .md-idea__texts { display: flex; flex-direction: column; gap: 1px; min-width: 0; padding-top: 1px; }
 .md-idea__label { font-size: 0.8125rem; font-weight: 700; line-height: 1.3; }
 .md-idea__body {
@@ -659,33 +665,133 @@ body {
 }
 .md-card h2 { margin-bottom: var(--md-sys-space-2); color: var(--md-sys-color-on-surface); }
 
-/* ── Eval ── */
-.md-eval__head { display: flex; flex-direction: column; gap: 2px; margin-bottom: var(--md-sys-space-3); }
-.eval-description { color: var(--md-sys-color-on-surface-variant); }
-.eval-bar {
-  height: 14px;
-  border-radius: var(--md-sys-shape-full);
+/* ── Balance ──
+   Greenfield Expressive surface: the score is the headline, a 32dp
+   dual-identity ribbon is the meter, and a morphing fulcrum rides the
+   split. Lean (you / opp / even) retints the whole tile so the eye
+   finds the story before reading a number. */
+.md-balance {
+  --balance-role-bg: var(--md-sys-color-surface-container-lowest);
+  --balance-role-fg: var(--md-sys-color-on-surface);
+  --balance-role-muted: var(--md-sys-color-on-surface-variant);
+  position: relative;
   overflow: hidden;
+  padding: var(--md-sys-space-5);
+  border-radius: 28px 36px 22px 32px;
+  background: var(--balance-role-bg);
+  color: var(--balance-role-fg);
+  transition:
+    background-color var(--md-sys-motion-med) var(--md-sys-motion-effects),
+    color var(--md-sys-motion-med) var(--md-sys-motion-effects),
+    border-radius var(--md-sys-motion-slow) var(--md-sys-motion-spatial);
+}
+.md-balance[data-lean="you"] {
+  --balance-role-bg: var(--md-sys-color-primary-container);
+  --balance-role-fg: var(--md-sys-color-on-primary-container);
+  --balance-role-muted: color-mix(in oklab, var(--md-sys-color-on-primary-container) 72%, transparent);
+  border-radius: 36px 24px 32px 20px;
+}
+.md-balance[data-lean="opp"] {
+  --balance-role-bg: var(--md-sys-color-error-container);
+  --balance-role-fg: var(--md-sys-color-on-error-container);
+  --balance-role-muted: color-mix(in oklab, var(--md-sys-color-on-error-container) 72%, transparent);
+  border-radius: 20px 34px 18px 36px;
+}
+.md-balance__orb {
+  position: absolute;
+  pointer-events: none;
+  background: color-mix(in oklab, currentColor 10%, transparent);
+  animation: mdShapeIdle 10s var(--md-sys-motion-effects) infinite;
+}
+.md-balance__orb--a {
+  width: 140px;
+  height: 140px;
+  right: -48px;
+  top: -56px;
+  border-radius: 42% 58% 60% 40%;
+}
+.md-balance__orb--b {
+  width: 88px;
+  height: 88px;
+  left: -36px;
+  bottom: -40px;
+  border-radius: 62% 38% 44% 56%;
+  animation-delay: -3s;
+}
+.md-balance__head { position: relative; z-index: 1; }
+.md-balance__kicker { color: var(--balance-role-muted); letter-spacing: 0.12em; }
+.md-balance__score {
+  margin-top: 2px;
+  font-size: clamp(2rem, 8vw, 2.75rem);
+  font-weight: 800;
+  letter-spacing: -0.045em;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
+.md-balance .eval-description {
+  margin-top: 4px;
+  color: var(--balance-role-muted);
+  max-width: 28ch;
+}
+.md-balance__ribbon { position: relative; z-index: 1; margin-top: var(--md-sys-space-5); }
+.eval-bar {
+  position: relative;
+  height: 32px;
+  border-radius: var(--md-sys-shape-full);
+  overflow: visible;
   display: flex;
   background: var(--md-sys-color-inverse-surface);
+  box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--md-sys-color-outline) 22%, transparent);
 }
 .eval-bar-white {
-  background: #f4f1ea;
+  background: var(--md-piece-light);
   width: 100%;
   height: 100%;
+  border-radius: inherit;
   transform-origin: left center;
   transition: transform var(--md-sys-motion-slow) var(--md-sys-motion-spatial);
 }
-.eval-bar-black {
-  display: none;
+.eval-bar-black { display: none; }
+.md-balance__fulcrum {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--eval-pct, 50) * 1%);
+  width: 22px;
+  height: 22px;
+  border-radius: 42% 58% 50% 50%;
+  background: var(--md-sys-color-primary);
+  box-shadow: 0 4px 12px color-mix(in oklab, var(--md-sys-color-shadow) 28%, transparent);
+  transform: translate(-50%, -50%);
+  transition:
+    left var(--md-sys-motion-slow) var(--md-sys-motion-spatial),
+    background-color var(--md-sys-motion-fast) var(--md-sys-motion-effects),
+    border-radius var(--md-sys-motion-med) var(--md-sys-motion-spatial);
+  pointer-events: none;
+  animation: mdShapeIdle 7s var(--md-sys-motion-effects) infinite;
+}
+.md-balance[data-lean="you"] .md-balance__fulcrum {
+  background: var(--md-sys-color-primary);
+  border-radius: 58% 42% 38% 62%;
+}
+.md-balance[data-lean="opp"] .md-balance__fulcrum {
+  background: var(--md-sys-color-error);
+  border-radius: 32% 68% 55% 45%;
 }
 .eval-labels {
   display: flex;
   justify-content: space-between;
-  margin-top: var(--md-sys-space-2);
+  align-items: center;
+  margin-top: var(--md-sys-space-3);
   font-variant-numeric: tabular-nums;
 }
-.eval-label.black { color: var(--md-sys-color-on-surface-variant); }
+.eval-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+}
+.eval-label { font-weight: 750; }
+.eval-label.black { color: var(--balance-role-muted); }
 
 /* ── Banners ── */
 .md-banner {
@@ -757,35 +863,164 @@ body {
   white-space: nowrap;
 }
 
-/* ── Move class ── */
-.move-class-display { display: flex; justify-content: space-between; align-items: center; gap: var(--md-sys-space-3); }
-.class-main { display: flex; align-items: center; gap: var(--md-sys-space-2); }
+/* ── Last move (verdict tile) ──
+   Not a chip-in-a-card. The whole surface *is* the judgment: role
+   color, organic radius, emphasized type, and a morphing accuracy
+   ring. Shape gets sharper as the verdict worsens. */
+.md-verdict {
+  --verdict-role-bg: var(--md-sys-color-secondary-container);
+  --verdict-role-fg: var(--md-sys-color-on-secondary-container);
+  --verdict-role-muted: color-mix(in oklab, var(--md-sys-color-on-secondary-container) 72%, transparent);
+  --verdict-ring: var(--md-sys-color-primary);
+  position: relative;
+  overflow: hidden;
+  padding: var(--md-sys-space-5);
+  border-radius: 28px 34px 24px 30px;
+  background: var(--verdict-role-bg);
+  color: var(--verdict-role-fg);
+  transition:
+    background-color var(--md-sys-motion-med) var(--md-sys-motion-effects),
+    color var(--md-sys-motion-med) var(--md-sys-motion-effects),
+    border-radius var(--md-sys-motion-slow) var(--md-sys-motion-spatial);
+}
+.md-verdict[data-verdict="brilliant"],
+.md-verdict[data-verdict="great"] {
+  --verdict-role-bg: var(--md-sys-color-primary-container);
+  --verdict-role-fg: var(--md-sys-color-on-primary-container);
+  --verdict-role-muted: color-mix(in oklab, var(--md-sys-color-on-primary-container) 72%, transparent);
+  --verdict-ring: var(--md-sys-color-primary);
+  border-radius: 36px 22px 34px 18px;
+}
+.md-verdict[data-verdict="best"],
+.md-verdict[data-verdict="excellent"],
+.md-verdict[data-verdict="good"] {
+  --verdict-role-bg: var(--md-sys-color-primary-container);
+  --verdict-role-fg: var(--md-sys-color-on-primary-container);
+  --verdict-role-muted: color-mix(in oklab, var(--md-sys-color-on-primary-container) 72%, transparent);
+  --verdict-ring: var(--md-sys-color-primary);
+}
+.md-verdict[data-verdict="inaccuracy"],
+.md-verdict[data-verdict="mistake"] {
+  --verdict-role-bg: var(--md-sys-color-tertiary-container);
+  --verdict-role-fg: var(--md-sys-color-on-tertiary-container);
+  --verdict-role-muted: color-mix(in oklab, var(--md-sys-color-on-tertiary-container) 72%, transparent);
+  --verdict-ring: var(--md-sys-color-tertiary);
+  border-radius: 20px 28px 16px 32px;
+}
+.md-verdict[data-verdict="blunder"] {
+  --verdict-role-bg: var(--md-sys-color-error-container);
+  --verdict-role-fg: var(--md-sys-color-on-error-container);
+  --verdict-role-muted: color-mix(in oklab, var(--md-sys-color-on-error-container) 72%, transparent);
+  --verdict-ring: var(--md-sys-color-error);
+  border-radius: 16px 28px 14px 24px;
+}
+.md-verdict__burst {
+  position: absolute;
+  width: 150px;
+  height: 150px;
+  right: -46px;
+  top: -58px;
+  border-radius: 38% 62% 48% 52%;
+  background: color-mix(in oklab, currentColor 12%, transparent);
+  pointer-events: none;
+  animation: mdShapeIdle 9s var(--md-sys-motion-effects) infinite;
+}
+.md-verdict__kicker {
+  position: relative;
+  z-index: 1;
+  color: var(--verdict-role-muted);
+  letter-spacing: 0.12em;
+  margin-bottom: var(--md-sys-space-2);
+}
+.md-verdict__stage,
+.move-class-display {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--md-sys-space-4);
+}
+.md-verdict__copy { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.md-verdict__label {
+  font-family: var(--md-ref-typeface-brand);
+  font-size: clamp(1.35rem, 5.4vw, 1.75rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+.md-verdict__metric {
+  font-size: 0.8125rem;
+  font-weight: 650;
+  color: var(--verdict-role-muted);
+}
+.md-verdict__ring {
+  --acc: 0;
+  position: relative;
+  width: 72px;
+  height: 72px;
+  flex-shrink: 0;
+  border-radius: 42% 58% 50% 50%;
+  background:
+    conic-gradient(var(--verdict-ring) calc(var(--acc) * 1%), color-mix(in oklab, currentColor 16%, transparent) 0);
+  display: grid;
+  place-items: center;
+  transition:
+    border-radius var(--md-sys-motion-med) var(--md-sys-motion-spatial),
+    background var(--md-sys-motion-slow) var(--md-sys-motion-effects);
+}
+.md-verdict[data-verdict="brilliant"] .md-verdict__ring,
+.md-verdict[data-verdict="great"] .md-verdict__ring { border-radius: 38% 62% 44% 56%; }
+.md-verdict[data-verdict="blunder"] .md-verdict__ring { border-radius: 28% 36% 30% 34%; }
+.md-verdict__ring::after {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border-radius: inherit;
+  background: var(--verdict-role-bg);
+  transition: background-color var(--md-sys-motion-med) var(--md-sys-motion-effects);
+}
+.md-verdict__ring-stack {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1;
+}
+.md-verdict__ring-val {
+  font-family: var(--md-ref-typeface-brand);
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.md-verdict__ring-cap {
+  display: block;
+  font-size: 0.5625rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--verdict-role-muted);
+  margin-top: 2px;
+}
+.class-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .class-badge {
   display: inline-flex;
   align-items: center;
-  min-height: 28px;
-  padding: 0 12px;
-  border-radius: var(--md-sys-shape-full);
-  font-size: 0.75rem;
-  font-weight: 750;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  background: var(--md-sys-color-secondary-container);
-  color: var(--md-sys-color-on-secondary-container);
+  font-family: var(--md-ref-typeface-brand);
+  font-size: clamp(1.35rem, 5.4vw, 1.75rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  text-transform: none;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  min-height: 0;
+  border-radius: 0;
 }
-.class-brilliant, .class-great, .class-best, .class-excellent {
-  background: var(--md-sys-color-primary-container);
-  color: var(--md-sys-color-on-primary-container);
-}
-.class-inaccuracy, .class-mistake {
-  background: var(--md-sys-color-tertiary-container);
-  color: var(--md-sys-color-on-tertiary-container);
-}
-.class-blunder {
-  background: var(--md-sys-color-error-container);
-  color: var(--md-sys-color-on-error-container);
-}
-.class-accuracy, .class-metric { color: var(--md-sys-color-on-surface-variant); font-size: 0.75rem; font-weight: 650; }
+.class-accuracy, .class-metric { color: var(--verdict-role-muted); font-size: 0.8125rem; font-weight: 650; }
 
 /* ── Toolbar + FAB ── */
 .md-toolbar {
