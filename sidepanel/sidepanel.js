@@ -26,7 +26,6 @@
   let prevEval = null;
   let prevScoreType = 'cp';
   let evalHistory = [];
-  let currentSource = 'unknown';  // initialized here (never matched real source strings)
   let lastCriticalAlert = null;
   let isRefreshing = false;
   let refreshSafetyTimer = null;
@@ -101,7 +100,6 @@
     statusText: $('.status-text'),
     positionContext: $('#position-context'),
     positionTurn: $('#position-turn'),
-    evalBarBlack: $('#eval-bar-black'),
     evalBarWhite: $('#eval-bar-white'),
     evalBar: $('#eval-bar'),
     evalSection: $('#eval-section'),
@@ -112,8 +110,6 @@
     openingName: $('#opening-name'),
     gamePhase: $('#game-phase'),
     analysisQuality: $('#analysis-quality'),
-    analysisDepth: $('#analysis-depth'),
-    analysisSource: $('#analysis-source'),
     materialBalance: $('#material-balance'),
     hintText: $('#hint-text'),
     hintFromTo: $('#hint-fromto'),
@@ -910,9 +906,6 @@
     const wasUserRefresh = isRefreshing;
     lastAnalysis = data;
 
-    const source = data.source || 'unknown';
-    currentSource = source;
-
     if (data.pvs && data.pvs.length > 0) {
       const bestPV = data.pvs[0];
       const effectiveColor = assistedPlayerColor || playerColor || 'w';
@@ -1078,12 +1071,11 @@
   function updateEvalBar(score, scoreType, effectiveColor) {
     const isWhite = effectiveColor === 'w';
     const displayScore = isWhite ? score : -score;
+    // Single-ended meter: the white fill grows from the left to White's
+    // winning share; the inverse-surface remainder is Black's share.
     const winPct = window.ChessHintEngine.formatEvalBar(score, scoreType, true) / 100;
     if (dom.evalBarWhite) {
       dom.evalBarWhite.style.transform = `scaleX(${winPct})`;
-    }
-    if (dom.evalBarBlack) {
-      dom.evalBarBlack.style.transform = `scaleX(${1 - winPct})`;
     }
     const scoreStr = scoreType === 'mate'
       ? (displayScore > 0 ? `+M${displayScore}` : `-M${Math.abs(displayScore)}`)
@@ -1096,9 +1088,11 @@
         ? (displayScore > 0 ? 10 : -10) * Math.sign(displayScore || 1)
         : score / 100;
       const pct = Math.round(winPct * 100);
-      dom.evalBar.style.setProperty('--eval-pct', String(pct));
       dom.evalBar.setAttribute('aria-valuenow', String(Math.max(-10, Math.min(10, evalPawns))));
       dom.evalBar.setAttribute('aria-valuetext', `${scoreStr} for ${isWhite ? 'White' : 'Black'}`);
+      // The fulcrum reads `--eval-pct` from an ancestor, so it lives on the
+      // tile, not on the bar itself.
+      if (dom.evalSection) dom.evalSection.style.setProperty('--eval-pct', String(pct));
     }
     if (dom.evalScore) dom.evalScore.textContent = scoreStr;
     if (dom.evalSection) {
@@ -1157,10 +1151,6 @@
       const confidence = Number.isFinite(data.confidence) ? ` · ${Math.round(data.confidence * 100)}%` : '';
       dom.analysisQuality.textContent = `${quality.label}${stale}${confidence}`;
       dom.analysisQuality.title = quality.detail || '';
-    }
-    if (dom.analysisDepth && data.depth) {
-      const sourceLabel = currentSource === 'chess-api' ? ' (api)' : (currentSource === 'lichess-cloud' ? ' (cloud)' : (currentSource === 'tablebase' ? ' (TB)' : ''));
-      dom.analysisDepth.textContent = `${data.depth}${sourceLabel}`;
     }
     if (dom.materialBalance && data.fen) {
       const assessment = window.ChessHintEngine.assessPosition(data.fen);
@@ -1370,20 +1360,22 @@
   function renderMoveClassification(evalBefore, evalAfter, opts) {
     if (!dom.moveClassSection || !dom.moveClassDisplay) return;
     const cls = window.ChessHintEngine.classifyMove(evalBefore, evalAfter, opts || {});
-    const classKey = cls.label.toLowerCase();
     const swing = cls.winChanceLost > 0
       ? `Win −${cls.winChanceLost}%`
       : (cls.winChanceGained > 0 ? `Win +${cls.winChanceGained}%` : 'Held the evaluation');
     const acc = clamp(cls.accuracy, 0, 100, 0);
-    dom.moveClassSection.dataset.verdict = classKey;
+    dom.moveClassSection.dataset.verdict = cls.label.toLowerCase();
+    const symbol = cls.symbol
+      ? ` <span class="md-verdict__symbol" aria-hidden="true">${h(cls.symbol)}</span>`
+      : '';
     dom.moveClassDisplay.innerHTML = `
-      <div class="md-verdict__copy class-main">
-        <p class="md-verdict__label class-badge class-${classKey}">${h(cls.label)}${cls.symbol ? ` ${h(cls.symbol)}` : ''}</p>
-        <p class="md-verdict__metric class-metric">${h(swing)}</p>
+      <div class="md-verdict__copy">
+        <p class="md-verdict__label">${h(cls.label)}${symbol}</p>
+        <p class="md-verdict__metric">${h(swing)}</p>
       </div>
-      <div class="md-verdict__ring" style="--acc: ${acc}" title="Engine accuracy estimate for this move (0-100)" aria-label="Accuracy ${acc}">
+      <div class="md-verdict__ring" style="--acc: ${acc}" role="img" title="Engine accuracy estimate for this move (0-100)" aria-label="Engine accuracy estimate ${acc} of 100">
         <span class="md-verdict__ring-stack">
-          <span class="md-verdict__ring-val class-accuracy">${h(acc)}</span>
+          <span class="md-verdict__ring-val">${h(acc)}</span>
           <span class="md-verdict__ring-cap">acc</span>
         </span>
       </div>

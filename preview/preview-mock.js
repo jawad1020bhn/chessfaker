@@ -58,8 +58,10 @@
         // Simulate provider latency, then push an analysis_update like background.js does
         await delay(600);
         const fen = message.fen || PREVIEW_FEN;
-        // A quieter first snapshot, then the mate net — so Last move can
-        // classify the swing (Brilliant) in the preview.
+        // A quieter first snapshot, then the mate net — the swing from
+        // +0.4 to mate-in-1 classifies as a Blunder (the last move was
+        // Black's Nf6, which allowed Qxf7#), and the Balance tile leans
+        // "you" with a +M1 headline. Both Expressive states demo at once.
         dispatch({
           type: 'analysis_update',
           data: {
