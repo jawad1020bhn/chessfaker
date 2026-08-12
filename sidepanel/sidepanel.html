@@ -41,16 +41,9 @@
         </div>
       </div>
       <div class="md-app-bar__actions">
-        <div id="player-selector" class="md-player-switcher" role="radiogroup" aria-label="Which side to coach" data-selected="w">
-          <div class="player-pill-indicator" aria-hidden="true"></div>
-          <button type="button" class="player-btn is-selected active" data-color="w" role="radio" aria-checked="true" title="Coach White">
-            <span class="player-icon player-icon--w" aria-hidden="true"></span>
-            <span class="player-btn-label">White</span>
-          </button>
-          <button type="button" class="player-btn" data-color="b" role="radio" aria-checked="false" title="Coach Black">
-            <span class="player-icon player-icon--b" aria-hidden="true"></span>
-            <span class="player-btn-label">Black</span>
-          </button>
+        <div id="player-selector" class="md-btn-group md-btn-group--connected" role="radiogroup" aria-label="Which side to coach">
+          <button type="button" class="player-btn md-btn-group__item is-selected" data-color="w" role="radio" aria-checked="true">White</button>
+          <button type="button" class="player-btn md-btn-group__item" data-color="b" role="radio" aria-checked="false">Black</button>
         </div>
         <button id="btn-settings" class="md-icon-btn md-icon-btn--tonal" type="button" title="Settings (S)" aria-label="Open settings">
           <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.2 7.2 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.59.22-1.14.53-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.48a.5.5 0 0 0 .12.64L4.86 10.7c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.23.4.32.64.22l2.39-.96c.5.41 1.04.72 1.63.94l.36 2.54c.05.24.25.42.49.42h3.8c.24 0 .44-.18.49-.42l.36-2.54c.59-.22 1.14-.53 1.63-.94l2.39.96c.24.1.51 0 .64-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"/></svg>
@@ -64,47 +57,21 @@
       </span>
       <span class="status-dot connecting" aria-hidden="true"></span>
       <span class="status-text">Connecting…</span>
-      <div id="position-context" class="md-status__meta pending" aria-label="Game turn status">
-        <span id="position-turn" class="md-typescale-label-md context-turn">Waiting for game</span>
+      <div id="position-context" class="md-status__meta pending" aria-label="Position source and turn">
+        <span id="position-source" class="md-assist-chip context-chip pending">Board</span>
+        <span id="position-turn" class="md-typescale-label-md context-turn">Waiting for a game</span>
       </div>
     </div>
 
     <main class="md-canvas" id="main-canvas">
       <section id="hint-section" class="md-hero" aria-label="Recommended move">
         <div class="md-hero__meta">
-          <span id="hint-kicker" class="md-typescale-label-md md-hero__kicker">Your move</span>
-          <div class="md-hero__meta-badges">
-            <span id="source-badge" class="md-assist-chip source-badge source-local">Local</span>
-          </div>
+          <span class="md-typescale-label-md md-hero__kicker">Your move</span>
+          <span id="source-badge" class="md-assist-chip source-badge source-local">Local</span>
         </div>
         <div id="hint-card" class="hint-card md-hero__stage exact-move" aria-live="polite">
-          <div class="md-hero__move-block">
-            <p id="hint-text" class="hint-text md-typescale-display-sm-em">Waiting for a board…</p>
-            <div id="hint-badges-row" class="md-hero__badges-row">
-              <div id="hint-fromto" class="hint-fromto md-hero__squares" style="display:none" aria-label="Move squares"></div>
-              <span id="hint-mate-badge" class="md-hero__pill md-hero__pill--mate" style="display:none"></span>
-              <span id="hint-action-badge" class="md-hero__pill md-hero__pill--action" style="display:none"></span>
-            </div>
-          </div>
-
-          <!-- Separated Pressure Idea Box -->
-          <div id="hint-pressure-card" class="md-hero__pressure-card" style="display:none">
-            <div class="md-hero__pressure-header">
-              <svg class="md-hero__pressure-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-                <path fill="currentColor" d="M7 2v11h3v9l7-12h-4l4-8z"/>
-              </svg>
-              <span id="hint-pressure-title" class="md-hero__pressure-title">Pressure Idea</span>
-            </div>
-            <p id="hint-pressure-text" class="md-hero__pressure-text"></p>
-          </div>
-
-          <!-- Separated Caption Details (Cost, Risks, Plan) -->
-          <div id="hint-details-row" class="md-hero__details-row" style="display:none">
-            <span id="hint-cost-pill" class="md-hero__detail-pill md-hero__detail-pill--cost" style="display:none"></span>
-            <span id="hint-risk-pill" class="md-hero__detail-pill md-hero__detail-pill--risk" style="display:none"></span>
-            <span id="hint-plan-pill" class="md-hero__detail-pill md-hero__detail-pill--plan" style="display:none"></span>
-          </div>
-
+          <p id="hint-text" class="hint-text md-typescale-display-sm-em">Waiting for a board…</p>
+          <div id="hint-fromto" class="hint-fromto md-hero__squares" style="display:none" aria-label="Move squares"></div>
           <div id="threat-pill" class="threat-pill md-banner md-banner--tertiary" style="display:none" role="alert">
             <span id="threat-pill-text" class="threat-pill-text"></span>
           </div>
@@ -184,25 +151,16 @@
           </select>
           <div class="md-choice-stack" role="radiogroup" aria-label="Playing style">
             <button type="button" class="md-choice" data-expressive-setting="setting-style" data-value="normal" role="radio" aria-checked="true">
-              <div class="md-choice__content">
-                <span class="md-choice__title">Normal</span>
-                <span class="md-choice__sub">Objective best move</span>
-              </div>
-              <div class="md-choice__radio" aria-hidden="true"><span class="md-choice__radio-dot"></span></div>
+              <span class="md-choice__title">Normal</span>
+              <span class="md-choice__sub">Objective best move</span>
             </button>
             <button type="button" class="md-choice" data-expressive-setting="setting-style" data-value="aggressive" role="radio" aria-checked="false">
-              <div class="md-choice__content">
-                <span class="md-choice__title">Aggressive</span>
-                <span class="md-choice__sub">Fastest sound win</span>
-              </div>
-              <div class="md-choice__radio" aria-hidden="true"><span class="md-choice__radio-dot"></span></div>
+              <span class="md-choice__title">Aggressive</span>
+              <span class="md-choice__sub">Fastest sound win</span>
             </button>
             <button type="button" class="md-choice" data-expressive-setting="setting-style" data-value="super_ultra_aggressive" role="radio" aria-checked="false">
-              <div class="md-choice__content">
-                <span class="md-choice__title">Ultra attack</span>
-                <span class="md-choice__sub">Maximum pressure vs ≤1100</span>
-              </div>
-              <div class="md-choice__radio" aria-hidden="true"><span class="md-choice__radio-dot"></span></div>
+              <span class="md-choice__title">Ultra attack</span>
+              <span class="md-choice__sub">Maximum pressure vs ≤1100</span>
             </button>
           </div>
           <p id="style-description" class="md-help">Objective best play, reliable conversion, and solid defense.</p>
@@ -214,13 +172,7 @@
             </div>
             <label class="md-switch">
               <input type="checkbox" id="setting-early-king-hunt" disabled>
-              <span class="md-switch__track" aria-hidden="true">
-                <span class="md-switch__thumb">
-                  <svg class="md-switch__icon" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
-                    <path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-                  </svg>
-                </span>
-              </span>
+              <span class="md-switch__track" aria-hidden="true"><span class="md-switch__thumb"></span></span>
               <span class="visually-hidden">Early King Hunt</span>
             </label>
           </div>
@@ -280,13 +232,7 @@
             </div>
             <label class="md-switch">
               <input type="checkbox" id="setting-auto-analyze" checked>
-              <span class="md-switch__track" aria-hidden="true">
-                <span class="md-switch__thumb">
-                  <svg class="md-switch__icon" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
-                    <path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-                  </svg>
-                </span>
-              </span>
+              <span class="md-switch__track" aria-hidden="true"><span class="md-switch__thumb"></span></span>
               <span class="visually-hidden">Auto-analyze on your turn</span>
             </label>
           </div>
@@ -294,13 +240,7 @@
             <div><p class="md-switch-row__title">Threat alerts</p></div>
             <label class="md-switch">
               <input type="checkbox" id="setting-show-threats" checked>
-              <span class="md-switch__track" aria-hidden="true">
-                <span class="md-switch__thumb">
-                  <svg class="md-switch__icon" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
-                    <path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-                  </svg>
-                </span>
-              </span>
+              <span class="md-switch__track" aria-hidden="true"><span class="md-switch__thumb"></span></span>
               <span class="visually-hidden">Threat alerts</span>
             </label>
           </div>
@@ -308,13 +248,7 @@
             <div><p class="md-switch-row__title">Critical moments</p></div>
             <label class="md-switch">
               <input type="checkbox" id="setting-show-critical-moments" checked>
-              <span class="md-switch__track" aria-hidden="true">
-                <span class="md-switch__thumb">
-                  <svg class="md-switch__icon" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
-                    <path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-                  </svg>
-                </span>
-              </span>
+              <span class="md-switch__track" aria-hidden="true"><span class="md-switch__thumb"></span></span>
               <span class="visually-hidden">Critical moment alerts</span>
             </label>
           </div>
@@ -326,13 +260,7 @@
             <div><p class="md-switch-row__title">Chess-API.com</p></div>
             <label class="md-switch">
               <input type="checkbox" id="setting-use-chess-api" checked>
-              <span class="md-switch__track" aria-hidden="true">
-                <span class="md-switch__thumb">
-                  <svg class="md-switch__icon" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
-                    <path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-                  </svg>
-                </span>
-              </span>
+              <span class="md-switch__track" aria-hidden="true"><span class="md-switch__thumb"></span></span>
               <span class="visually-hidden">Use Chess-API.com</span>
             </label>
           </div>
@@ -340,13 +268,7 @@
             <div><p class="md-switch-row__title">Lichess Cloud</p></div>
             <label class="md-switch">
               <input type="checkbox" id="setting-use-lichess-cloud" checked>
-              <span class="md-switch__track" aria-hidden="true">
-                <span class="md-switch__thumb">
-                  <svg class="md-switch__icon" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
-                    <path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-                  </svg>
-                </span>
-              </span>
+              <span class="md-switch__track" aria-hidden="true"><span class="md-switch__thumb"></span></span>
               <span class="visually-hidden">Use Lichess Cloud Evaluation</span>
             </label>
           </div>
@@ -357,13 +279,7 @@
             </div>
             <label class="md-switch">
               <input type="checkbox" id="setting-use-masters-explorer" checked>
-              <span class="md-switch__track" aria-hidden="true">
-                <span class="md-switch__thumb">
-                  <svg class="md-switch__icon" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
-                    <path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-                  </svg>
-                </span>
-              </span>
+              <span class="md-switch__track" aria-hidden="true"><span class="md-switch__thumb"></span></span>
               <span class="visually-hidden">Use Lichess Masters Database</span>
             </label>
           </div>

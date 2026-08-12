@@ -100,6 +100,7 @@
     statusDot: $('.status-dot'),
     statusText: $('.status-text'),
     positionContext: $('#position-context'),
+    positionSource: $('#position-source'),
     positionTurn: $('#position-turn'),
     evalBarBlack: $('#eval-bar-black'),
     evalBarWhite: $('#eval-bar-white'),
@@ -114,18 +115,8 @@
     analysisSource: $('#analysis-source'),
     sourceBadge: $('#source-badge'),
     materialBalance: $('#material-balance'),
-    hintKicker: $('#hint-kicker'),
     hintText: $('#hint-text'),
     hintFromTo: $('#hint-fromto'),
-    hintMateBadge: $('#hint-mate-badge'),
-    hintActionBadge: $('#hint-action-badge'),
-    hintPressureCard: $('#hint-pressure-card'),
-    hintPressureTitle: $('#hint-pressure-title'),
-    hintPressureText: $('#hint-pressure-text'),
-    hintDetailsRow: $('#hint-details-row'),
-    hintCostPill: $('#hint-cost-pill'),
-    hintRiskPill: $('#hint-risk-pill'),
-    hintPlanPill: $('#hint-plan-pill'),
     hintCard: $('#hint-card'),
     threatPill: $('#threat-pill'),
     threatPillText: $('#threat-pill-text'),
@@ -434,12 +425,9 @@
   // ─── Player Selector ──────────────────────────────────────────────
   function updatePlayerSelectorUI() {
     if (!dom.playerSelector) return;
-    const color = assistedPlayerColor || 'w';
-    dom.playerSelector.setAttribute('data-selected', color);
     $$('.player-btn').forEach(btn => {
-      const selected = btn.dataset.color === color;
+      const selected = btn.dataset.color === assistedPlayerColor;
       btn.classList.toggle('active', selected);
-      btn.classList.toggle('is-selected', selected);
       btn.setAttribute('aria-checked', selected ? 'true' : 'false');
     });
   }
@@ -666,13 +654,15 @@
   }
 
   function updatePositionContext() {
-    if (!dom.positionContext || !dom.positionTurn) return;
+    if (!dom.positionContext || !dom.positionSource || !dom.positionTurn) return;
     const verified = positionReliable && turnReliable;
     dom.positionContext.classList.toggle('verified', verified);
     dom.positionContext.classList.toggle('partial', !positionReliable && turnReliable);
     dom.positionContext.classList.toggle('pending', !turnReliable);
+    dom.positionSource.className = `context-chip ${positionReliable ? 'verified' : 'partial'}`;
+    dom.positionSource.textContent = positionReliable ? 'VERIFIED FEN' : 'BOARD SNAPSHOT';
     dom.positionTurn.textContent = !turnReliable
-      ? 'Waiting for board'
+      ? 'Turn unavailable'
       : (isPlayerTurn ? 'Your turn' : 'Opponent turn');
   }
 
@@ -956,15 +946,13 @@
     const quality = window.AnalysisPolicy
       ? window.AnalysisPolicy.describeQuality(data.qualityClass || window.AnalysisPolicy.qualityClassFor(data))
       : { badge: source === 'tablebase' ? 'TB' : (source === 'local-engine' ? 'LOCAL' : 'CLOUD') };
-    let badgeText = quality.badge || 'CLOUD';
-    if (badgeText === 'ENGINE') badgeText = 'CLOUD';
     if (dom.sourceBadge) {
       const badgeClass = source === 'tablebase' ? 'tb'
         : source === 'local-engine' ? 'local'
         : (source === 'masters-explorer' || source === 'opening-explorer' ? 'human'
         : (data.stale ? 'minimal' : 'cloud'));
       dom.sourceBadge.className = `source-badge source-${badgeClass}`;
-      dom.sourceBadge.textContent = badgeText;
+      dom.sourceBadge.textContent = quality.badge || 'CLOUD';
       if (quality.label) dom.sourceBadge.title = quality.label;
     }
     if (dom.analysisSource) {
@@ -1187,10 +1175,6 @@
     if (data.exactHintBlocked) {
       if (dom.hintText) dom.hintText.textContent = data.exactHintBlocked.message;
       if (dom.hintFromTo) dom.hintFromTo.style.display = 'none';
-      if (dom.hintMateBadge) dom.hintMateBadge.style.display = 'none';
-      if (dom.hintActionBadge) dom.hintActionBadge.style.display = 'none';
-      if (dom.hintPressureCard) dom.hintPressureCard.style.display = 'none';
-      if (dom.hintDetailsRow) dom.hintDetailsRow.style.display = 'none';
       if (dom.hintCard) dom.hintCard.className = 'hint-card exact-move blocked';
       const warningEl = document.getElementById('fair-play-warning');
       const warningText = document.getElementById('fair-play-warning-text');
@@ -1200,11 +1184,6 @@
     }
     if (!data.pvs || data.pvs.length === 0) {
       if (dom.hintText) dom.hintText.textContent = 'Waiting for analysis...';
-      if (dom.hintFromTo) dom.hintFromTo.style.display = 'none';
-      if (dom.hintMateBadge) dom.hintMateBadge.style.display = 'none';
-      if (dom.hintActionBadge) dom.hintActionBadge.style.display = 'none';
-      if (dom.hintPressureCard) dom.hintPressureCard.style.display = 'none';
-      if (dom.hintDetailsRow) dom.hintDetailsRow.style.display = 'none';
       return;
     }
 
@@ -1232,124 +1211,19 @@
       humanPlanState = { activePlan: hints.styleAnalysis.plan, startedAtFen: data.fen };
     }
 
-    if (dom.hintKicker) {
-      dom.hintKicker.textContent = hints.isAssistedPlayerTurn ? 'Your move' : 'Expected reply';
-    }
-
-    // 1. Clean Move SAN display (no redundant Ultra Super Aggressive Attack choice prefix)
-    let moveDisplay = hints.moveSan || hints.bestMove || '';
-    if (!moveDisplay && hints.main) {
-      moveDisplay = hints.main
-        .replace(/^Ultra Super Aggressive Attack choice:\s*/i, '')
-        .replace(/^(?:Aggressive choice|Best|Human choice):\s*/i, '')
-        .split(/\s*[\u2014|]\s*/)[0]
-        .split(/\s+(?:Maximum-pressure|Fast-win|Risk|Objective)\b/)[0]
-        .trim();
-    }
-
     if (dom.hintText) {
-      dom.hintText.textContent = moveDisplay || 'Waiting for a board…';
+      dom.hintText.textContent = hints.main;
       dom.hintText.classList.add('fade-in');
       setTimeout(() => dom.hintText.classList.remove('fade-in'), 300);
     }
 
-    // 2. From-To coordinates
     if (dom.hintFromTo) {
       if (hints.bestMoveFromTo) {
-        dom.hintFromTo.style.display = 'inline-flex';
+        dom.hintFromTo.style.display = 'block';
         dom.hintFromTo.textContent = hints.bestMoveFromTo;
       } else {
         dom.hintFromTo.style.display = 'none';
       }
-    }
-
-    // 3. Mate Badge
-    if (dom.hintMateBadge) {
-      if (hints.mateIn) {
-        dom.hintMateBadge.textContent = `Mate in ${hints.mateIn}`;
-        dom.hintMateBadge.style.display = 'inline-flex';
-      } else {
-        dom.hintMateBadge.style.display = 'none';
-      }
-    }
-
-    // 4. Action / Capture / Sacrifice / King Hunt Badge
-    if (dom.hintActionBadge) {
-      let actionText = '';
-      if (hints.isKingHunt) {
-        actionText = 'King Hunt!';
-      } else if (hints.sacrificeInfo || hints.styleAnalysis?.sacrifice) {
-        const soundness = hints.styleAnalysis?.sacrificeSoundness || 'sound';
-        actionText = soundness === 'speculative' ? 'Speculative Sac' : 'Sound Sac';
-      } else if (hints.captureInfo) {
-        actionText = hints.captureInfo.replace(/^Takes opponent's /, 'Takes ').replace(/^Captures opponent's /, 'Takes ');
-      }
-      if (actionText) {
-        dom.hintActionBadge.textContent = actionText;
-        dom.hintActionBadge.style.display = 'inline-flex';
-      } else {
-        dom.hintActionBadge.style.display = 'none';
-      }
-    }
-
-    // 5. Separated Pressure Idea Box
-    if (dom.hintPressureCard && dom.hintPressureText) {
-      const pressureIdea = hints.pressureIdea ||
-        (hints.styleAnalysis?.reasons && hints.styleAnalysis.reasons.length > 0 ? hints.styleAnalysis.reasons.slice(0, 3).join(', ') : null);
-
-      if (pressureIdea && settings.style !== 'normal') {
-        const title = hints.pressurePrefix || (settings.style === 'aggressive' ? 'Fast-win idea' : 'Maximum-pressure idea');
-        if (dom.hintPressureTitle) dom.hintPressureTitle.textContent = title;
-        dom.hintPressureText.textContent = pressureIdea.charAt(0).toUpperCase() + pressureIdea.slice(1);
-        dom.hintPressureCard.style.display = 'block';
-      } else if (hints.winningPlan && settings.style === 'normal') {
-        if (dom.hintPressureTitle) dom.hintPressureTitle.textContent = 'Strategic plan';
-        dom.hintPressureText.textContent = hints.winningPlan;
-        dom.hintPressureCard.style.display = 'block';
-      } else {
-        dom.hintPressureCard.style.display = 'none';
-      }
-    }
-
-    // 6. Separated Details Row (Cost, Risks, Plan)
-    let hasDetails = false;
-    if (dom.hintCostPill) {
-      const cost = hints.costPawns || (Number.isFinite(hints.styleAnalysis?.evalLoss) && hints.styleAnalysis.evalLoss > 0
-        ? `${(hints.styleAnalysis.evalLoss / 100).toFixed(1)} pawns` : null);
-      if (cost && settings.style !== 'normal') {
-        dom.hintCostPill.textContent = `Cost: ${cost}`;
-        dom.hintCostPill.style.display = 'inline-flex';
-        hasDetails = true;
-      } else {
-        dom.hintCostPill.style.display = 'none';
-      }
-    }
-
-    if (dom.hintRiskPill) {
-      const risks = (Array.isArray(hints.risks) && hints.risks.length > 0)
-        ? hints.risks
-        : (hints.styleAnalysis?.risks && hints.styleAnalysis.risks.length > 0 ? hints.styleAnalysis.risks.slice(0, 2) : []);
-      if (risks.length > 0 && settings.style !== 'normal') {
-        dom.hintRiskPill.textContent = `Risk: ${risks.join(', ')}`;
-        dom.hintRiskPill.style.display = 'inline-flex';
-        hasDetails = true;
-      } else {
-        dom.hintRiskPill.style.display = 'none';
-      }
-    }
-
-    if (dom.hintPlanPill) {
-      if (hints.styleAnalysis?.plan && settings.style !== 'normal') {
-        dom.hintPlanPill.textContent = `Plan: ${hints.styleAnalysis.plan}`;
-        dom.hintPlanPill.style.display = 'inline-flex';
-        hasDetails = true;
-      } else {
-        dom.hintPlanPill.style.display = 'none';
-      }
-    }
-
-    if (dom.hintDetailsRow) {
-      dom.hintDetailsRow.style.display = hasDetails ? 'flex' : 'none';
     }
 
     if (dom.hintCard) {
@@ -1362,7 +1236,6 @@
       dom.hintCard.className = 'hint-card exact-move' + styleClass + humanClass;
     }
 
-    // 7. Threat Alert
     if (dom.threatPill && dom.threatPillText) {
       if (settings.showThreats && hints.threat) {
         dom.threatPillText.textContent = hints.threat;
