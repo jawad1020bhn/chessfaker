@@ -68,7 +68,7 @@
 
   // ─── Source Labels for UI ────────────────────────────────────────────
   const SOURCE_LABELS = {
-    'chess-api': { label: 'Chess-API.com', badge: 'ENGINE', quality: 'Deep engine' },
+    'chess-api': { label: 'Chess-API.com', badge: 'CLOUD', quality: 'Deep engine' },
     'lichess-cloud': { label: 'Lichess Cloud', badge: 'CLOUD', quality: 'Cloud cached' },
     'masters-explorer': { label: 'Masters DB', badge: 'BOOK', quality: 'Opening statistics' },
     'opening-explorer': { label: 'Opening Explorer', badge: 'BOOK', quality: 'Opening statistics' },
