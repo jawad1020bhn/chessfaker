@@ -23,6 +23,9 @@ const KEEPALIVE_ALARM_INTERVAL_MIN = 1;
 const DEFAULT_SETTINGS = {
   cloudDepth: 5,
   style: 'normal',
+  // Style-scoped preference; the side panel and hint engine require the exact
+  // Ultra Super Aggressive style before honoring this flag.
+  earlyKingHuntEnabled: false,
   humanLikeMode: false,
   whiteRepertoire: 'none',
   blackRepertoire: 'none',
@@ -42,7 +45,7 @@ const DEFAULT_SETTINGS = {
 function normalizeSettings(value = {}) {
   const candidate = value && typeof value === 'object' ? value : {};
   const booleanKeys = [
-    'humanLikeMode', 'autoAnalyze', 'showThreats',
+    'humanLikeMode', 'earlyKingHuntEnabled', 'autoAnalyze', 'showThreats',
     'showCriticalMoments', 'showOpeningExplorer', 'showTablebase',
     'useChessApi', 'useLichessCloud', 'useMastersExplorer'
   ];
@@ -1644,6 +1647,8 @@ chrome.runtime.onInstalled.addListener(() => {
       }
 
       if (s.humanLikeMode === undefined) { s.humanLikeMode = false; updated = true; }
+      if (s.earlyKingHuntEnabled === undefined) { s.earlyKingHuntEnabled = false; updated = true; }
+      else if (typeof s.earlyKingHuntEnabled !== 'boolean') { s.earlyKingHuntEnabled = Boolean(s.earlyKingHuntEnabled); updated = true; }
       if (s.hintLevel !== undefined) { delete s.hintLevel; updated = true; }
       if (s.repertoire !== undefined) {
         // Preserve a legacy repertoire as the equivalent White selection.

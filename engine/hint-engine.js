@@ -179,6 +179,26 @@
     return chaosEngine;
   }
 
+  // Optional Early King Hunt integration. The module is intentionally separate
+  // from Chaos Attack's always-on style motifs: a caller must pass the exact
+  // Ultra Super Aggressive style id *and* the opt-in flag before it can affect
+  // candidate scoring. If an older extension build does not include the module,
+  // the existing style pipeline remains fully functional.
+  let earlyKingHuntEngine = null;
+  function getEarlyKingHuntEngine() {
+    if (earlyKingHuntEngine) return earlyKingHuntEngine;
+    const mod = (typeof globalThis !== 'undefined' && globalThis.EarlyKingHunt) || null;
+    if (!mod || typeof mod.createEngine !== 'function') return null;
+    earlyKingHuntEngine = mod.createEngine({
+      isSquareAttacked, findKing, pieceAttacksSquare, detectGamePhase
+    });
+    return earlyKingHuntEngine;
+  }
+
+  function earlyKingHuntRequested(style, enabled) {
+    return style === 'super_ultra_aggressive' && enabled === true;
+  }
+
   // ─── Attacking Opening Repertoires ───────────────────────────────────
   // Every module is a curated, side-specific move tree. A repertoire is a
   // preference inside the engine/style safety budget, never a forced move.
@@ -909,7 +929,7 @@
   }
 
   // ─── Winning Plan Generation ───────────────────────────────────────
-  function generateWinningPlan(evalScore, scoreType, position, playerColor, fen, style) {
+  function generateWinningPlan(evalScore, scoreType, position, playerColor, fen, style, earlyKingHuntEnabled = false) {
     const currentStyle = PLAYING_STYLES[style] || PLAYING_STYLES.normal;
     if (scoreType === 'mate') {
       if (evalScore > 0) return `Force checkmate in ${Math.abs(evalScore)} move${Math.abs(evalScore) !== 1 ? 's' : ''}!`;
@@ -921,6 +941,9 @@
       if (evalScore > 150) return 'Convert fast: keep the initiative, force concessions, and choose the shortest sound route to the king or material gain.';
       if (evalScore > -80) return 'Seize the initiative now: improve attackers with tempo and force the opponent to react.';
       return 'Create active counterplay immediately — checks, threats, and tempo are more valuable than passive defense.';
+    }
+    if (currentStyle.id === 'super_ultra_aggressive' && earlyKingHuntEnabled && phase !== 'endgame') {
+      return 'Early King Hunt active: open lines, deploy attackers with tempo, and keep forcing the opponent to defend before the king can consolidate.';
     }
     if (currentStyle.id === 'super_ultra_aggressive') {
       const chaosW = getChaosEngine();
@@ -1161,7 +1184,7 @@
   // engine/chaos-attack.js. The engine delegates the whole style via
   // getChaosEngine() — future Chaos enhancements never touch this file.
 
-  function analyzeCandidate(fen, pv, playerColor, rawScore, scoreType, depth = 0) {
+  function analyzeCandidate(fen, pv, playerColor, rawScore, scoreType, depth = 0, options = {}) {
     const line = Array.isArray(pv) ? pv.filter(Boolean).slice(0, 8) : [];
     const board = parseFENPlacement((fen || '').split(' ')[0]);
     const playerIsWhite = playerColor === 'w';
@@ -1328,6 +1351,29 @@ followUpUci: line[2] || null,
       }));
       features.plan = chaos0.choosePlan(features);
     }
+
+    // The optional module is evaluated after the base/Chaos feature set so it
+    // can use concrete king pressure, forcing-PV, deployment, and sacrifice
+    // facts. It is still inert unless the exact style and setting are supplied.
+    const earlyHunt = getEarlyKingHuntEngine();
+    if (earlyHunt) {
+      Object.assign(features, earlyHunt.computeFeatures({
+        board, after, piece, captured, from, to, destination,
+        playerIsWhite, playerColor, opponentKingBefore, opponentKingAfter,
+        ownKingBefore, ownKingAfter, givesCheck, materialDelta, line,
+        boardAfterReply, fen, scoreType, rawScore, pressureBefore, pressureAfter,
+        candidate: features,
+        style: options.style,
+        earlyKingHuntEnabled: options.earlyKingHuntEnabled === true
+      }));
+      if (features.earlyKingHuntActive && typeof earlyHunt.choosePlan === 'function') {
+        features.plan = earlyHunt.choosePlan(features) || features.plan;
+      }
+    } else {
+      features.earlyKingHuntActive = false;
+      features.earlyKingHuntSafe = true;
+      features.earlyKingHuntUnsafe = false;
+    }
     if (!features.plan) {
       features.plan = features.chased && pressureAfter.pressure > pressureBefore.pressure ? 'hunt the exposed king'
         : features.punishUncastled ? 'punish the uncastled king'
@@ -1395,6 +1441,14 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
         chaosWeights = chaosB.scaledWeights(candidate, phase, moveCount);
       }
       bonus += chaosB.styleBonus(candidate, chaosWeights);
+    }
+
+    // The opt-in add-on is a second, explicitly gated scoring layer. It never
+    // runs for Normal, Aggressive, or unknown/custom style ids, even if a stale
+    // settings object contains `earlyKingHuntEnabled: true`.
+    if (style.id === 'super_ultra_aggressive' && candidate.earlyKingHuntActive) {
+      const earlyHunt = getEarlyKingHuntEngine();
+      if (earlyHunt) bonus += earlyHunt.styleBonus(candidate, earlyHunt.profile?.weights);
     }
 
     // A8 — Phase-aware aggression scaling (Chaos only). Middlegame amplifies the
@@ -1529,20 +1583,26 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
   function selectPVForStyle(pvs, fen, style, playerColor, humanLikeMode = false, context = {}) {
     if (!Array.isArray(pvs) || pvs.length === 0) return [];
     const profile = PLAYING_STYLES[style] || PLAYING_STYLES.normal;
+    const earlyKingHuntEnabled = earlyKingHuntRequested(profile.id, context.earlyKingHuntEnabled);
     if (pvs.length === 1) {
-      if (!humanLikeMode) return pvs;
+      // A single-PV source cannot be re-ranked, but the opt-in still annotates
+      // the line and applies the same safety checks so diagnostics stay honest.
+      if (!humanLikeMode && !earlyKingHuntEnabled) return pvs;
       const only = pvs[0];
       const score = playerScore(only, playerColor);
-      const meta = analyzeCandidate(fen, only.pv || [], playerColor, score, only.scoreType, only.depth || 0);
+      const meta = analyzeCandidate(
+        fen, only.pv || [], playerColor, score, only.scoreType, only.depth || 0,
+        { style: profile.id, earlyKingHuntEnabled }
+      );
       meta.evalLoss = 0;
       meta.objectiveRank = 1;
       meta.styleRank = 1;
       meta.mode = profile.id;
-      meta.humanLikeMode = true;
+      meta.humanLikeMode = humanLikeMode;
       meta.limitedCandidates = true;
       meta.masterGames = Number(only._masterData?.totalGames || context.openingData?.moves?.find(move => move.uci === only.pv?.[0])?.total || 0);
       candidateStyleBonus(meta, profile);
-      humanNaturalness(meta, profile, context, score);
+      if (humanLikeMode) humanNaturalness(meta, profile, context, score);
       return [{ ...only, _styleAnalysis: meta }];
     }
     const objective = pvs.map((pv, index) => ({ pv, index, utility: objectiveUtility(pv, playerColor), score: playerScore(pv, playerColor) }))
@@ -1596,7 +1656,15 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
       } else {
         evalLoss = Math.max(0, objectiveBest.score - entry.score);
       }
-      const analysis = analyzeCandidate(fen, entry.pv.pv || [], playerColor, entry.score, entry.pv.scoreType, entry.pv.depth || 0);
+      const analysis = analyzeCandidate(
+        fen,
+        entry.pv.pv || [],
+        playerColor,
+        entry.score,
+        entry.pv.scoreType,
+        entry.pv.depth || 0,
+        { style: profile.id, earlyKingHuntEnabled }
+      );
       const firstMove = entry.pv.pv?.[0];
       const openingMove = context.openingData?.moves?.find(move => move.uci === firstMove);
       analysis.masterGames = Number(entry.pv._masterData?.totalGames || openingMove?.total || 0);
@@ -1607,7 +1675,12 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
         // H1 — Self-safety hard gate: a candidate that leaves our own
         // king with zero legal escapes is refused outright (unless it is a
         // mate-for-us or keeps the initiative). Normal keeps objective purity.
-        (profile.id === 'normal' || !analysis.ownKingTrapped);
+        (profile.id === 'normal' || !analysis.ownKingTrapped) &&
+        // Early King Hunt accepts risk only when the line has a concrete
+        // attacking reason. A losing mate, trapped king, or unsupported
+        // high-risk sacrifice never becomes eligible merely because the
+        // checkbox is on.
+        (!analysis.earlyKingHuntActive || !analysis.earlyKingHuntUnsafe);
       const bonus = eligible ? candidateStyleBonus(analysis, profile) : -Infinity;
       // Aggressive is especially focused on converting quickly: objective cost
       // remains expensive, while checks and sustained forcing play can overcome it.
@@ -1716,6 +1789,8 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
         annotations.push('ultra-aggressive attack');
         annotations.push('aggressive');
       }
+      const earlyA = getEarlyKingHuntEngine();
+      if (analysis.earlyKingHuntActive && earlyA) annotations.push(...earlyA.annotate(analysis));
     } else {
       annotations.push('aggressive');
     }
@@ -1730,24 +1805,35 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     const isWhite = playerColor === 'w';
     const currentStyle = PLAYING_STYLES[style] || PLAYING_STYLES.normal;
     const currentRepertoire = OPENING_REPERTOIRES[openingRepertoire] || OPENING_REPERTOIRES.none;
+    const earlyKingHuntEnabled = earlyKingHuntRequested(currentStyle.id, humanContext.earlyKingHuntEnabled);
 
     // Apply the rebuilt, mate-safe style ranking. Normal also receives objective
     // metadata, while one-PV sources remain unchanged and are explained honestly.
     let rankedPVs = pvs?.[0]?._styleAnalysis
       ? pvs
-      : (pvs && pvs.length > 1 ? selectPVForStyle(pvs, fen, style, playerColor, humanLikeMode, { ...humanContext, openingData, repertoire: repertoireState(fen, currentRepertoire, playerColor) }) : (pvs || []));
-    if (humanLikeMode && rankedPVs.length === 1 && !rankedPVs[0]._styleAnalysis) {
+      : (pvs && pvs.length > 1 ? selectPVForStyle(pvs, fen, style, playerColor, humanLikeMode, {
+        ...humanContext,
+        earlyKingHuntEnabled,
+        openingData,
+        repertoire: repertoireState(fen, currentRepertoire, playerColor)
+      }) : (pvs || []));
+    if ((humanLikeMode || earlyKingHuntEnabled) && rankedPVs.length === 1 && !rankedPVs[0]._styleAnalysis) {
       const only = rankedPVs[0];
       const score = playerScore(only, playerColor);
-      const meta = analyzeCandidate(fen, only.pv || [], playerColor, score, only.scoreType, only.depth || 0);
+      const meta = analyzeCandidate(
+        fen, only.pv || [], playerColor, score, only.scoreType, only.depth || 0,
+        { style: currentStyle.id, earlyKingHuntEnabled }
+      );
       meta.evalLoss = 0;
       meta.objectiveRank = 1;
       meta.styleRank = 1;
       meta.mode = currentStyle.id;
-      meta.humanLikeMode = true;
+      meta.humanLikeMode = humanLikeMode;
       meta.limitedCandidates = true;
       candidateStyleBonus(meta, currentStyle);
-      humanNaturalness(meta, currentStyle, { ...humanContext, openingData, repertoire: repertoireState(fen, currentRepertoire, playerColor) }, score);
+      if (humanLikeMode) {
+        humanNaturalness(meta, currentStyle, { ...humanContext, openingData, repertoire: repertoireState(fen, currentRepertoire, playerColor) }, score);
+      }
       rankedPVs = [{ ...only, _styleAnalysis: meta }];
     }
     const bestPV = rankedPVs.length > 0 ? rankedPVs[0] : null;
@@ -1879,7 +1965,7 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     }
 
     // Winning plan (style-aware)
-    hints.winningPlan = generateWinningPlan(evalScore, scoreType, position, playerColor, fen || '', style);
+    hints.winningPlan = generateWinningPlan(evalScore, scoreType, position, playerColor, fen || '', style, earlyKingHuntEnabled);
 
     // Style annotation for exact-move hints
     if (hintLevel === EXACT_HINT_LEVEL && bestPV && bestPV.pv && bestPV.pv.length > 0 && fen) {

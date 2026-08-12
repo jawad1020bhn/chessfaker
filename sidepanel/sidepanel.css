@@ -1035,6 +1035,21 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   line-height: 1.55;
 }
 
+.early-king-hunt-setting {
+  padding: 12px;
+  border: 1px solid color-mix(in oklab, var(--accent-super-ultra) 42%, var(--border-color));
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--accent-super-ultra) 6%, var(--bg-surface));
+}
+
+.early-king-hunt-setting[hidden] {
+  display: none;
+}
+
+.early-king-hunt-setting .toggle-label span {
+  color: var(--accent-super-ultra);
+}
+
 .toggle-label {
   display: flex !important;
   align-items: center;

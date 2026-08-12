@@ -19,6 +19,7 @@ const sandbox = {
 };
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(require.resolve('../engine/chaos-attack.js'), 'utf8'), sandbox);
+vm.runInContext(fs.readFileSync(require.resolve('../engine/early-king-hunt.js'), 'utf8'), sandbox);
 vm.runInContext(fs.readFileSync(require.resolve('../engine/hint-engine.js'), 'utf8'), sandbox);
 const engine = sandbox.window.ChessHintEngine;
 
