@@ -1870,9 +1870,12 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
       hints.bestMoveFromTo = `${sideLabel}: ${pieceName}: ${from} \u2192 ${to}`;
     }
 
-    // Threat hint
+    // Threat / best-reply caption — lives on the "Why this move" rail, not the hero.
     if (rankedPVs && rankedPVs.length > 0) {
-      hints.threat = generateThreatHint(rankedPVs[0], position, playerColor, fen || '');
+      const reply = generateThreatHint(rankedPVs[0], position, playerColor, fen || '');
+      hints.threat = reply.text;
+      hints.threatLabel = reply.label;
+      if (reply.text) hints.captions.push({ kind: 'reply', label: reply.label, text: reply.text });
     }
 
     // Continuation
@@ -2087,7 +2090,7 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
 
     // Build main hint — PLAYER-FIRST design:
     // Always lead with the player's best response, compact and clean.
-    // Opponent's expected move is contextual/secondary (threat pill).
+    // Opponent's expected move is contextual/secondary (Why this move rail).
     const postureText = evalScore > 100 ? "You're clearly better"
       : evalScore > 0 ? 'Slight advantage for you'
       : evalScore < -100 ? 'Be careful — the opponent is pressing'
@@ -2121,9 +2124,12 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     // Winning plan from assisted player's perspective (style-aware)
     hints.winningPlan = generateWinningPlan(evalScore, scoreType, position, playerColor, fen, style ? style.name ? Object.keys(PLAYING_STYLES).find(k => PLAYING_STYLES[k] === style) || 'normal' : 'normal' : 'normal');
 
-    // Threat hint — shows opponent's threat with player's best defense
+    // Expected line — opponent's move + the player's reply, as a caption rail item.
     if (oppMoveUci) {
-      hints.threat = generateOpponentThreatHint(oppMoveUci, responseUci, position, playerColor, fen);
+      const reply = generateOpponentThreatHint(oppMoveUci, responseUci, position, playerColor, fen);
+      hints.threat = reply.text;
+      hints.threatLabel = reply.label;
+      if (reply.text) hints.captions.push({ kind: 'reply', label: reply.label, text: reply.text });
     }
 
     // Continuation
@@ -2134,11 +2140,9 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
 
   // ─── Opponent Threat Hint (Player-First) ──────────────────────────
   function generateOpponentThreatHint(oppMoveUci, responseUci, position, playerColor, fen) {
-    if (!fen || !oppMoveUci) return '';
+    if (!fen || !oppMoveUci) return { label: 'Expected line', text: '' };
     const board = parseFENPlacement(fen.split(' ')[0]);
     const isWhite = playerColor === 'w';
-    const oppColor = isWhite ? 'Black' : 'White';
-    const playerLabel = isWhite ? 'White' : 'Black';
 
     const from = oppMoveUci.substring(0, 2);
     const to = oppMoveUci.substring(2, 4);
@@ -2172,13 +2176,13 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
       threat += `. ${rSideLabel}'s best reply: ${rPieceName} ${rFrom} \u2192 ${rTo}`;
     }
 
-    return threat;
+    return { label: 'Expected line', text: threat };
   }
 
   // ─── Threat Hint (Player's turn) ──────────────────────────────────
   function generateThreatHint(bestPV, position, playerColor, fen) {
-    if (!bestPV || !bestPV.pv || bestPV.pv.length < 2) return '';
-    if (!fen) return '';
+    if (!bestPV || !bestPV.pv || bestPV.pv.length < 2) return { label: 'Best reply', text: '' };
+    if (!fen) return { label: 'Best reply', text: '' };
 
     const board = parseFENPlacement(fen.split(' ')[0]);
     const activeColor = fen.split(' ')[1] || 'w';
@@ -2197,7 +2201,7 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
       playerMoveUci = bestPV.pv[1]; // Opponent moves first, player replies
       oppMoveUci = bestPV.pv[0];    // Opponent moves first
     }
-    if (!oppMoveUci) return '';
+    if (!oppMoveUci) return { label: 'Best reply', text: '' };
 
     const boardAfterPlayerMove = playerMoveUci ? applyMoveToBoard(board, playerMoveUci) : board;
     const fenAfterPlayerMove = playerMoveUci ? applyMoveToFen(fen, playerMoveUci) : fen;
@@ -2221,7 +2225,7 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
       }
     }
 
-    return threat;
+    return { label: 'Best reply', text: threat };
   }
 
   // ─── Format PVs ────────────────────────────────────────────────────

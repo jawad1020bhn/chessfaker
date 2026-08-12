@@ -71,10 +71,6 @@
         <div id="hint-card" class="hint-card md-hero__stage exact-move" aria-live="polite">
           <p id="hint-text" class="hint-text md-typescale-display-sm-em">Waiting for a board…</p>
           <div id="hint-fromto" class="hint-fromto md-hero__squares" style="display:none" aria-label="Move squares"></div>
-          <div id="threat-pill" class="threat-pill md-banner md-banner--tertiary md-banner--iconed" style="display:none" role="alert">
-            <span class="md-banner__icon" aria-hidden="true"></span>
-            <span id="threat-pill-text" class="threat-pill-text"></span>
-          </div>
           <div id="fair-play-warning" class="fair-play-warning md-banner md-banner--error md-banner--iconed" style="display:none" role="alert">
             <span class="md-banner__icon" aria-hidden="true"></span>
             <span id="fair-play-warning-text" class="warning-text"></span>
@@ -111,9 +107,10 @@
         <p id="critical-moment-detail" class="critical-moment-detail md-typescale-body-md"></p>
       </section>
 
-      <section id="move-class-section" class="md-card move-class-section" style="display:none" aria-label="Last move classification">
-        <h2 class="md-typescale-title-sm">Last move</h2>
-        <div id="move-class-display" class="move-class-display"></div>
+      <section id="move-class-section" class="md-verdict move-class-section" data-verdict="best" style="display:none" aria-label="Last move classification">
+        <span class="md-verdict__burst" aria-hidden="true"></span>
+        <p class="md-typescale-label-md md-verdict__kicker">Last move</p>
+        <div id="move-class-display" class="move-class-display md-verdict__stage"></div>
       </section>
 
       <section id="position-info" class="md-card md-facts" aria-label="Position facts">

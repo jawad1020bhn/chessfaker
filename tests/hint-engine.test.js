@@ -87,6 +87,23 @@ assert.equal(aggressiveIdea?.label, 'Fast-win idea', 'the style idea travels as 
 assert.ok(aggressiveIdea?.text.length > 0, 'the idea caption carries the reason text');
 assert.equal(aggressiveHint.pvs[0].pv[0], 'd1h5');
 
+// Best-reply / expected-line text belongs on the "Why this move" rail, not the hero.
+const replyFen = '4k3/8/8/8/8/8/8/3Q2K1 w - - 0 1';
+const replyPv = { score: 400, scoreType: 'cp', depth: 20, pv: ['d1d8', 'e8d8'] };
+const replyHint = engine.generateHints({ fen: replyFen, pvs: [replyPv], moveHistory: [] }, 5, 'w', 'normal', 'none');
+const replyCaption = replyHint.captions.find(c => c.kind === 'reply');
+assert.equal(replyCaption?.label, 'Best reply');
+assert.match(replyCaption?.text || '', /best reply/i);
+assert.doesNotMatch(replyHint.main, /best reply/i, 'the reply line must not crowd the Your move hero');
+
+const oppTurnFen = '4k3/q7/8/8/8/8/2Q5/6K1 b - - 0 1';
+const oppTurnPv = { score: 50, scoreType: 'cp', depth: 18, pv: ['a7d4', 'c2d1'] };
+const oppHint = engine.generateHints({ fen: oppTurnFen, pvs: [oppTurnPv], moveHistory: [] }, 5, 'w', 'normal', 'none');
+const expectedLine = oppHint.captions.find(c => c.kind === 'reply');
+assert.equal(expectedLine?.label, 'Expected line');
+assert.match(expectedLine?.text || '', /best reply/i);
+assert.doesNotMatch(oppHint.main, /best reply/i, 'opponent-turn reply stays off the hero');
+
 const legacyLevelHint = engine.generateHints({ fen: attackFen, pvs: [quiet], moveHistory: [] }, 1, 'w', 'normal', 'none');
 assert.equal(legacyLevelHint.level, 5, 'exact-only mode normalizes legacy level requests');
 assert.equal(legacyLevelHint.main, 'Qd2', 'legacy level requests receive the exact move with no label prefix');
