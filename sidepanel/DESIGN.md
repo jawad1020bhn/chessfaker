@@ -44,8 +44,11 @@ transformed, and `--eval-pct` was written to the bar instead of the tile the
 fulcrum inherits from. The HTML, CSS, and JS now implement one contract each,
 and `tests/panel-wiring.test.js` locks the three layers together so a future
 edit cannot silently disconnect them again. The win-probability breakdown
-(`You 52% · Opp 48%`) is a pair of inverse-surface pills inside the meter
-itself — one per side, following the player's color — so it never competes
+(`You 52% · Opp 48%`) is a pair of opposite-identity chips inside the meter
+itself — each chip inverts against the half it sits on (inverse-surface over
+White's light fill, lightest-surface over Black's inverse-surface remainder,
+with a hairline ring) so the figures stay legible on both halves in both
+themes, mirroring the light/dark piece identity — and it never competes
 with the ribbon side labels, which carry the +/- score.
 
 ## Expressive tactics used
@@ -109,6 +112,53 @@ effects curve for color/opacity.
 - `prefers-reduced-motion` disables springs
 - Settings and shortcuts are modal dialogs with focus trap and Escape
 - All segmented radiogroups support arrow-key roving (APG)
+
+## Quality pass (this revision)
+
+Fixes that close the gaps between the documented system and the shipped UI.
+
+- **Role tokens are now consumed, not just declared.** `--balance-role-muted`
+  and `--verdict-role-muted` were defined but every consumer used a hardcoded
+  `on-surface-variant` / `on-surface`, leaving grey stragglers over colored
+  containers when a tile leaned or a verdict landed. Kickers, descriptions,
+  the stale badge, mover line, metric, verdict word and the accuracy ring
+  now all read the tile's own `-role-fg` / `-role-muted` tokens.
+- **Meter chips are legible on both halves in both themes** (see Balance).
+- **Hero display type is a single canonical token.** The redundant
+  `md-typescale-display-sm-em` class was removed from the move line (it was
+  silently overridden by `.hint-text`'s clamp); the hero now renders at a
+  true display scale, `clamp(1.75rem, 7vw, 2.25rem)`.
+- **Dead wires removed.** `--hint-accent` (JS wrote it, CSS never read it),
+  `--hero-shift`, the empty `:has()` rule, and the `--accent-gold /
+  --accent-aggressive / --accent-super-ultra` aliases that only fed it.
+  `--accent-yellow` is now a token reference (`tertiary`) so the correlation
+  stat keeps contrast in dark mode.
+- **Style-scoped controls actually hide.** Author `display: flex` was
+  overriding the UA `[hidden]` rule, so the Early King Hunt row stayed
+  visible (disabled) outside Ultra attack. `.md-switch-row[hidden]` now
+  wins, matching the existing `.md-idea[hidden]` precedent.
+- **Skeleton shimmer is wired.** The `.md-skeleton` rule existed but no state
+  used it; the Balance loading state now renders a shimmer placeholder in
+  the description line for fresh positions (keeps prior scores on refresh).
+- **Fulcrum travel is clamped** (5–95%) so a one-sided score never pushes
+  the 22px marker off the edge of the meter.
+- **Motion is symmetric.** The settings sheet and the shortcuts dialog now
+  animate out (settle on the effects curve) as well as in (rise on the
+  spatial spring) — no hard cuts on either side; the status dot fades
+  between states instead of snapping.
+- **Interaction + keyboard polish.** The dialog scrim closes the shortcuts
+  sheet (it previously did nothing); the shortcuts dialog traps Tab and
+  restores focus on close; the hidden settings `<select>`s and the
+  human-mode checkbox are no longer tabbable; the style choice cards got
+  APG roving (arrow keys) and roving tabindex like every other radiogroup;
+  segmented items grew to a 40px hit height; the fair-play warning banner
+  clears itself once analysis succeeds again.
+- **Coherence nits.** Settings section headings are `on-surface` like the
+  canvas headings (brand green is reserved for states, choices and the
+  hero); the toast joined the organic radius family (it was the only 4px
+  corner in the system); diagnostics figures are tabular-nums; the turn
+  line's `pending` state got its outline tint to complete the
+  verified / partial / pending story.
 
 ## Dev preview
 

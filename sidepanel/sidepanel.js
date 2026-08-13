@@ -232,6 +232,34 @@
   // ─── Keyboard Shortcuts ──────────────────────────────────────────────
   // ═══════════════════════════════════════════════════════════════════════
   let shortcutHelpVisible = false;
+  let lastFocusedBeforeHelp = null;
+  const HELP_OUT_MS = 200; // matches mdSheetOut in CSS
+
+  function openShortcutHelp() {
+    const help = document.getElementById('shortcut-help');
+    if (!help || shortcutHelpVisible) return;
+    shortcutHelpVisible = true;
+    lastFocusedBeforeHelp = document.activeElement;
+    help.classList.remove('is-closing');
+    help.style.display = 'block';
+    const closeBtn = document.getElementById('btn-close-shortcut-help');
+    if (closeBtn) closeBtn.focus();
+  }
+
+  function closeShortcutHelp() {
+    const help = document.getElementById('shortcut-help');
+    if (!help || !shortcutHelpVisible) return;
+    shortcutHelpVisible = false;
+    help.classList.add('is-closing');
+    setTimeout(() => {
+      help.classList.remove('is-closing');
+      help.style.display = 'none';
+    }, HELP_OUT_MS);
+    if (lastFocusedBeforeHelp && typeof lastFocusedBeforeHelp.focus === 'function') {
+      lastFocusedBeforeHelp.focus();
+    }
+    lastFocusedBeforeHelp = null;
+  }
 
   function initKeyboardShortcuts() {
     document.addEventListener('keydown', (e) => {
@@ -255,25 +283,38 @@
           break;
         case 'escape':
           if (shortcutHelpVisible) {
-            const help = document.getElementById('shortcut-help');
-            if (help) help.style.display = 'none';
-            shortcutHelpVisible = false;
+            closeShortcutHelp();
           } else if (dom.settingsPanel && dom.settingsPanel.style.display !== 'none') {
             closeSettingsSheet();
           }
           break;
         case '?':
           e.preventDefault();
-          const help = document.getElementById('shortcut-help');
-          if (help) {
-            shortcutHelpVisible = !shortcutHelpVisible;
-            help.style.display = shortcutHelpVisible ? 'block' : 'none';
+          if (shortcutHelpVisible) {
+            closeShortcutHelp();
+          } else {
+            openShortcutHelp();
           }
           break;
         default:
           break;
       }
     });
+
+    // The shortcuts dialog is modal: keep Tab inside while it is open.
+    const help = document.getElementById('shortcut-help');
+    if (help) {
+      help.addEventListener('keydown', (e) => {
+        if (e.key !== 'Tab' || !shortcutHelpVisible) return;
+        const focusables = help.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+        const visible = Array.from(focusables).filter((el) => el.offsetParent !== null && !el.disabled);
+        if (visible.length === 0) return;
+        e.preventDefault();
+        const index = visible.indexOf(document.activeElement);
+        const next = visible[(index + (e.shiftKey ? -1 : 1) + visible.length) % visible.length];
+        next.focus();
+      });
+    }
   }
 
   function finishRefresh() {
@@ -306,13 +347,23 @@
     if (dom.evalSection) {
       dom.evalSection.dataset.state = 'loading';
     }
+    if (dom.evalDescription) {
+      if (!hasPrevScore) {
+        // Fresh position: shimmer skeleton in the description line.
+        dom.evalDescription.textContent = '';
+        const skeleton = document.createElement('span');
+        skeleton.className = 'md-skeleton';
+        skeleton.style.width = '18ch';
+        skeleton.textContent = 'Analyzing position';
+        dom.evalDescription.appendChild(skeleton);
+      } else {
+        dom.evalDescription.textContent = 'Analyzing position…';
+      }
+    }
     if (!hasPrevScore) {
-      if (dom.evalDescription) dom.evalDescription.textContent = 'Analyzing position…';
       if (dom.evalWhiteLabel) dom.evalWhiteLabel.textContent = '—';
       if (dom.evalBlackLabel) dom.evalBlackLabel.textContent = '—';
       if (dom.evalStaleBadge) dom.evalStaleBadge.style.display = 'none';
-    } else {
-      if (dom.evalDescription) dom.evalDescription.textContent = 'Analyzing position…';
     }
   }
 
@@ -478,10 +529,14 @@
       const selected = String(field.type === 'checkbox' ? field.checked : field.value) === String(btn.dataset.value);
       btn.classList.toggle('is-selected', selected);
       btn.setAttribute('aria-checked', selected ? 'true' : 'false');
+      // APG roving tabindex: only the checked option takes Tab.
+      btn.tabIndex = selected ? 0 : -1;
     });
     $$('.human-mode-opt').forEach((btn) => {
       const active = (btn.dataset.mode === 'on') === settings.humanLikeMode;
       btn.classList.toggle('is-selected', active);
+      btn.setAttribute('aria-checked', active ? 'true' : 'false');
+      btn.tabIndex = active ? 0 : -1;
     });
   }
 
@@ -610,12 +665,11 @@
 
     // Theme toggle removed — dark only
 
-    // Settings and CSP-safe shortcut-help close button
-    const closeShortcutHelp = document.getElementById('btn-close-shortcut-help');
-    if (closeShortcutHelp) closeShortcutHelp.addEventListener('click', () => {
-      const help = document.getElementById('shortcut-help');
-      if (help) help.style.display = 'none';
-      shortcutHelpVisible = false;
+    // Settings and CSP-safe shortcut-help close button + scrim
+    const closeShortcutBtn = document.getElementById('btn-close-shortcut-help');
+    if (closeShortcutBtn) closeShortcutBtn.addEventListener('click', closeShortcutHelp);
+    document.querySelectorAll('[data-close-shortcuts]').forEach((el) => {
+      el.addEventListener('click', closeShortcutHelp);
     });
     if (dom.btnSettings) dom.btnSettings.addEventListener('click', openSettingsSheet);
     if (dom.btnCloseSettings) dom.btnCloseSettings.addEventListener('click', closeSettingsSheet);
@@ -678,18 +732,23 @@
     });
 
     // APG radiogroup pattern: arrow keys rove between options and select.
+    const roveGroup = (group, e) => {
+      if (!['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].includes(e.key)) return;
+      const items = Array.from(group.querySelectorAll('[role="radio"]'));
+      const index = items.indexOf(document.activeElement);
+      if (index === -1) return;
+      e.preventDefault();
+      const dir = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : -1;
+      const next = items[(index + dir + items.length) % items.length];
+      next.focus();
+      next.click();
+    };
     $$('.md-btn-group[role="radiogroup"]').forEach((group) => {
-      group.addEventListener('keydown', (e) => {
-        if (!['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].includes(e.key)) return;
-        const items = Array.from(group.querySelectorAll('[role="radio"]'));
-        const index = items.indexOf(document.activeElement);
-        if (index === -1) return;
-        e.preventDefault();
-        const dir = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : -1;
-        const next = items[(index + dir + items.length) % items.length];
-        next.focus();
-        next.click();
-      });
+      group.addEventListener('keydown', (e) => roveGroup(group, e));
+    });
+    // The style choice cards are a radiogroup too — same roving contract.
+    $$('.md-choice-stack[role="radiogroup"]').forEach((group) => {
+      group.addEventListener('keydown', (e) => roveGroup(group, e));
     });
   }
 
@@ -1195,8 +1254,9 @@
       dom.evalBar.setAttribute('aria-valuenow', String(Math.max(-10, Math.min(10, evalPawns))));
       dom.evalBar.setAttribute('aria-valuetext', `${scoreStr} for ${isWhite ? 'White' : 'Black'}`);
       // The fulcrum reads `--eval-pct` from an ancestor, so it lives on the
-      // tile, not on the bar itself.
-      if (dom.evalSection) dom.evalSection.style.setProperty('--eval-pct', String(pct));
+      // tile, not on the bar itself. Clamp the travel so a one-sided score
+      // never pushes the 22px fulcrum off the edge of the meter.
+      if (dom.evalSection) dom.evalSection.style.setProperty('--eval-pct', String(Math.max(5, Math.min(95, pct))));
     }
     if (dom.evalStaleBadge) dom.evalStaleBadge.style.display = isStale ? 'inline-flex' : 'none';
     if (dom.evalSection) {
@@ -1222,8 +1282,11 @@
     if (app) app.classList.toggle('analyzing', status === 'analyzing' || status === 'connecting');
   }
 
+  const SHEET_OUT_MS = 200; // matches mdSheetOut in CSS
+
   function openSettingsSheet() {
     if (!dom.settingsPanel) return;
+    dom.settingsPanel.classList.remove('is-closing');
     dom.settingsPanel.style.display = 'flex';
     // The sheet was hidden, so its segmented groups measured as zero.
     requestAnimationFrame(() => requestAnimationFrame(syncAllSegments));
@@ -1232,7 +1295,14 @@
 
   function closeSettingsSheet() {
     if (!dom.settingsPanel) return;
-    dom.settingsPanel.style.display = 'none';
+    const panel = dom.settingsPanel;
+    if (panel.style.display === 'none' || panel.classList.contains('is-closing')) return;
+    // Settle out before unmounting — no hard cut on the way down.
+    panel.classList.add('is-closing');
+    setTimeout(() => {
+      panel.classList.remove('is-closing');
+      panel.style.display = 'none';
+    }, SHEET_OUT_MS);
   }
 
   function renderPositionInfo(data) {
@@ -1377,17 +1447,19 @@
 
   // ─── Hint Rendering ────────────────────────────────────────────────
   function renderHints(data) {
+    const warningEl = document.getElementById('fair-play-warning');
+    const warningText = document.getElementById('fair-play-warning-text');
     if (data.exactHintBlocked) {
       if (dom.hintText) dom.hintText.textContent = data.exactHintBlocked.message;
       if (dom.hintFromTo) dom.hintFromTo.style.display = 'none';
       if (dom.hintCard) dom.hintCard.className = 'hint-card exact-move blocked';
       hideIdeaRail();
-      const warningEl = document.getElementById('fair-play-warning');
-      const warningText = document.getElementById('fair-play-warning-text');
       if (warningEl) warningEl.style.display = 'flex';
       if (warningText) warningText.textContent = data.exactHintBlocked.message;
       return;
     }
+    // A later successful analysis must clear a previously shown block.
+    if (warningEl) warningEl.style.display = 'none';
     if (!data.pvs || data.pvs.length === 0) {
       if (dom.hintText) dom.hintText.textContent = 'Waiting for analysis...';
       hideIdeaRail();
@@ -1450,16 +1522,13 @@
       }
     }
 
+    // The hero wash is driven entirely by the hint-card state classes
+    // (.super-ultra-mode / .human-mode) — the CSS reads them via :has().
     if (dom.hintCard) {
-      let accent = 'var(--accent-gold)';
-      if (settings.style === 'aggressive') accent = 'var(--accent-aggressive)';
-      if (settings.style === 'super_ultra_aggressive') accent = 'var(--accent-super-ultra)';
-      dom.hintCard.style.setProperty('--hint-accent', accent);
       const styleClass = settings.style === 'super_ultra_aggressive' ? ' super-ultra-mode' : '';
       const humanClass = settings.humanLikeMode ? ' human-mode' : '';
       dom.hintCard.className = 'hint-card exact-move' + styleClass + humanClass;
     }
-
   }
 
   function renderMoveClassificationEmpty() {

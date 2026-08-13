@@ -69,7 +69,7 @@
           <span class="md-typescale-label-md md-hero__kicker">Your move</span>
         </div>
         <div id="hint-card" class="hint-card md-hero__stage exact-move" aria-live="polite">
-          <p id="hint-text" class="hint-text md-typescale-display-sm-em">Waiting for a board…</p>
+          <p id="hint-text" class="hint-text">Waiting for a board…</p>
           <div id="hint-fromto" class="hint-fromto md-hero__squares" style="display:none" aria-label="Move squares"></div>
           <div id="fair-play-warning" class="fair-play-warning md-banner md-banner--error md-banner--iconed" style="display:none" role="alert">
             <span class="md-banner__icon" aria-hidden="true"></span>
@@ -165,7 +165,7 @@
           <h3 id="set-play" class="md-typescale-title-sm">How you want to play</h3>
 
           <label class="visually-hidden" for="setting-style">Style</label>
-          <select id="setting-style" class="visually-hidden">
+          <select id="setting-style" class="visually-hidden" tabindex="-1">
             <option value="normal" selected>Normal</option>
             <option value="aggressive">Aggressive</option>
             <option value="super_ultra_aggressive">Ultra Super Aggressive</option>
@@ -204,7 +204,7 @@
               <p class="human-mode-sub md-help">Prefer natural plans over engine-echo moves.</p>
               <span class="human-mode-status visually-hidden">Off</span>
             </div>
-            <input type="checkbox" id="setting-human-like-mode" class="human-mode-checkbox visually-hidden">
+            <input type="checkbox" id="setting-human-like-mode" class="human-mode-checkbox visually-hidden" tabindex="-1">
             <div class="md-segmented md-btn-group md-btn-group--connected human-mode-segmented" role="radiogroup" aria-label="Move voice">
               <span class="md-segmented__indicator" aria-hidden="true"></span>
               <button type="button" class="human-mode-opt md-btn-group__item is-selected" data-mode="off" role="radio" aria-checked="true">Engine</button>
@@ -216,7 +216,7 @@
         <section class="md-settings-block" aria-labelledby="set-think">
           <h3 id="set-think" class="md-typescale-title-sm">How hard to think</h3>
           <label class="visually-hidden" for="setting-analysis-quality">Analysis quality</label>
-          <select id="setting-analysis-quality" class="visually-hidden">
+          <select id="setting-analysis-quality" class="visually-hidden" tabindex="-1">
             <option value="auto" selected>Auto</option>
             <option value="fast">Fast</option>
             <option value="balanced">Balanced</option>
@@ -233,7 +233,7 @@
           <p class="md-help">Auto never hides a useful result just because a depth number is low.</p>
 
           <label class="visually-hidden" for="setting-candidate-lines">Candidate lines</label>
-          <select id="setting-candidate-lines" class="visually-hidden">
+          <select id="setting-candidate-lines" class="visually-hidden" tabindex="-1">
             <option value="auto" selected>Auto</option>
             <option value="3">3</option>
             <option value="5">5</option>
