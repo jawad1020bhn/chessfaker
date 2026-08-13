@@ -237,7 +237,14 @@ body {
 .md-app.no-position #position-info,
 .md-app.no-position #idea-section { display: none; }
 
-.md-canvas > * { animation: mdRise var(--md-sys-motion-med) var(--md-sys-motion-spatial) both; }
+.md-canvas > * {
+  animation: mdRise var(--md-sys-motion-med) var(--md-sys-motion-spatial) both;
+  /* Tiles with overflow:hidden would otherwise be shrunk to ~0 by flex
+     shrink (their automatic minimum is 0), clipping the balance/verdict
+     text and leaving only the colored surface. Keep them content-sized
+     and let the scrollable canvas handle the overflow instead. */
+  flex-shrink: 0;
+}
 .md-canvas > *:nth-child(2) { animation-delay: 30ms; }
 .md-canvas > *:nth-child(3) { animation-delay: 60ms; }
 .md-canvas > *:nth-child(4) { animation-delay: 90ms; }
@@ -727,7 +734,7 @@ body {
   justify-content: space-between;
   gap: 8px;
 }
-.md-balance__kicker { color: var(--balance-role-muted); letter-spacing: 0.12em; }
+.md-balance__kicker { color: var(--md-sys-color-on-surface-variant); letter-spacing: 0.12em; }
 .md-balance__stale {
   display: inline-flex;
   align-items: center;
@@ -738,30 +745,12 @@ body {
   padding: 2px 8px;
   border-radius: var(--md-sys-shape-full);
   background: color-mix(in oklab, currentColor 14%, transparent);
-  color: var(--balance-role-fg);
+  color: var(--md-sys-color-on-surface-variant);
   line-height: 1.2;
-}
-.md-balance__score {
-  margin-top: 2px;
-  font-family: var(--md-ref-typeface-brand);
-  font-size: clamp(2rem, 8vw, 2.75rem);
-  font-weight: 800;
-  letter-spacing: -0.045em;
-  line-height: 1.05;
-  font-variant-numeric: tabular-nums;
-}
-.md-balance__win-prob {
-  margin-top: 4px;
-  font-family: var(--md-ref-typeface-brand);
-  font-size: 0.9375rem;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  font-variant-numeric: tabular-nums;
-  color: var(--balance-role-fg);
 }
 .md-balance .eval-description {
   margin-top: 4px;
-  color: var(--balance-role-muted);
+  color: var(--md-sys-color-on-surface-variant);
   max-width: 28ch;
 }
 .md-skeleton {
@@ -800,6 +789,37 @@ body {
   border-radius: inherit;
   transform-origin: left center;
   transition: transform var(--md-sys-motion-slow) var(--md-sys-motion-spatial);
+}
+/* The win-probability breakdown lives inside the meter: a pill on each side
+   ("You 52%" / "Opp 48%"). The inverse-surface chip keeps legible contrast
+   over both the white fill and the dark remainder of the track. */
+.eval-bar-pct {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  padding: 3px 8px;
+  border-radius: var(--md-sys-shape-full);
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--md-ref-typeface-brand);
+  font-size: 0.6875rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  transition: opacity var(--md-sys-motion-fast) var(--md-sys-motion-effects);
+}
+.eval-bar-pct--left { left: 6px; }
+.eval-bar-pct--right { right: 6px; }
+/* No live analysis yet — the meter stays a silent placeholder and the
+   breakdown pills fade out. */
+.md-balance[data-state="empty"] .eval-bar-pct,
+.md-balance[data-state="loading"] .eval-bar-pct,
+.md-balance[data-state="error"] .eval-bar-pct {
+  opacity: 0;
 }
 /* The morphing fulcrum rides the White/Black split. `--eval-pct` is set on
    the tile (an ancestor) so the value inherits down to this absolute child. */
@@ -845,7 +865,7 @@ body {
    identity, so neither side is muted into secondary status. */
 .eval-label {
   font-weight: 750;
-  color: var(--balance-role-fg);
+  color: var(--md-sys-color-on-surface);
 }
 
 /* ── Banners ── */
@@ -990,7 +1010,7 @@ body {
 .md-verdict__kicker {
   position: relative;
   z-index: 1;
-  color: var(--verdict-role-muted);
+  color: var(--md-sys-color-on-surface-variant);
   letter-spacing: 0.12em;
   margin-bottom: var(--md-sys-space-2);
 }
@@ -1011,7 +1031,7 @@ body {
 .md-verdict__empty-text {
   font-size: 0.875rem;
   font-weight: 600;
-  color: var(--verdict-role-muted);
+  color: var(--md-sys-color-on-surface-variant);
   line-height: 1.4;
 }
 .md-verdict__copy { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -1019,7 +1039,7 @@ body {
   font-size: 0.8125rem;
   font-weight: 700;
   letter-spacing: 0.02em;
-  color: var(--verdict-role-muted);
+  color: var(--md-sys-color-on-surface-variant);
 }
 .md-verdict__label {
   font-family: var(--md-ref-typeface-brand);
@@ -1028,6 +1048,7 @@ body {
   letter-spacing: -0.03em;
   line-height: 1.1;
   overflow-wrap: anywhere;
+  color: var(--md-sys-color-on-surface);
 }
 /* Chess annotation symbol (!!, ?!, …) — quieter than the verdict word so
    the label stays the hero, but never dropped to disabled opacity. */
@@ -1040,7 +1061,7 @@ body {
 .md-verdict__metric {
   font-size: 0.8125rem;
   font-weight: 650;
-  color: var(--verdict-role-muted);
+  color: var(--md-sys-color-on-surface-variant);
 }
 .md-verdict__ring {
   --acc: 0;
@@ -1082,6 +1103,7 @@ body {
   font-weight: 800;
   letter-spacing: -0.03em;
   font-variant-numeric: tabular-nums;
+  color: var(--md-sys-color-on-surface);
 }
 .md-verdict__ring-cap {
   display: block;
@@ -1089,7 +1111,7 @@ body {
   font-weight: 750;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--verdict-role-muted);
+  color: var(--md-sys-color-on-surface-variant);
   margin-top: 2px;
 }
 

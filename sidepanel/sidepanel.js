@@ -105,8 +105,8 @@
     evalBarWhite: $('#eval-bar-white'),
     evalBar: $('#eval-bar'),
     evalSection: $('#eval-section'),
-    evalScore: $('#eval-score'),
-    evalWinProb: $('#eval-win-prob'),
+    evalBarWhitePct: $('#eval-bar-white-pct'),
+    evalBarBlackPct: $('#eval-bar-black-pct'),
     evalStaleBadge: $('#eval-stale-badge'),
     evalWhiteLabel: $('#eval-white-label'),
     evalBlackLabel: $('#eval-black-label'),
@@ -307,8 +307,6 @@
       dom.evalSection.dataset.state = 'loading';
     }
     if (!hasPrevScore) {
-      if (dom.evalScore) dom.evalScore.innerHTML = '<span class="md-skeleton">…</span>';
-      if (dom.evalWinProb) dom.evalWinProb.innerHTML = '<span class="md-skeleton">…</span>';
       if (dom.evalDescription) dom.evalDescription.textContent = 'Analyzing position…';
       if (dom.evalWhiteLabel) dom.evalWhiteLabel.textContent = '—';
       if (dom.evalBlackLabel) dom.evalBlackLabel.textContent = '—';
@@ -324,8 +322,6 @@
       dom.evalSection.dataset.lean = 'even';
       dom.evalSection.style.setProperty('--eval-pct', '50');
     }
-    if (dom.evalScore) dom.evalScore.textContent = '—';
-    if (dom.evalWinProb) dom.evalWinProb.textContent = '—';
     if (dom.evalDescription) dom.evalDescription.textContent = errorMsg;
     if (dom.evalStaleBadge) dom.evalStaleBadge.style.display = 'none';
     if (dom.evalWhiteLabel) dom.evalWhiteLabel.textContent = '—';
@@ -339,8 +335,6 @@
       dom.evalSection.dataset.lean = 'even';
       dom.evalSection.style.setProperty('--eval-pct', '50');
     }
-    if (dom.evalScore) dom.evalScore.textContent = '—';
-    if (dom.evalWinProb) dom.evalWinProb.textContent = '—';
     if (dom.evalDescription) dom.evalDescription.textContent = 'Waiting for analysis…';
     if (dom.evalStaleBadge) dom.evalStaleBadge.style.display = 'none';
     if (dom.evalWhiteLabel) dom.evalWhiteLabel.textContent = '—';
@@ -1179,9 +1173,13 @@
       dom.evalBarWhite.style.transform = `scaleX(${winFraction})`;
     }
 
-    // Win probability from player perspective vs opponent
-    const playerWinPct = Math.round(window.ChessHintEngine.formatEvalBar(score, scoreType, isWhite));
-    const oppWinPct = 100 - playerWinPct;
+    // The win-probability breakdown lives inside the meter: the left pill
+    // sits over White's share, the right pill over Black's remainder. "You"
+    // and "Opp" follow the assisted player's color.
+    const whiteShare = Math.round(whiteWinPct);
+    const blackShare = 100 - whiteShare;
+    if (dom.evalBarWhitePct) dom.evalBarWhitePct.textContent = `${isWhite ? 'You' : 'Opp'} ${whiteShare}%`;
+    if (dom.evalBarBlackPct) dom.evalBarBlackPct.textContent = `${isWhite ? 'Opp' : 'You'} ${blackShare}%`;
 
     const scoreStr = scoreType === 'mate'
       ? (displayScore > 0 ? `+M${displayScore}` : `-M${Math.abs(displayScore)}`)
@@ -1200,8 +1198,6 @@
       // tile, not on the bar itself.
       if (dom.evalSection) dom.evalSection.style.setProperty('--eval-pct', String(pct));
     }
-    if (dom.evalScore) dom.evalScore.textContent = scoreStr;
-    if (dom.evalWinProb) dom.evalWinProb.textContent = `You ${playerWinPct}% · Opp ${oppWinPct}%`;
     if (dom.evalStaleBadge) dom.evalStaleBadge.style.display = isStale ? 'inline-flex' : 'none';
     if (dom.evalSection) {
       const lean = scoreType === 'mate'

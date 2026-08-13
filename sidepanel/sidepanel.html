@@ -91,13 +91,13 @@
             <p class="md-typescale-label-md md-balance__kicker">Balance</p>
             <span id="eval-stale-badge" class="md-balance__stale" style="display:none">cached</span>
           </div>
-          <p id="eval-score" class="md-balance__score">—</p>
-          <p id="eval-win-prob" class="md-balance__win-prob">—</p>
           <p id="eval-description" class="eval-description md-typescale-body-md">Waiting for analysis…</p>
         </div>
         <div class="md-balance__ribbon">
           <div id="eval-bar" class="eval-bar" role="meter" aria-label="Evaluation" aria-valuemin="-10" aria-valuemax="10" aria-valuenow="0" aria-valuetext="0.0">
             <div id="eval-bar-white" class="eval-bar-white" style="transform: scaleX(0.5);"></div>
+            <span id="eval-bar-white-pct" class="eval-bar-pct eval-bar-pct--left" aria-hidden="true"></span>
+            <span id="eval-bar-black-pct" class="eval-bar-pct eval-bar-pct--right" aria-hidden="true"></span>
           </div>
           <span class="md-balance__fulcrum" aria-hidden="true"></span>
         </div>

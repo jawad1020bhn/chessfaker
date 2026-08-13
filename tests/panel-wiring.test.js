@@ -4,7 +4,8 @@
 // Panel wiring regression guard: the "Balance" and "Last move" tiles are the
 // two places where the Expressive design previously lived only in CSS while
 // the HTML/JS still spoke legacy markup (`.md-card .md-eval`, a hidden
-// `#eval-bar-black`, `.class-*` chip classes, a missing `#eval-score`, a
+// `#eval-bar-black`, `.class-*` chip classes, win-probability pills absent
+// from the meter, a
 // fulcrum that could never move because `--eval-pct` was set on the wrong
 // node). This test locks the wiring so a future edit cannot silently
 // disconnect the layers again.
@@ -30,21 +31,25 @@ assert.deepEqual(missing, [], `sidepanel.js references ids missing from sidepane
 const balanceHtml = html.match(/<section id="eval-section"[\s\S]*?<\/section>/)[0];
 assert.match(balanceHtml, /class="md-balance"/, 'Balance section uses the .md-balance component, not legacy .md-card .md-eval');
 assert.match(balanceHtml, /md-balance__orb/, 'decorative orbs present');
-assert.match(balanceHtml, /md-balance__head/, 'head (kicker + score + description) present');
-assert.match(balanceHtml, /id="eval-score"/, 'score headline element present (was missing)');
-assert.match(balanceHtml, /id="eval-win-prob"/, 'win-probability headline element present');
+assert.match(balanceHtml, /md-balance__head/, 'head (kicker + description) present');
+assert.doesNotMatch(balanceHtml, /id="eval-score"/, 'duplicate big score headline removed — the +/- score lives in the ribbon side labels');
+assert.doesNotMatch(balanceHtml, /id="eval-win-prob"/, 'win-probability moved inside the meter, not a standalone headline');
+assert.match(balanceHtml, /id="eval-bar-white-pct"/, 'white-side win-probability pill present in the meter');
+assert.match(balanceHtml, /id="eval-bar-black-pct"/, 'black-side win-probability pill present in the meter');
 assert.match(balanceHtml, /id="eval-stale-badge"/, 'stale cache badge element present');
 assert.match(balanceHtml, /md-balance__ribbon/, 'ribbon container present');
 assert.match(balanceHtml, /md-balance__fulcrum/, 'morphing fulcrum present (was missing)');
 assert.match(balanceHtml, /eval-side/, 'piece-identity side labels present');
-assert.doesNotMatch(balanceHtml, /eval-bar-black|md-eval__|eval-bar-container/, 'no legacy dual-bar / .md-eval markup remains');
+assert.doesNotMatch(balanceHtml, /id="eval-bar-black"|class="eval-bar-black"|md-eval__|eval-bar-container/, 'no legacy dual-bar / .md-eval markup remains');
 assert.ok(!css.includes('.eval-bar-black'), 'no dead .eval-bar-black rule in CSS');
 assert.match(css, /\.md-balance__fulcrum \{[\s\S]*?left: calc\(var\(--eval-pct/, 'fulcrum position reads --eval-pct');
 assert.match(js, /dom\.evalSection\.style\.setProperty\('--eval-pct'/, 'JS sets --eval-pct on the tile (ancestor of the fulcrum)');
 assert.ok(!js.includes("dom.evalSection.style.setProperty('--eval-pct', String(pct));\n      dom.evalBar"), '--eval-pct is not set on the bar itself');
-assert.ok(css.includes('.md-balance__win-prob'), '.md-balance__win-prob rule exists');
+assert.ok(css.includes('.eval-bar-pct'), '.eval-bar-pct in-meter pill rule exists');
+assert.ok(css.includes('.eval-bar-pct--left') && css.includes('.eval-bar-pct--right'), 'left/right pill placements exist');
 assert.ok(css.includes('.md-skeleton'), '.md-skeleton shimmer rule exists in CSS');
-assert.match(js, /dom\.evalWinProb/, 'JS sets win-probability text');
+assert.match(js, /dom\.evalBarWhitePct/, 'JS sets the white-side win-probability pill');
+assert.match(js, /dom\.evalBarBlackPct/, 'JS sets the black-side win-probability pill');
 
 // ── 3. Last-move verdict tile contract ──
 const verdictHtml = html.match(/<section id="move-class-section"[\s\S]*?<\/section>/)[0];

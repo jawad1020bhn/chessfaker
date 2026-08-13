@@ -43,7 +43,10 @@ the HTML, the hidden `#eval-bar-black` dual-bar remnant was still being
 transformed, and `--eval-pct` was written to the bar instead of the tile the
 fulcrum inherits from. The HTML, CSS, and JS now implement one contract each,
 and `tests/panel-wiring.test.js` locks the three layers together so a future
-edit cannot silently disconnect them again.
+edit cannot silently disconnect them again. The win-probability breakdown
+(`You 52% · Opp 48%`) is a pair of inverse-surface pills inside the meter
+itself — one per side, following the player's color — so it never competes
+with the ribbon side labels, which carry the +/- score.
 
 ## Expressive tactics used
 
@@ -80,8 +83,7 @@ effects curve for color/opacity.
 - **Hero** — primary container; switches to secondary (human) or tertiary (ultra); displays only the SAN move
 - **Caption rail** — "Why this move": idea, capture/sacrifice, cost, risk, king-hunt, balance posture
 - **Squares lockup** — piece glyph + from/to square chips inside the hero
-- **Balance tile** — content-first scorecard: kicker + player-perspective
-  score headline + win-probability line (`You 64% · Opp 36%`) + prose description;
+- **Balance tile** — content-first scorecard: kicker + prose description;
   a 32dp dual-identity ribbon (white fill from the left, inverse-surface remainder)
   with a morphing fulcrum riding the split; White/Black piece-identity labels;
   4-state lifecycle (`empty → loading → data → error/stale`) with skeleton shimmer;
