@@ -69,13 +69,12 @@
   --md-sys-color-scrim: #000000;
   --md-sys-color-shadow: #000000;
 
-  /* Legacy aliases used by existing JS inline styles */
+  /* Aliases for JS-set inline accents — all theme-aware token references,
+     so a value that reads green/amber/red in light mode keeps contrast in
+     dark mode too (no hardcoded light-theme hexes). */
   --accent-green: var(--md-sys-color-primary);
-  --accent-yellow: #8b5000;
+  --accent-yellow: var(--md-sys-color-tertiary);
   --accent-red: var(--md-sys-color-error);
-  --accent-gold: var(--md-sys-color-primary);
-  --accent-aggressive: #b45309;
-  --accent-super-ultra: #9b1c1c;
   --text-secondary: var(--md-sys-color-on-surface-variant);
 
   --md-comp-state-hover: color-mix(in oklab, var(--md-sys-color-on-surface) 8%, transparent);
@@ -394,7 +393,7 @@ body {
   font-size: 0.75rem;
   font-weight: 650;
   padding: 8px 12px;
-  min-height: 36px;
+  min-height: 40px;
   border-radius: var(--md-sys-shape-full);
   cursor: pointer;
   transition:
@@ -453,6 +452,7 @@ body {
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+  transition: background-color var(--md-sys-motion-fast) var(--md-sys-motion-effects);
 }
 .status-dot.offline, .status-dot.error { background: var(--md-sys-color-error); }
 .status-dot.connecting, .status-dot.analyzing { background: var(--md-sys-color-tertiary); }
@@ -478,6 +478,7 @@ body {
 .context-turn { transition: color var(--md-sys-motion-fast) var(--md-sys-motion-effects); }
 #position-context.verified .context-turn { color: var(--md-sys-color-primary); }
 #position-context.partial .context-turn { color: var(--md-sys-color-tertiary); }
+#position-context.pending .context-turn { color: var(--md-sys-color-outline); }
 
 /* ── Canvas ── */
 .md-canvas {
@@ -530,7 +531,9 @@ body {
 .md-hero__stage { position: relative; z-index: 1; min-height: 84px; }
 .hint-text {
   font-family: var(--md-ref-typeface-brand);
-  font-size: clamp(1.6rem, 6vw, 2.2rem);
+  /* The move is the only display type on the canvas. True display scale
+     (≈ display-sm), responsive so long SAN never crowds the stage. */
+  font-size: clamp(1.75rem, 7vw, 2.25rem);
   font-weight: 800;
   letter-spacing: -0.03em;
   line-height: 1.15;
@@ -565,11 +568,7 @@ body {
 }
 .sq-arrow { opacity: 0.66; font-weight: 500; }
 .hint-card.blocked .hint-text { color: var(--md-sys-color-error); }
-.hint-card.super-ultra-mode { --hero-shift: 8deg; }
-.hint-card.super-ultra-mode ~ .md-hero__meta,
-.md-hero:has(.super-ultra-mode) {
-  /* hero already uses container color; aggression is a tertiary wash */
-}
+/* Aggression / human voice washes the whole hero in its role container. */
 .md-hero:has(.super-ultra-mode) {
   background: var(--md-sys-color-tertiary-container);
   color: var(--md-sys-color-on-tertiary-container);
@@ -734,7 +733,10 @@ body {
   justify-content: space-between;
   gap: 8px;
 }
-.md-balance__kicker { color: var(--md-sys-color-on-surface-variant); letter-spacing: 0.12em; }
+/* All secondary text on the tile reads the tile's own role tokens, so a
+   lean retint recolors the whole surface — kicker, description, badge and
+   side labels travel together (no grey stragglers over role containers). */
+.md-balance__kicker { color: var(--balance-role-muted); letter-spacing: 0.12em; }
 .md-balance__stale {
   display: inline-flex;
   align-items: center;
@@ -745,12 +747,12 @@ body {
   padding: 2px 8px;
   border-radius: var(--md-sys-shape-full);
   background: color-mix(in oklab, currentColor 14%, transparent);
-  color: var(--md-sys-color-on-surface-variant);
+  color: var(--balance-role-muted);
   line-height: 1.2;
 }
 .md-balance .eval-description {
   margin-top: 4px;
-  color: var(--md-sys-color-on-surface-variant);
+  color: var(--balance-role-muted);
   max-width: 28ch;
 }
 .md-skeleton {
@@ -790,9 +792,13 @@ body {
   transform-origin: left center;
   transition: transform var(--md-sys-motion-slow) var(--md-sys-motion-spatial);
 }
-/* The win-probability breakdown lives inside the meter: a pill on each side
-   ("You 52%" / "Opp 48%"). The inverse-surface chip keeps legible contrast
-   over both the white fill and the dark remainder of the track. */
+/* The win-probability breakdown lives inside the meter: one chip per side.
+   Each chip inverts against the half it sits on — the left chip is the
+   inverse surface over White's light fill, the right chip is the lightest
+   surface over Black's inverse-surface remainder. That keeps a legible
+   figure on both halves in both themes, and mirrors the light/dark piece
+   identity used everywhere else. A hairline ring keeps the chip defined
+   even when its fill and the meter half share a value. */
 .eval-bar-pct {
   position: absolute;
   top: 50%;
@@ -800,8 +806,6 @@ body {
   z-index: 2;
   padding: 3px 8px;
   border-radius: var(--md-sys-shape-full);
-  background: var(--md-sys-color-surface-container-high);
-  color: var(--md-sys-color-on-surface);
   font-family: var(--md-ref-typeface-brand);
   font-size: 0.6875rem;
   font-weight: 800;
@@ -810,10 +814,19 @@ body {
   line-height: 1;
   white-space: nowrap;
   pointer-events: none;
+  box-shadow: inset 0 0 0 1px var(--md-sys-color-outline-variant);
   transition: opacity var(--md-sys-motion-fast) var(--md-sys-motion-effects);
 }
-.eval-bar-pct--left { left: 6px; }
-.eval-bar-pct--right { right: 6px; }
+.eval-bar-pct--left {
+  left: 6px;
+  background: var(--md-sys-color-inverse-surface);
+  color: var(--md-sys-color-inverse-on-surface);
+}
+.eval-bar-pct--right {
+  right: 6px;
+  background: var(--md-sys-color-surface-container-lowest);
+  color: var(--md-sys-color-on-surface);
+}
 /* No live analysis yet — the meter stays a silent placeholder and the
    breakdown pills fade out. */
 .md-balance[data-state="empty"] .eval-bar-pct,
@@ -865,7 +878,7 @@ body {
    identity, so neither side is muted into secondary status. */
 .eval-label {
   font-weight: 750;
-  color: var(--md-sys-color-on-surface);
+  color: var(--balance-role-fg);
 }
 
 /* ── Banners ── */
@@ -1010,7 +1023,7 @@ body {
 .md-verdict__kicker {
   position: relative;
   z-index: 1;
-  color: var(--md-sys-color-on-surface-variant);
+  color: var(--verdict-role-muted);
   letter-spacing: 0.12em;
   margin-bottom: var(--md-sys-space-2);
 }
@@ -1028,10 +1041,13 @@ body {
   display: flex;
   align-items: center;
 }
+/* All text on the tile reads the tile's own role tokens — mover line,
+   verdict word, metric and the accuracy ring follow the container's
+   on-color instead of a hardcoded surface tone. */
 .md-verdict__empty-text {
   font-size: 0.875rem;
   font-weight: 600;
-  color: var(--md-sys-color-on-surface-variant);
+  color: var(--verdict-role-muted);
   line-height: 1.4;
 }
 .md-verdict__copy { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -1039,7 +1055,7 @@ body {
   font-size: 0.8125rem;
   font-weight: 700;
   letter-spacing: 0.02em;
-  color: var(--md-sys-color-on-surface-variant);
+  color: var(--verdict-role-muted);
 }
 .md-verdict__label {
   font-family: var(--md-ref-typeface-brand);
@@ -1048,7 +1064,7 @@ body {
   letter-spacing: -0.03em;
   line-height: 1.1;
   overflow-wrap: anywhere;
-  color: var(--md-sys-color-on-surface);
+  color: var(--verdict-role-fg);
 }
 /* Chess annotation symbol (!!, ?!, …) — quieter than the verdict word so
    the label stays the hero, but never dropped to disabled opacity. */
@@ -1061,7 +1077,7 @@ body {
 .md-verdict__metric {
   font-size: 0.8125rem;
   font-weight: 650;
-  color: var(--md-sys-color-on-surface-variant);
+  color: var(--verdict-role-muted);
 }
 .md-verdict__ring {
   --acc: 0;
@@ -1103,7 +1119,7 @@ body {
   font-weight: 800;
   letter-spacing: -0.03em;
   font-variant-numeric: tabular-nums;
-  color: var(--md-sys-color-on-surface);
+  color: var(--verdict-role-fg);
 }
 .md-verdict__ring-cap {
   display: block;
@@ -1111,7 +1127,7 @@ body {
   font-weight: 750;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--md-sys-color-on-surface-variant);
+  color: var(--verdict-role-muted);
   margin-top: 2px;
 }
 
@@ -1151,8 +1167,6 @@ body {
   display: none;
   flex-direction: column;
 }
-.md-sheet[style*="display: block"],
-.md-sheet:not([hidden])[style*="block"] { display: flex; }
 .md-sheet__bar {
   display: flex;
   justify-content: space-between;
@@ -1170,7 +1184,9 @@ body {
 }
 
 .md-settings-block { display: flex; flex-direction: column; gap: var(--md-sys-space-3); }
-.md-settings-block h3 { color: var(--md-sys-color-primary); }
+/* Section headings match the canvas headings (Position card): on-surface,
+   not brand-green — color is reserved for states, choices and the hero. */
+.md-settings-block h3 { color: var(--md-sys-color-on-surface); }
 .md-field-label {
   font-size: 0.75rem;
   font-weight: 700;
@@ -1247,6 +1263,9 @@ body {
   gap: var(--md-sys-space-3);
   padding: var(--md-sys-space-2) 0;
 }
+/* Author `display: flex` would otherwise override the UA [hidden] rule,
+   keeping style-scoped rows (Early King Hunt) visible when unavailable. */
+.md-switch-row[hidden] { display: none; }
 .md-switch-row__title { font-weight: 650; }
 .md-switch { position: relative; display: inline-flex; cursor: pointer; flex-shrink: 0; }
 /* 52×44 hit area around the 52×32 visual track. */
@@ -1368,7 +1387,7 @@ body {
   margin: var(--md-sys-space-3) 0;
 }
 .md-diagnostics__grid span { display: block; color: var(--md-sys-color-on-surface-variant); font-size: 0.6875rem; }
-.md-diagnostics__grid strong { font-size: 1.125rem; }
+.md-diagnostics__grid strong { font-size: 1.125rem; font-variant-numeric: tabular-nums; }
 .api-provider-calls { font-size: 0.75rem; color: var(--md-sys-color-on-surface-variant); line-height: 1.45; }
 
 /* ── Dialog / shortcuts ── */
@@ -1438,7 +1457,8 @@ kbd {
   align-items: center;
   gap: 10px;
   padding: 12px 16px;
-  border-radius: var(--md-sys-shape-xs);
+  /* Organic family radius — 4px was the only sharp corner in the system. */
+  border-radius: 16px 12px 18px 12px;
   background: var(--md-sys-color-inverse-surface);
   color: var(--md-sys-color-inverse-on-surface);
   pointer-events: auto;
@@ -1461,14 +1481,26 @@ kbd {
 
 /* ── Settings display fallback (JS toggles inline display) ── */
 #settings-panel { display: none; }
-#settings-panel[style*="display: block"] { display: flex; }
+/* Entrance and exit share one curve family: rise in on the spatial spring,
+   settle out on the effects curve — no hard cuts on either side. */
 #settings-panel[style*="display: flex"] { animation: mdSheetIn 340ms var(--md-sys-motion-spatial); }
+#settings-panel.is-closing { animation: mdSheetOut 200ms var(--md-sys-motion-effects) forwards; }
 @keyframes mdSheetIn {
   from { opacity: 0.4; transform: translateY(28px); }
   to { opacity: 1; transform: none; }
 }
+@keyframes mdSheetOut {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(20px); }
+}
 #shortcut-help { display: none; }
-#shortcut-help[style*="display: block"] { display: block; }
+/* Shortcut dialog: scrim fades, sheet rises — same recipe as the sheet. */
+#shortcut-help[style*="display: block"] .md-dialog__scrim { animation: mdFadeIn 240ms var(--md-sys-motion-effects) both; }
+#shortcut-help[style*="display: block"] .md-dialog__sheet { animation: mdSheetIn 340ms var(--md-sys-motion-spatial) both; }
+#shortcut-help.is-closing .md-dialog__scrim { animation: mdFadeOut 160ms var(--md-sys-motion-effects) both; }
+#shortcut-help.is-closing .md-dialog__sheet { animation: mdSheetOut 200ms var(--md-sys-motion-spatial) both; }
+@keyframes mdFadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes mdFadeOut { from { opacity: 1; } to { opacity: 0; } }
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 6px; }
