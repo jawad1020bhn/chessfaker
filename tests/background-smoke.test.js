@@ -40,6 +40,17 @@ const chrome = {
         return Promise.resolve();
       }
     },
+    // chrome.storage.session — mirrors the in-memory mock so the
+    // service-worker ephemeral-state persistence path is exercised.
+    session: {
+      get: storageGet,
+      set(object, callback) { Object.assign(values, object); callback?.(); return Promise.resolve(); },
+      remove(keys, callback) {
+        for (const key of (Array.isArray(keys) ? keys : [keys])) delete values[key];
+        callback?.();
+        return Promise.resolve();
+      }
+    },
     onChanged: { addListener() {} }
   },
   alarms: { get(_name, callback) { callback(null); }, create() {}, onAlarm: { addListener() {} } },
@@ -50,6 +61,7 @@ const chrome = {
   },
   sidePanel: { async setPanelBehavior() {} },
   runtime: {
+    id: 'test-extension-id',
     onMessage: { addListener(listener) { listeners.message = listener; } },
     onInstalled: { addListener() {} },
     async sendMessage(message) { sentMessages.push(message); }
@@ -134,9 +146,18 @@ context.importScripts = (...files) => {
 vm.runInContext(fs.readFileSync(path.join(root, 'background.js'), 'utf8'), context, { filename: 'background.js' });
 assert.equal(typeof listeners.message, 'function', 'service worker message listener is registered');
 
-function send(message) {
+(async () => {
+  // D4: untrusted senders (foreign extension ids, content-script tabs)
+  // are rejected before any privileged handling.
+  const foreign = await send({ type: 'clear_caches' }, { id: 'another-extension' });
+  assert.equal(foreign && foreign.ok, false, 'foreign extension id is rejected');
+  const fromTab = await send({ type: 'read_board' }, { id: 'test-extension-id', tab: { id: 9 } });
+  assert.equal(fromTab && fromTab.ok, false, 'content-script (tab) context is rejected');
+})();
+
+function send(message, sender = { id: 'test-extension-id' }) {
   return new Promise(resolve => {
-    const asyncResponse = listeners.message(message, {}, resolve);
+    const asyncResponse = listeners.message(message, sender, resolve);
     if (asyncResponse !== true) queueMicrotask(() => resolve(undefined));
   });
 }
@@ -186,7 +207,7 @@ function send(message) {
   });
   const tablebaseUpdate = await waitForMessage('analysis_update', tablebaseUpdates);
   assert.equal(tablebaseUpdate.data.source, 'tablebase');
-  assert.equal(tablebaseUpdate.data.hintLevel, 5, 'all requests produce exact-move hints regardless of legacy requested level');
+  assert.equal(tablebaseUpdate.data.hintLevel, undefined, 'legacy hint-level plumbing is no longer synthesized onto results');
   assert.equal(tablebaseUpdate.data.exactHintBlocked, null);
   assert.equal(remoteUrls.filter(url => url.includes('tablebase.lichess.ovh')).length, 1);
   assert.equal(remoteUrls.filter(url => url.includes('cloud-eval') || url.includes('chess-api.com')).length, 0,

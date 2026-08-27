@@ -56,13 +56,21 @@ const migrated = policy.migrateLegacySettings({ depthTarget: 30, cloudDepth: 10,
 assert.equal(migrated.analysisQuality, 'deep');
 assert.equal(migrated.candidateLines, 5);
 assert.equal(migrated.whiteRepertoire, undefined);
-assert.equal(policy.resolveMultiPv({ candidateLines: 'auto', style: 'normal' }), 2);
-assert.equal(policy.resolveMultiPv({ candidateLines: 'auto', style: 'aggressive' }), 3);
+assert.equal(policy.resolveMultiPv({ candidateLines: 'auto', style: 'normal' }), 2,
+  'the internal objective profile keeps a narrow auto width');
+assert.equal(policy.resolveMultiPv({ candidateLines: 'auto', style: 'super_ultra_aggressive' }), 5,
+  'the single persona always requests the wide ranking pool');
 assert.equal(policy.resolveMultiPv({ candidateLines: 'auto', style: 'super_ultra_aggressive' }), 5);
 assert.equal(policy.describeQuality('opening-statistics').label, 'Opening statistics');
 assert.equal(policy.shouldReplaceHumanWithEngine({ source: 'masters-explorer' }, start), false);
 
 const localLabel = policy.qualityClassFor({ source: 'local-engine', depth: 3 });
 assert.equal(localLabel, 'shallow-engine');
+
+// Opponent-aware Auto aggression (the dial's mapping).
+assert.equal(policy.suggestAggressionLevel(650), 3, 'below ~800 the persona runs Max Chaos');
+assert.equal(policy.suggestAggressionLevel(1100), 2, 'the club band keeps the signature level');
+assert.equal(policy.suggestAggressionLevel(1750), 1, 'strong opposition gets the sound discipline');
+assert.equal(policy.suggestAggressionLevel(null), null, 'unknown ratings fall back outside the mapping');
 
 console.log('analysis-contract tests passed');

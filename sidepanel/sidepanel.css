@@ -91,6 +91,7 @@
   --md-icon-trend-down: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='m16 18 2.29-2.29-4.88-4.88-4 4L2 7.41 3.41 6l6 6 4-4 5.88 5.88L22 11.17V18h-6Z'/%3E%3C/svg%3E");
   --md-icon-info: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm1 15h-2v-6h2v6Zm0-8h-2V9h2V7Z'/%3E%3C/svg%3E");
   --md-icon-reply: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z'/%3E%3C/svg%3E");
+  --md-icon-book: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M18 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2ZM6 4h5v8l-2.5-1.5L6 12V4Z'/%3E%3C/svg%3E");
 
   /* Chess-piece identity neutrals — theme-independent on purpose. */
   --md-piece-light: #f7f4ee;
@@ -98,7 +99,8 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  /* Auto dark — suppressed when the user pinned Light in settings. */
+  :root:not([data-theme="light"]) {
     --md-sys-color-primary: #3dd59d;
     --md-sys-color-on-primary: #003826;
     --md-sys-color-primary-container: #005138;
@@ -133,14 +135,44 @@
   }
 }
 
-/* ── Type scale (baseline + emphasized) ── */
-.md-typescale-display-sm-em {
-  font-family: var(--md-ref-typeface-brand);
-  font-size: 2.125rem;
-  line-height: 1.18;
-  font-weight: 800;
-  letter-spacing: -0.03em;
+/* Manual dark override (settings → Appearance → Dark). Identical tokens to
+   the automatic dark scheme; kept in one place by construction — edit both
+   blocks together, or move a token to a shared custom property. */
+:root[data-theme="dark"] {
+    --md-sys-color-primary: #3dd59d;
+    --md-sys-color-on-primary: #003826;
+    --md-sys-color-primary-container: #005138;
+    --md-sys-color-on-primary-container: #5ef2b8;
+    --md-sys-color-secondary: #b3ccbe;
+    --md-sys-color-on-secondary: #1e352b;
+    --md-sys-color-secondary-container: #354b41;
+    --md-sys-color-on-secondary-container: #cfe9da;
+    --md-sys-color-tertiary: #ffb86b;
+    --md-sys-color-on-tertiary: #4a2800;
+    --md-sys-color-tertiary-container: #693c00;
+    --md-sys-color-on-tertiary-container: #ffdcbe;
+    --md-sys-color-error: #ffb4ab;
+    --md-sys-color-on-error: #690005;
+    --md-sys-color-error-container: #93000a;
+    --md-sys-color-on-error-container: #ffdad6;
+    --md-sys-color-surface: #0e1512;
+    --md-sys-color-surface-dim: #0e1512;
+    --md-sys-color-surface-bright: #343b37;
+    --md-sys-color-surface-container-lowest: #090f0c;
+    --md-sys-color-surface-container-low: #161d19;
+    --md-sys-color-surface-container: #1a211d;
+    --md-sys-color-surface-container-high: #242c27;
+    --md-sys-color-surface-container-highest: #2f3632;
+    --md-sys-color-on-surface: #dce4de;
+    --md-sys-color-on-surface-variant: #bfc9c1;
+    --md-sys-color-outline: #89938c;
+    --md-sys-color-outline-variant: #3f4943;
+    --md-sys-color-inverse-surface: #dce4de;
+    --md-sys-color-inverse-on-surface: #2b322e;
+    --md-sys-color-inverse-primary: #006c4c;
 }
+
+/* ── Type scale (baseline + emphasized) ── */
 .md-typescale-headline-sm {
   font-family: var(--md-ref-typeface-brand);
   font-size: 1.5rem;
@@ -589,6 +621,66 @@ body {
 }
 .md-hero__meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--md-sys-space-2); position: relative; z-index: 1; }
 .md-hero__kicker { opacity: 0.78; letter-spacing: 0.12em; }
+/* Persona chip — the live aggression level on the hero meta row. Expressive
+   pill: tonal fill, hairline outline, level-tinted; pops with the spatial
+   motion token whenever the resolved level changes. */
+.md-persona-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: var(--md-sys-shape-full, 999px);
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface-variant);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  text-transform: uppercase;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background var(--md-sys-motion-spatial, 240ms) ease,
+    color var(--md-sys-motion-spatial, 240ms) ease,
+    border-color var(--md-sys-motion-spatial, 240ms) ease;
+}
+.md-persona-chip::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+.md-persona-chip[data-level='1'] {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  border-color: transparent;
+}
+.md-persona-chip[data-level='2'] {
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+  border-color: transparent;
+}
+.md-persona-chip[data-level='3'] {
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+  border-color: transparent;
+}
+.md-persona-chip.is-resolving {
+  animation: mdPersonaChipPop 340ms var(--md-sys-motion-spatial, cubic-bezier(0.2, 0, 0, 1));
+}
+@keyframes mdPersonaChipPop {
+  0% { transform: scale(0.92); }
+  55% { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .md-persona-chip.is-resolving { animation: none; }
+  .md-persona-chip { transition: none; }
+}
 .md-hero__stage { position: relative; z-index: 1; min-height: 84px; text-align: center; }
 .hint-text {
   font-family: var(--md-ref-typeface-brand);
@@ -662,11 +754,6 @@ body {
   to { transform: translateY(0.04em); opacity: 1; }
 }
 .hint-card.blocked .hint-text { color: var(--md-sys-color-error); }
-.hint-card.super-ultra-mode { --hero-shift: 8deg; }
-.hint-card.super-ultra-mode ~ .md-hero__meta,
-.md-hero:has(.super-ultra-mode) {
-  /* hero already uses container color; aggression is a tertiary wash */
-}
 .md-hero:has(.super-ultra-mode) {
   background: var(--md-sys-color-tertiary-container);
 }
@@ -746,6 +833,16 @@ body {
   --idea-role-fg: var(--md-sys-color-on-error-container);
 }
 .md-idea__row--posture { --idea-icon: var(--md-icon-info); }
+.md-idea__row--context {
+  --idea-icon: var(--md-icon-info);
+  --idea-role-bg: var(--md-sys-color-surface-container-highest);
+  --idea-role-fg: var(--md-sys-color-on-surface-variant);
+}
+.md-idea__row--book {
+  --idea-icon: var(--md-icon-book);
+  --idea-role-bg: var(--md-sys-color-secondary-container);
+  --idea-role-fg: var(--md-sys-color-on-secondary-container);
+}
 .md-idea__row--reply {
   --idea-icon: var(--md-icon-reply);
   --idea-role-bg: var(--md-sys-color-tertiary-container);
@@ -1030,13 +1127,6 @@ body {
   background: var(--md-sys-color-primary-container);
   color: var(--md-sys-color-on-primary-container);
 }
-.md-banner--tertiary {
-  background: var(--md-sys-color-tertiary-container);
-  color: var(--md-sys-color-on-tertiary-container);
-  display: flex;
-  gap: var(--md-sys-space-2);
-  margin-top: var(--md-sys-space-3);
-}
 .md-banner--error {
   background: var(--md-sys-color-error-container);
   color: var(--md-sys-color-on-error-container);
@@ -1318,8 +1408,6 @@ body {
   display: none;
   flex-direction: column;
 }
-.md-sheet[style*="display: block"],
-.md-sheet:not([hidden])[style*="block"] { display: flex; }
 .md-sheet__bar {
   display: flex;
   justify-content: space-between;
@@ -1352,7 +1440,6 @@ body {
   padding: var(--md-sys-space-4);
 }
 
-.md-choice-stack { display: flex; flex-direction: column; gap: var(--md-sys-space-2); }
 .md-choice {
   position: relative;
   text-align: left;
@@ -1659,7 +1746,7 @@ body {
 }
 .api-status.online { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
 .api-status.error { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
-.api-status.unknown, .api-status.checking { background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface-variant); }
+.api-status.unknown { background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface-variant); }
 
 /* ── Diagnostics (Last 10 minutes) ──
    An expressive stat card: an organic blob badge, four role-tinted metric
@@ -1916,7 +2003,6 @@ kbd {
 
 /* ── Settings display fallback (JS toggles inline display) ── */
 #settings-panel { display: none; }
-#settings-panel[style*="display: block"] { display: flex; }
 #settings-panel[style*="display: flex"] { animation: mdSheetIn 340ms var(--md-sys-motion-spatial); }
 @keyframes mdSheetIn {
   from { opacity: 0.4; transform: translateY(28px); }
@@ -1929,6 +2015,9 @@ kbd {
 }
 #shortcut-help { display: none; }
 #shortcut-help[style*="display: block"] { display: block; }
+/* The aggression description re-resolves live (Auto ↔ level, opponent
+   rating); two lines of reserved height keep the settings sheet calm. */
+#style-description { min-height: 2.7em; margin-block-end: var(--md-sys-space-2, 8px); }
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 6px; }

@@ -85,8 +85,14 @@
         passedPawnPush: 60,
         complexity: 80,
         simplification: -160,
-        ownKingDanger: -5,
-        unsupportedAttack: -5,
+        // Was -5, i.e. the persona effectively never valued its own king
+        // safety and skipped castling on principle. An attack persona still
+        // castles: king safety is what allows the pawn storm to follow.
+        ownKingDanger: -60,
+        // Ported from the retired Aggressive style (-5 never deterred
+        // anything): an attacking piece without support is exactly the
+        // unsound setup this style's own manifesto forbids.
+        unsupportedAttack: -30,
         // ── Build-up vocabulary (Berserker-aggression additions) ──
         attackUnits: 26,
         practicalChances: 40,
@@ -135,9 +141,17 @@
         earlyQueen: 120,
         quickPressure: 130,
         fastFinish: 150,
+        conversionTrade: 90,
         // ── Fast-kill aggression weights ──
         mateSpeed: 130,
         narrowEscape: 100,
+        // ── Six classical attacking principles ──
+        stormWithTempo: 90,
+        stormVsUncastled: 70,
+        pawnSacInitiative: 80,
+        denyCastling: 95,
+        lineOpeningTrade: 85,
+        mobilize: 65,
         sustainedPressure: 115,
         windmillAttack: 150,
         corridorMate: 170,
@@ -846,6 +860,86 @@
         opponentKingBefore, givesCheck, line
       });
       const defenderForcedRatio = measureInitiativeFreedom(board, line, fen, playerColor);
+      // ── The six classical attacking principles ──────────────────────
+      // (1) pawn storms with tempo and vs the uncastled king, (2) pawn
+      // sacrifices for initiative, (3) preventing castling, (4) trades that
+      // open key lines, (5) mobilizing a stalled attack, (6) keeping the
+      // queens on against a weak king. Detectors here; weights in the
+      // profile; clauses in styleBonus.
+      const pawnType = piece ? piece.toLowerCase() : '';
+      const oppHomeRow = playerIsWhite ? 0 : 7;
+      const oppKingHome = Boolean(opponentKingBefore) &&
+        opponentKingBefore.row === oppHomeRow && opponentKingBefore.col === 4;
+      const fenRights = (fen.split(' ')[2] || '-');
+      const oppKingsideRight = fenRights.includes(playerIsWhite ? 'k' : 'K');
+      const oppQueensideRight = fenRights.includes(playerIsWhite ? 'q' : 'Q');
+
+      // P3 — castling denial. Three concrete mechanisms: capturing the
+      // castling rook (the right vanishes with it), attacking a square the
+      // king must cross (castling is illegal right now), and checking the
+      // uncastled king (it must fend off, often burning the right).
+      const capturedCastleRook = Boolean(captured) && captured.toLowerCase() === 'r' &&
+        destination.row === oppHomeRow && (destination.col === 7 || destination.col === 0);
+      let castlePathDenied = false;
+      if (oppKingHome && (oppKingsideRight || oppQueensideRight)) {
+        const cols = [];
+        if (oppKingsideRight) cols.push(5, 6);
+        if (oppQueensideRight) cols.push(1, 2, 3);
+        for (const c of cols) {
+          if (after[oppHomeRow][c]) continue;      // path blocked anyway
+          if (isSquareAttacked(after, { row: oppHomeRow, col: c }, playerColor)) {
+            castlePathDenied = true;
+            break;
+          }
+        }
+      }
+      const checkToUncastledKing = givesCheck && oppKingHome;
+      const deniesCastling = oppKingHome &&
+        (capturedCastleRook || castlePathDenied || checkToUncastledKing);
+
+      // P1 — a storm pawn advancing WITH TEMPO (it attacks an enemy piece
+      // from its new square, so the opponent must react while the storm
+      // rolls), and a storm launched while the enemy king is still sitting
+      // uncastled in the centre (it can never pause to castle out).
+      let stormWithTempo = false;
+      if (pawnType === 'p' && destination) {
+        for (let row = 0; row < 8 && !stormWithTempo; row++) {
+          for (let col = 0; col < 8; col++) {
+            const target = after[row][col];
+            if (!target || (target === target.toUpperCase()) === playerIsWhite) continue;
+            if (pieceAttacksSquare(after, destination.row, destination.col, row, col)) {
+              stormWithTempo = true;
+              break;
+            }
+          }
+        }
+      }
+      const inEnemyHalf = destination && (playerIsWhite ? destination.row <= 3 : destination.row >= 4);
+      const stormVsUncastled = pawnType === 'p' && oppKingHome && inEnemyHalf &&
+        Boolean(opponentKingAfter) && Math.abs(destination.col - opponentKingAfter.col) <= 2;
+
+      // P4 — an equal(ish) trade that clears a file pointing straight at
+      // the enemy king: the capture square sits on the king's file or the
+      // adjacent one, and no enemy pawn is left to keep the file shut.
+      const PRINCIPLE_VALUES = { p: 100, n: 320, b: 330, r: 500, q: 900, k: 0 };
+      let lineOpeningTrade = false;
+      if (captured && piece && ['n', 'b', 'r', 'q'].includes(pawnType) &&
+          Math.abs((PRINCIPLE_VALUES[pawnType] || 0) - (PRINCIPLE_VALUES[captured.toLowerCase()] || 0)) <= 60 &&
+          opponentKingAfter &&
+          Math.abs(destination.col - opponentKingAfter.col) <= 1) {
+        let enemyPawnsOnFile = 0;
+        for (let r = 0; r < 8; r++) {
+          const p = after[r][destination.col];
+          if (p && (p === p.toUpperCase()) !== playerIsWhite && p.toLowerCase() === 'p') enemyPawnsOnFile++;
+        }
+        lineOpeningTrade = enemyPawnsOnFile === 0;
+      }
+
+      // P6 — offering a queen trade. Penalized in styleBonus while a weak
+      // king is under fire; explicitly kept legal (and often right) once
+      // the position converts to a clean win.
+      const queenTradeOffered = pawnType === 'q' && Boolean(captured) && captured.toLowerCase() === 'q';
+
       const quietPrepKind = classifyQuietPrep({
         fen, after, piece, destination, givesCheck, captured, playerIsWhite,
         opponentKingAfter, ownKingAfter,
@@ -951,7 +1045,15 @@
         narrowEscape,
         attackerTradeOff,
         ownEscapesAfter,
-        ownKingTrapped
+        ownKingTrapped,
+        stormWithTempo,
+        stormVsUncastled,
+        deniesCastling,
+        capturedCastleRook,
+        castlePathDenied,
+        checkToUncastledKing,
+        lineOpeningTrade,
+        queenTradeOffered
       };
     }
 
@@ -991,6 +1093,39 @@
       add(candidate.chased && candidate.kingPressureDelta > 0, 'kingChase', weights.kingChase, 'continues the hunt of the exposed king');
       add(candidate.punishUncastled, 'punishUncastled', weights.punishUncastled, 'punishes the king left in the centre');
       add(candidate.rookLiftMove, 'rookLift', weights.rookLift, 'lifts the rook toward the attack zone');
+
+      // ── The six classical attacking principles ──────────────────────
+      // P2 — a PAWN-scale sacrifice for pure initiative: ripping lines,
+      // buying tempo or denying castling. Distinct from the big-piece
+      // sacrifice machinery: cheap, frequent, and the bread of attacking
+      // chess ("sac a pawn, ruin the shelter, follow with pieces").
+      const pawnSacInitiative = String(candidate.piece || '').toLowerCase() === 'p' &&
+        (candidate.materialDelta || 0) < 0 && (candidate.materialDelta || 0) >= -150 &&
+        (candidate.givesCheck || candidate.opensKingFile || (candidate.tempoThreatCount || 0) > 0 ||
+          candidate.stormWithTempo || candidate.deniesCastling);
+      add(pawnSacInitiative, 'pawnSacInitiative', weights.pawnSacInitiative,
+        'gives up a pawn to rip open lines and force the defence');
+      // P1 — storms that gain time, storms vs the uncastled king.
+      add(candidate.stormWithTempo, 'stormWithTempo', weights.stormWithTempo,
+        'the pawn storm advances with tempo — gaining time, not just space');
+      add(candidate.stormVsUncastled, 'stormVsUncastled', weights.stormVsUncastled,
+        'storms the uncastled king — it can never pause to castle');
+      // P3 — keep the enemy king from finding safety.
+      add(candidate.deniesCastling, 'denyCastling', weights.denyCastling,
+        candidate.capturedCastleRook
+          ? 'captures the castling rook — the king is stuck in the centre for good'
+          : 'keeps the enemy king from ever castling');
+      // P4 — trades that open key lines to the king.
+      add(candidate.lineOpeningTrade, 'lineOpeningTrade', weights.lineOpeningTrade,
+        'the trade clears a key line straight to the king');
+      // P5 — a stalled attack is cured by bringing the last pieces in.
+      const attackStalled = !candidate.givesCheck && (candidate.sustainedPressure || 0) < 0.4;
+      add(attackStalled && (candidate.development || candidate.rookLiftMove), 'mobilize', weights.mobilize,
+        'the attack stalled — mobilizes the last pieces toward the king');
+      // P6 — "do not trade queens" is enforced as a hard eligibility gate in
+      // the host's styleSafetyAllows (a soft penalty could never reliably
+      // out-weigh the contact-check/defender geometry the trade itself
+      // collects). The detector (queenTradeOffered) lives here.
 
       // Kill-geometry mates
       add(candidate.kingMobilityDelta > 0, 'kingMobility', weights.kingMobility * Math.min(candidate.kingMobilityDelta, 4), 'further traps the enemy king');
@@ -1330,7 +1465,9 @@
         'kingChase', 'punishUncastled', 'rookLift', 'kingMobility',
         'smotheredMate', 'anastasiaMate', 'arabianMate', 'bodenMate',
         'mateSpeed', 'narrowEscape', 'sustainedPressure', 'windmillAttack',
-        'corridorMate', 'epauletteMate', 'queenSacForCharge'
+        'corridorMate', 'epauletteMate', 'queenSacForCharge',
+        'stormWithTempo', 'stormVsUncastled', 'denyCastling',
+        'lineOpeningTrade', 'pawnSacInitiative', 'mobilize'
       ];
       for (const k of attackKeys) {
         if (typeof base[k] === 'number') base[k] = Math.round(base[k] * frag);
@@ -1343,23 +1480,6 @@
       return base;
     }
 
-    function firedMotifs(features) {
-      const out = {};
-      const keys = [
-        'kingSuffocation', 'backRank', 'shieldStrike', 'contactCheck',
-        'exchangeSac', 'chased', 'punishUncastled', 'rookLiftMove',
-        'smotheredMate', 'anastasiaMate', 'arabianMate', 'bodenMate', 'forcedMateNet',
-        'undefendedHit', 'hangingPieceGrab', 'backRankExploit', 'scholarTrap',
-        'legalsTrap', 'laskerTrap', 'followUpVision', 'knightForkMove', 'pinToKing',
-        'pinToQueen', 'discoveredAttack', 'endgameCoup', 'corridorMate',
-        'epauletteMate', 'windmill', 'queenSac', 'narrowEscape'
-      ];
-      for (const k of keys) if (features[k]) out[k] = true;
-      if (features.kingCageDelta >= 2) out.kingCage = true;
-      if (features.sustainedPressure > 0.65) out.sustainedPressure = true;
-      if (features.mateSpeed > 0) out.mateSpeed = true;
-      return out;
-    }
 
     return {
       profile,
@@ -1369,10 +1489,7 @@
       annotate,
       choosePlan,
       winningPlan,
-      scaledWeights,
-      fragilityMultiplier,
-      firedMotifs,
-      isChaos: (id) => id === profile.id
+      scaledWeights
     };
   }
 

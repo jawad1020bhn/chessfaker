@@ -4,7 +4,8 @@ importScripts(
   'engine/analysis-contract.js',
   'engine/analysis-policy.js',
   'engine/human-form.js',
-  'engine/local-engine.js'
+  'engine/local-engine.js',
+  'engine/attack-book.js'
 );
 
 /**
@@ -30,7 +31,8 @@ const KEEPALIVE_ALARM_INTERVAL_MIN = 1;
 const DEFAULT_SETTINGS = {
   analysisQuality: 'auto',
   candidateLines: 'auto',
-  style: 'normal',
+  style: 'super_ultra_aggressive',
+  aggressionLevel: 'auto',
   // Style-scoped preference; the side panel and hint engine require the exact
   // Ultra Super Aggressive style before honoring this flag.
   earlyKingHuntEnabled: false,
@@ -60,9 +62,14 @@ function normalizeSettings(value = {}) {
   const normalized = { ...DEFAULT_SETTINGS };
   normalized.analysisQuality = AnalysisPolicy.normalizeQuality(migrated.analysisQuality);
   normalized.candidateLines = AnalysisPolicy.normalizeCandidateLines(migrated.candidateLines);
-  normalized.style = ['normal', 'aggressive', 'super_ultra_aggressive'].includes(migrated.style)
-    ? migrated.style
-    : DEFAULT_SETTINGS.style;
+  // Single-persona product: every legacy style lands on the Ultra persona.
+  // The old Aggressive/Normal intent maps to the dial's Level I ("Sound
+  // Storm"), unless the stored settings already carry an explicit level.
+  normalized.style = DEFAULT_SETTINGS.style;
+  const legacyLevel = ['normal', 'aggressive'].includes(migrated.style) ? 1 : 2;
+  normalized.aggressionLevel = ['auto', 1, 2, 3].includes(migrated.aggressionLevel)
+    ? migrated.aggressionLevel
+    : legacyLevel;
   for (const key of booleanKeys) normalized[key] = typeof migrated[key] === 'boolean' ? migrated[key] : DEFAULT_SETTINGS[key];
   const strength = Math.round(Number(migrated.sparringStrength));
   normalized.sparringStrength = Number.isFinite(strength) ? strength : DEFAULT_SETTINGS.sparringStrength;
@@ -74,14 +81,9 @@ function normalizeSettings(value = {}) {
 // ═══════════════════════════════════════════════════════════════════════
 const turnState = {
   lastAnalyzedFen: null,
-  lastAnalysisSource: null,
   isPlayerTurn: true,
   waitingForOpponent: false,
-  analysisInProgress: false,
-  autoAnalysisPending: false,
-  lastPositionUpdateTime: 0,
-  consecutiveFailures: 0,
-  analysisDebounceTimer: null
+  analysisInProgress: false
 };
 
 let lastAnalysisGameId = null;
@@ -105,23 +107,17 @@ function shouldAnalyzePosition(fen, playerColor) {
   return { shouldAnalyze: true, reason: 'players_turn_new_position', isPlayerTurn: true };
 }
 
-function markPositionAnalyzed(fen, source) {
+function markPositionAnalyzed(fen) {
   turnState.lastAnalyzedFen = fen;
-  turnState.lastAnalysisSource = source;
+  persistSessionState();
 }
 
 function resetAnalysisState() {
   turnState.lastAnalyzedFen = null;
-  turnState.lastAnalysisSource = null;
   turnState.isPlayerTurn = true;
   turnState.waitingForOpponent = false;
   turnState.analysisInProgress = false;
-  turnState.autoAnalysisPending = false;
-  turnState.consecutiveFailures = 0;
-  if (turnState.analysisDebounceTimer) {
-    clearTimeout(turnState.analysisDebounceTimer);
-    turnState.analysisDebounceTimer = null;
-  }
+  persistSessionState();
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -275,6 +271,7 @@ function registerPosition(fen, tabId = 'active') {
       };
   positionGenerations.set(key, token);
   apiCoordinator.updatePosition(token);
+  persistSessionState();
   return token;
 }
 
@@ -302,7 +299,24 @@ function tablebaseCacheKey(fen) {
 }
 
 function semanticSourceOrder(fen, settings = DEFAULT_SETTINGS) {
-  return ApiReliability.planPositionWorkflow(fen, settings).analysisSources;
+  const sources = [...ApiReliability.planPositionWorkflow(fen, settings).analysisSources];
+  // Styled play is ranked, not followed: the ranker needs a candidate pool,
+  // and only the Lichess cloud eval returns several lines. chess-api answers
+  // with a single move, which silently switches any style persona off. When
+  // a non-normal style (or human-like sparring) is active, prefer the
+  // multi-line source; book sources keep their position, and the sequential
+  // failover chain is untouched.
+  // Single-persona product: the style is always active, so the multi-line
+  // source is always preferred for ranking.
+  {
+    const cloud = sources.indexOf('lichess-cloud');
+    const chessApi = sources.indexOf('chess-api');
+    if (cloud !== -1 && chessApi !== -1 && chessApi < cloud) {
+      sources[chessApi] = 'lichess-cloud';
+      sources[cloud] = 'chess-api';
+    }
+  }
+  return sources;
 }
 
 
@@ -323,6 +337,7 @@ let correlationTotal = 0;
 function recordEngineRecommendation(fen, uci) {
   if (!fen || !uci) return;
   engineMoveByFen.set(fen, uci);
+  persistSessionState();
   if (engineMoveByFen.size > ENGINE_MOVE_BY_FEN_LIMIT) {
     // evict oldest 25%
     const toRemove = Math.ceil(engineMoveByFen.size * 0.25);
@@ -340,6 +355,7 @@ function recordEngineRecommendation(fen, uci) {
 function recordHumanRecommendation(fen, uci) {
   if (!fen || !uci) return;
   humanMoveByFen.set(fen, uci);
+  persistSessionState();
   if (humanMoveByFen.size > ENGINE_MOVE_BY_FEN_LIMIT) {
     const toRemove = Math.ceil(humanMoveByFen.size * 0.25);
     let removed = 0;
@@ -395,6 +411,7 @@ function recordPlayerMove(prevFen, payload) {
   if (correlationWindow.length > 8) correlationWindow.shift();
   correlationTotal++;
   if (sensible) correlationMatches++;
+  persistSessionState();
   return { matched: sensible, sensible, expected, recentPct: correlationWindow.filter(Boolean).length / correlationWindow.length };
 }
 
@@ -426,6 +443,91 @@ function resetCorrelationTracker() {
   correlationWindow.length = 0;
   correlationMatches = 0;
   correlationTotal = 0;
+  persistSessionState();
+}
+
+// ─── Ephemeral-state persistence (chrome.storage.session) ────────────
+// MV3 service workers are recycled aggressively. The correlation maps,
+// lastAnalyzedFen and the per-game position tokens below otherwise live
+// only in memory, so a worker recycle mid-game minted a fresh
+// Date.now() game id and silently wiped the coach stats for no reason.
+// Mirroring this state into session storage (which Chrome clears when
+// the browsing session ends, so no cross-session residue) keeps it
+// across worker restarts. Best effort only: if session storage is
+// unavailable (old Chrome, test harness), everything still works, the
+// state is just not recycled-proof.
+const SESSION_STATE_KEY = 'swEphemeralState';
+let sessionStateHydrated = false;
+
+async function hydrateSessionState() {
+  try {
+    const area = chrome.storage && chrome.storage.session;
+    if (area && typeof area.get === 'function') {
+      const store = await area.get(SESSION_STATE_KEY);
+      const saved = store && store[SESSION_STATE_KEY];
+      if (saved && typeof saved === 'object') {
+        if (Array.isArray(saved.engineMoves)) {
+          for (const pair of saved.engineMoves.slice(-ENGINE_MOVE_BY_FEN_LIMIT)) {
+            if (Array.isArray(pair)) engineMoveByFen.set(pair[0], pair[1]);
+          }
+        }
+        if (Array.isArray(saved.humanMoves)) {
+          for (const pair of saved.humanMoves.slice(-ENGINE_MOVE_BY_FEN_LIMIT)) {
+            if (Array.isArray(pair)) humanMoveByFen.set(pair[0], pair[1]);
+          }
+        }
+        if (Array.isArray(saved.correlationWindow)) correlationWindow.push(...saved.correlationWindow.filter(v => typeof v === 'boolean'));
+        if (Number.isFinite(saved.correlationMatches)) correlationMatches = saved.correlationMatches;
+        if (Number.isFinite(saved.correlationTotal)) correlationTotal = saved.correlationTotal;
+        if (typeof saved.lastAnalyzedFen === 'string') turnState.lastAnalyzedFen = saved.lastAnalyzedFen;
+        if (saved.lastAnalysisGameId === null || Number.isFinite(saved.lastAnalysisGameId)) lastAnalysisGameId = saved.lastAnalysisGameId;
+        if (saved.positionTokens && typeof saved.positionTokens === 'object') {
+          for (const [key, tok] of Object.entries(saved.positionTokens)) {
+            if (tok && typeof tok === 'object' && tok.canonicalFen) positionGenerations.set(key, tok);
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[Background] Session-state hydration failed (continuing in-memory):', e?.message || e);
+  }
+  sessionStateHydrated = true;
+}
+
+function persistSessionState() {
+  // Never write before hydration finished — a boot-time persist would
+  // clobber the stored state with empty maps.
+  if (!sessionStateHydrated) return;
+  const area = chrome.storage && chrome.storage.session;
+  if (!area || typeof area.set !== 'function') return;
+  const snapshot = {
+    [SESSION_STATE_KEY]: {
+      engineMoves: [...engineMoveByFen.entries()].slice(-ENGINE_MOVE_BY_FEN_LIMIT),
+      humanMoves: [...humanMoveByFen.entries()].slice(-ENGINE_MOVE_BY_FEN_LIMIT),
+      correlationWindow: [...correlationWindow],
+      correlationMatches: correlationMatches,
+      correlationTotal: correlationTotal,
+      lastAnalyzedFen: turnState.lastAnalyzedFen,
+      lastAnalysisGameId: lastAnalysisGameId,
+      positionTokens: Object.fromEntries(positionGenerations)
+    }
+  };
+  Promise.resolve(area.set(snapshot)).catch(e => {
+    console.warn('[Background] Session-state persist failed:', e?.message || e);
+  });
+}
+
+// Kicked off at worker boot; message dispatch waits for it so a recycled
+// worker always serves its first message with restored state.
+const sessionStateReady = hydrateSessionState();
+
+// Surface panel-notification delivery failures instead of swallowing
+// them: a rejected runtime.sendMessage means the panel is gone (closed
+// or the extension was reloaded), which is worth one log line.
+function notifyPanel(message) {
+  return chrome.runtime.sendMessage(message).catch(err => {
+    console.warn('[Background] Panel message delivery failed:', message?.type || '(no type)', err?.message || err);
+  });
 }
 
 // ─── Analysis workflow coalescing and panel lifecycle ─────────────────
@@ -460,7 +562,7 @@ function startKeepAliveAlarm() {
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === KEEPALIVE_ALARM) {
     // Minimal work — touching chrome.storage.local resets the SW idle timer.
-    chrome.storage.local.get('_keepalive', () => {});
+    chrome.storage.local.get('_keepalive').catch(() => {});
   }
 });
 
@@ -514,8 +616,6 @@ function normalizeChessApi(data, fen) {
   // (positive = White is better; "Negative value means that black is winning").
   // So scores are used verbatim — no side-to-move flip — to match the pipeline's
   // white-relative contract (pv.score > 0 = White winning).
-  const activeColor = fen ? (fen.split(' ')[1] || 'w') : 'w';
-
   if (data.move) {
     const isMate = data.mate !== null && data.mate !== undefined && data.mate !== '';
     let scoreType, score;
@@ -713,7 +813,9 @@ function normalizeMastersEval(data, fen) {
 
     return {
       multipv: idx + 1,
-      scoreType: 'cp',
+      // Book lane: the score below is a win-rate mapping, NOT an engine
+      // evaluation — the ranker keeps it out of the cp lane.
+      scoreType: 'book',
       score: score,
       depth: 0, // No engine depth — this is human data
       seldepth: 0,
@@ -846,18 +948,37 @@ function normalizeTablebase(data) {
 }
 
 // ─── Build Tablebase Result ──────────────────────────────────────────
+function tablebaseMoveRank(m) {
+  if (!m) return 99;
+  switch (m.category) {
+    case 'checkmate': return 0;
+    case 'variant-win':
+    case 'syzygy-win':
+    case 'win': return 1;
+    case 'cursed-win': return 2;
+    case 'draw': return 3;
+    case 'maybe-win': return 4;
+    default: return 5; // loss / unknown
+  }
+}
+
 function buildTablebaseResult(tbData, fen) {
+  // Among the best available category, prefer the move with the fastest
+  // mate (smallest |DTM|, tie-broken by |DTZ|) instead of whichever the
+  // API happened to list first.
   let bestMove = null;
-  let bestCategory = 'loss';
+  let bestRank = 99;
+  let bestDtm = Infinity;
+  let bestDtz = Infinity;
   for (const m of tbData.moves) {
-    const cat = m.category;
-    if (cat === 'checkmate' || cat === 'variant-win' || cat === 'syzygy-win') {
-      bestMove = m; break;
+    const rank = tablebaseMoveRank(m);
+    if (rank > bestRank) continue;
+    const winning = rank <= 1;
+    const dtm = winning ? Math.abs(Number(m.dtm) || 0) : 0;
+    const dtz = winning ? Math.abs(Number(m.dtz) || 0) : 0;
+    if (rank < bestRank || dtm < bestDtm || (dtm === bestDtm && dtz < bestDtz)) {
+      bestMove = m; bestRank = rank; bestDtm = dtm; bestDtz = dtz;
     }
-    if (cat === 'win' && bestCategory !== 'win') { bestMove = m; bestCategory = 'win'; }
-    if (cat === 'cursed-win' && bestCategory !== 'win') { bestMove = m; bestCategory = 'cursed-win'; }
-    if (cat === 'draw' && bestCategory !== 'win' && bestCategory !== 'cursed-win') { bestMove = m; bestCategory = 'draw'; }
-    if (cat === 'maybe-win' && bestCategory === 'loss') { bestMove = m; bestCategory = 'maybe-win'; }
   }
   if (!bestMove && tbData.moves.length > 0) bestMove = tbData.moves[0];
 
@@ -927,6 +1048,85 @@ function sealAnalysis(raw, fen, extras = {}) {
   const sealed = AnalysisContract.finalizeAnalysis(raw, fen, extras);
   if (!sealed.pvs?.length) return null;
   return AnalysisPolicy.attachQuality(sealed, extras);
+}
+
+// Owned attacking repertoire fallback (engine/attack-book.js). Only fires
+// for the Ultra Super Aggressive persona, in covered theory, before the
+// local engine. Returns a sealed book-lane result or null.
+function buildAttackBookResult(fen, playerColor, options) {
+  try {
+    if (!options.settings || options.settings.style !== 'super_ultra_aggressive') return null;
+    if (!globalThis.AttackBook || typeof AttackBook.lookup !== 'function') return null;
+    const hit = AttackBook.lookup({
+      moveHistory: options.moveHistory || [],
+      playerColor: playerColor === 'b' ? 'b' : 'w'
+    });
+    if (!hit) return null;
+    const pvs = hit.pvs.map((entry, index) => ({
+      multipv: index + 1,
+      scoreType: 'book',
+      score: entry.score,
+      depth: 0,
+      seldepth: 0,
+      pv: [entry.uci],
+      nodes: 0, nps: 0, time: 0,
+      _bookLine: entry.lineName
+    }));
+    const raw = {
+      fen,
+      source: 'attack-book',
+      pvs,
+      bestMove: pvs[0].pv[0],
+      depth: 0,
+      scorePerspective: 'white',
+      isBook: true,
+      timestamp: Date.now()
+    };
+    const sealed = sealAnalysis(raw, fen, { source: 'attack-book', qualityClass: 'book' });
+    if (sealed) {
+      sealed.playerColor = playerColor;
+      sealed.moveHistory = options.moveHistory || [];
+    }
+    return sealed || null;
+  } catch (error) {
+    console.warn('[Background] Attack-book fallback failed:', error?.message || error);
+    return null;
+  }
+}
+
+// Style ranking and human-like sparring both need a candidate pool — with
+// the single-persona product this is always true.
+function stylePoolNeeded() {
+  return true;
+}
+
+// Build a rankable pool around a single authoritative cloud line: keep the
+// cloud PV first, append up to four local-engine alternatives (excluding a
+// duplicate of the same first move). Returns null when widening is not
+// possible; the original single-line result is then used unchanged.
+function widenSingleLinePool(result, fen, multiPv, quality) {
+  if (!globalThis.LocalEngine || typeof LocalEngine.analyze !== 'function') return null;
+  try {
+    const local = LocalEngine.analyze(fen, {
+      multiPv: Math.max(3, Math.min(5, multiPv || 3)),
+      maxDepth: Math.max(4, (quality && quality.localDepth) || 4),
+      timeMs: Math.max(120, (quality && quality.localTimeMs) || 180)
+    });
+    if (!local || !Array.isArray(local.pvs) || local.pvs.length < 2) return null;
+    const primaryMove = result.pvs[0] && result.pvs[0].pv && result.pvs[0].pv[0];
+    const extras = local.pvs
+      .filter(p => p.pv && p.pv[0] && p.pv[0] !== primaryMove)
+      .slice(0, 4);
+    if (extras.length === 0) return null;
+    return {
+      ...result,
+      poolExpanded: true,
+      pvs: [result.pvs[0], ...extras.map(p => ({ ...p, localPool: true }))]
+    };
+  } catch (error) {
+    console.warn('[Background] Pool widening failed:', error?.message || error);
+    return null;
+  }
 }
 
 function runLocalAnalysis(fen, multiPv, profile) {
@@ -1042,7 +1242,9 @@ function openingDataFromMastersResult(result) {
 async function performCloudAnalysis(fen, playerColor, options = {}) {
   const multiPv = options.multiPv || 3;
   const canonicalFen = ApiReliability.canonicalAnalysisFen(fen);
-  const dedupeKey = `workflow:${canonicalFen}:multipv=${multiPv}`;
+  // Refresh semantics are part of the key: an explicit Refresh must not
+  // silently piggyback on an in-flight workflow started without it.
+  const dedupeKey = `workflow:${canonicalFen}:multipv=${multiPv}:refresh=${options.refresh ? 1 : 0}`;
   if (analysisWorkflows.has(dedupeKey)) return analysisWorkflows.get(dedupeKey);
 
   const workflow = _performCloudAnalysisInternal(fen, playerColor, options).catch(error => ({
@@ -1073,9 +1275,7 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
       errorDetail: { type: 'inactive_panel', message: 'Analysis paused because the panel is not active.', suggestion: 'none' }
     };
   }
-  const settings = settingsEarly || await new Promise(resolve =>
-    chrome.storage.local.get('settings', result => resolve(normalizeSettings(result.settings)))
-  );
+  const settings = settingsEarly || normalizeSettings((await chrome.storage.local.get('settings')).settings);
   const quality = AnalysisPolicy.resolveQuality(settings, {
     earlyKingHunt: settings.style === 'super_ultra_aggressive' && settings.earlyKingHuntEnabled === true
   });
@@ -1213,6 +1413,11 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
   }
 
   if (!bestResult) {
+    // The persona's owned repertoire comes first: a pre-solved attacking
+    // line is more trustworthy than a depth-4 local search inside its
+    // domain (moves 1-6). Style-gated; other styles fall straight through.
+    const bookResult = buildAttackBookResult(fen, playerColor, options);
+    if (bookResult) return bookResult;
     const localFallback = runLocalAnalysis(fen, multiPv, quality);
     if (localFallback) {
       localFallback.playerColor = playerColor;
@@ -1233,6 +1438,16 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
   bestResult.fen = fen;
   bestResult.playerColor = playerColor;
   bestResult.moveHistory = options.moveHistory || [];
+
+  // chess-api (and any other single-line source) starves the style ranker:
+  // one PV means nothing to rank. Widen it with fast local multi-PV moves so
+  // the persona keeps acting; the authoritative cloud line stays first and
+  // the extras are tagged for the UI as lower confidence.
+  if (Array.isArray(bestResult.pvs) && bestResult.pvs.length === 1 &&
+      stylePoolNeeded(settings) && usedSource === 'chess-api') {
+    const widened = widenSingleLinePool(bestResult, fen, multiPv, quality);
+    if (widened) bestResult = widened;
+  }
 
   const sealedPrimary = sealAnalysis(bestResult, fen, {
     source: usedSource,
@@ -1295,10 +1510,7 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
     if (shouldEnrich) {
       lichessOpeningExplorer(fen, { positionToken, priority: 'opening-enrichment' }).then(openingData => {
         if (!openingData || !apiCoordinator.isPositionCurrent(positionToken)) return;
-        chrome.runtime.sendMessage({
-          type: 'opening_data_update',
-          data: { fen, openingData }
-        }).catch(() => {});
+        notifyPanel({ type: 'opening_data_update', data: { fen, openingData } });
       }).catch(() => {});
     }
   }
@@ -1478,6 +1690,27 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 // ─── Message Routing ─────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Sender validation: runtime messages are only accepted from this
+  // extension's own UI contexts. Our content script never sends
+  // runtime messages, so anything arriving with sender.tab set — or
+  // from another extension id — is rejected before it can reach
+  // privileged operations (clear_caches, read_board's script
+  // injection, correlation-stat recording).
+  if (!sender || sender.id !== chrome.runtime.id || sender.tab) {
+    console.warn('[Background] Rejected message from untrusted sender:', message?.type || '(no type)');
+    sendResponse({ ok: false, error: 'Untrusted sender' });
+    return false;
+  }
+  // A freshly recycled worker hydrates its session state before
+  // dispatching, so correlation stats and game ids survive restarts.
+  if (!sessionStateHydrated) {
+    sessionStateReady.then(() => handleRuntimeMessage(message, sender, sendResponse));
+    return true;
+  }
+  return handleRuntimeMessage(message, sender, sendResponse);
+});
+
+function handleRuntimeMessage(message, sender, sendResponse) {
   const msgType = message.type;
 
   if (msgType === 'read_board') {
@@ -1505,14 +1738,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
     if (message.turnReliable !== true) {
-      chrome.runtime.sendMessage({
+      notifyPanel({
         type: 'turn_status_update',
         data: { isPlayerTurn: false, waitingForOpponent: false, reason: 'turn_unknown', fen: message.fen }
-      }).catch(() => {});
+      });
       sendResponse({ ok: true, turnStatus: 'turn_unknown' });
       return false;
     }
-    chrome.storage.local.get(['settings', 'assistedPlayerColor'], (result) => {
+    chrome.storage.local.get(['settings', 'assistedPlayerColor']).then((result) => {
       const settings = normalizeSettings(result.settings);
       const assistedPlayerColor = message.playerColor || result.assistedPlayerColor || 'w';
       const tabId = message.tabId ?? sender.tab?.id ?? 'active';
@@ -1523,14 +1756,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         lastAnalysisGameId = positionToken.gameId;
         resetAnalysisState();
         resetCorrelationTracker();
+        persistSessionState();
       }
 
-      const effectiveHintLevel = 5;
       const quality = AnalysisPolicy.resolveQuality(settings, {
-        earlyKingHunt: settings.style === 'super_ultra_aggressive' && settings.earlyKingHuntEnabled === true
+        earlyKingHunt: settings.earlyKingHuntEnabled === true
       });
       const resolvedMultiPv = AnalysisPolicy.resolveMultiPv(settings, {
-        earlyKingHunt: settings.style === 'super_ultra_aggressive' && settings.earlyKingHuntEnabled === true
+        earlyKingHunt: settings.earlyKingHuntEnabled === true
       });
       let exactHintBlocked = null;
       if (message.positionReliable !== true) {
@@ -1548,7 +1781,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       const refreshCurrentPosition = Boolean(message.refresh && turnCheck.reason === 'same_position' && turnCheck.isPlayerTurn);
       if (!turnCheck.shouldAnalyze && !refreshCurrentPosition) {
-        chrome.runtime.sendMessage({
+        notifyPanel({
           type: 'turn_status_update',
           data: {
             isPlayerTurn: turnCheck.isPlayerTurn,
@@ -1557,7 +1790,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             fen: message.fen,
             playerColor: assistedPlayerColor
           }
-        }).catch(() => {});
+        });
 
         if (turnCheck.reason === 'opponents_turn') {
           sendResponse({ ok: true, turnStatus: 'opponents_turn' });
@@ -1585,10 +1818,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (!apiCoordinator.isPositionCurrent(positionToken) || cloudResult?.stalePosition) return;
 
         if (cloudResult && !cloudResult.error) {
-          markPositionAnalyzed(message.fen, cloudResult.source);
-          turnState.consecutiveFailures = 0;
+          markPositionAnalyzed(message.fen);
 
-          cloudResult.hintLevel = effectiveHintLevel;
           cloudResult.analysisQuality = quality.id;
           cloudResult.requestedMultiPv = resolvedMultiPv;
           if (!cloudResult.qualityClass) {
@@ -1611,19 +1842,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             cloudResult.correlationStats = getCorrelationStats();
           }
 
-          chrome.runtime.sendMessage({ type: 'analysis_update', data: cloudResult }).catch(() => {});
+          notifyPanel({ type: 'analysis_update', data: cloudResult });
         } else {
-          turnState.consecutiveFailures++;
           const detail = cloudResult?.errorDetail || classifyError();
           let errorMsg = detail.message || 'Cloud analysis unavailable';
           if (detail.suggestion === 'retry') errorMsg += ' Try Refresh.';
           else if (detail.suggestion === 'wait') errorMsg += ' Will retry on your next turn.';
           else if (detail.suggestion !== 'none') errorMsg += ' Check your connection and try Refresh.';
-          chrome.runtime.sendMessage({
+          notifyPanel({
             type: 'analysis_error',
             data: { error: errorMsg, fen: message.fen, detail }
-          }).catch(() => {});
+          });
         }
+      }).catch(error => {
+        // The workflow promise itself rejected (or a callback threw):
+        // without this, the panel would receive neither analysis_update
+        // nor analysis_error and silently go stale.
+        turnState.analysisInProgress = false;
+        console.error('[Background] request_analysis workflow failed:', error?.message || error);
+        notifyPanel({
+          type: 'analysis_error',
+          data: {
+            error: 'Cloud analysis failed unexpectedly. Try Refresh.',
+            fen: message.fen,
+            detail: { type: 'transient', message: error?.message || 'Analysis workflow threw', suggestion: 'retry' }
+          }
+        });
       });
 
       sendResponse({ ok: true });
@@ -1718,6 +1962,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     resetAnalysisState();
     lastAnalysisGameId = null;
     resetCorrelationTracker();
+    persistSessionState();
     sendResponse({ ok: true });
     return false;
   }
@@ -1754,19 +1999,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (msgType === 'reset_correlation') {
     resetCorrelationTracker();
     lastAnalysisGameId = null;
+    persistSessionState();
     sendResponse({ ok: true });
     return false;
   }
 
   return false;
-});
+}
 
 // ─── Start keepalive on install ──────────────────────────────────────
 chrome.runtime.onInstalled.addListener(() => {
   startKeepAliveAlarm();
 
   // Migrate old settings keys
-  chrome.storage.local.get('settings', (result) => {
+  chrome.storage.local.get('settings').then((result) => {
     if (result.settings) {
       let updated = false;
       const s = result.settings;

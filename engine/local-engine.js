@@ -82,20 +82,68 @@
     return table[index] || 0;
   }
 
+  // King safety, symmetric. Material+PST alone cannot see that a stripped
+  // pawn shield in front of a queen-on-board king is worth real centipawns,
+  // which made local fallback pools untrustworthy for style ranking (attack
+  // features did not correlate with scores). Terms, white-relative:
+  //   shield  : +8 per pawn on the three files around the king, 1-2 ranks in
+  //             front (max 3 counted); a bare king loses ~30
+  //   exposed : king still on its original e-file/rank block after move 8
+  //             with queens on the board: -20
+  // Only applied while at least one queen is present — in queenless
+  // endgames a central king is an asset, not a liability (the PST already
+  // handles middlegame king placement).
+  function kingSafetyWhite(parsed, fen, queens) {
+    if (!queens) return 0;
+    const fullmove = parseInt(fen.split(' ')[5], 10) || 1;
+    let score = 0;
+    for (const white of [true, false]) {
+      const kingChar = white ? 'K' : 'k';
+      const pawnChar = white ? 'P' : 'p';
+      let kingRow = -1, kingCol = -1;
+      for (let row = 0; row < 8 && kingRow === -1; row++) {
+        for (let col = 0; col < 8; col++) {
+          if (parsed.board[row][col] === kingChar) { kingRow = row; kingCol = col; break; }
+        }
+      }
+      if (kingRow === -1) continue;
+      const forward = white ? -1 : 1; // toward the opponent
+      let shield = 0;
+      for (let dc of [-1, 0, 1]) {
+        const col = kingCol + dc;
+        if (col < 0 || col > 7) continue;
+        for (let step = 1; step <= 2; step++) {
+          const row = kingRow + forward * step;
+          if (row < 0 || row > 7) continue;
+          if (parsed.board[row][col] === pawnChar) { shield++; break; }
+        }
+      }
+      const homeRow = white ? 7 : 0;
+      const uncastled = kingRow === homeRow && kingCol === 4 && fullmove > 8;
+      let term = Math.min(shield, 3) * 8 - 20; // bare king ≈ -20, full shield ≈ +4
+      if (uncastled) term -= 20;
+      score += white ? term : -term;
+    }
+    return score;
+  }
+
   function evaluateWhite(fen) {
     const parsed = root.ChessCore.parseFen(fen);
     if (!parsed) return 0;
     let score = 0;
+    let queens = false;
     for (let row = 0; row < 8; row++) {
       for (let col = 0; col < 8; col++) {
         const piece = parsed.board[row][col];
         if (!piece) continue;
         const type = piece.toLowerCase();
+        if (type === 'q') queens = true;
         const white = piece === piece.toUpperCase();
         const value = (PIECE[type] || 0) + pstValue(type, row, col, white);
         score += white ? value : -value;
       }
     }
+    score += kingSafetyWhite(parsed, fen, queens);
     return score;
   }
 
@@ -231,10 +279,33 @@
       if (Date.now() >= deadline) break;
     }
 
+    // The opponent's answer in each PV used to be the FIRST legal move —
+    // an arbitrary reply that fed wrong tactical context to the style
+    // ranker (sacrifice detection reads pv[1]). Spend a shallow search per
+    // line to report their best answer instead, time permitting.
+    const bestReply = (childFen) => {
+      if (!childFen || Date.now() >= deadline + timeMs) return null;
+      const moves = orderedMoves(childFen);
+      const childWhite = childFen.split(' ')[1] !== 'b';
+      let bestMove = null;
+      let bestScore = childWhite ? -Infinity : Infinity;
+      for (const move of moves) {
+        const grandchild = api.applyMoveToFen(childFen, move);
+        if (!grandchild) continue;
+        const state = { nodes: 0, ply: 1, timedOut: false };
+        const score = quiesce(grandchild, -Infinity, Infinity, !childWhite, deadline + timeMs, state, 2);
+        if (childWhite ? score > bestScore : score < bestScore) {
+          bestScore = score;
+          bestMove = move;
+        }
+      }
+      return bestMove;
+    };
+
     const selected = ranked.slice(0, multiPv);
     const pvs = selected.map((entry, index) => {
       const child = api.applyMoveToFen(fen, entry.move);
-      const reply = child ? api.generateLegalMoves(child)[0] : null;
+      const reply = index < 3 ? (child ? bestReply(child) : null) : null;
       return {
         multipv: index + 1,
         scoreType: Math.abs(entry.score) >= 90000 ? 'mate' : 'cp',

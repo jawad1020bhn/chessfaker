@@ -100,7 +100,7 @@ for (const strength of [600, 800, 1100, 1400, 1600]) {
 }
 
 // No formSession in context → legacy behavior (no crash, deterministic).
-const legacy = engine.selectPVForStyle([quiet, forcingCheck], attackFen, 'aggressive', 'w', true, {});
+const legacy = engine.selectPVForStyle([quiet, forcingCheck], attackFen, 'super_ultra_aggressive', 'w', true, {});
 assert.equal(legacy[0].pv[0], 'd1h5',
   'without a form session the aggressive style keeps its sound forcing route');
 
@@ -114,7 +114,8 @@ assert.equal(policy.resolveMultiPv({ humanLikeMode: true }), 5,
   'human mode auto width requests the maximum candidate pool');
 assert.equal(policy.resolveMultiPv({ humanLikeMode: true, candidateLines: 3 }), 3,
   'an explicit candidate-lines choice still wins over human mode');
-assert.equal(policy.resolveMultiPv({}), 2, 'non-human auto width stays narrow');
+assert.equal(policy.resolveMultiPv({ style: 'normal' }), 2, 'the internal objective profile keeps a narrow auto width');
+assert.equal(policy.resolveMultiPv({}), 5, 'the single-persona default requests the wide ranking pool');
 
 const humanQuality = policy.resolveQuality({ humanLikeMode: true });
 assert.equal(humanQuality.id, 'balanced',

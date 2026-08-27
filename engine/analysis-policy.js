@@ -8,7 +8,6 @@
   'use strict';
 
   const QUALITY_IDS = Object.freeze(['auto', 'fast', 'balanced', 'deep']);
-  const CANDIDATE_IDS = Object.freeze(['auto', 3, 5]);
   const MAX_PROVIDER_LINES = 5;
 
   const QUALITY_PROFILES = Object.freeze({
@@ -97,10 +96,10 @@
     // Consistent (not occasionally superhuman) calculation is what reads as
     // human. Explicit Fast/Deep choices are still honored above.
     if (settings.humanLikeMode === true) return QUALITY_PROFILES.balanced;
-    if (extras.earlyKingHunt || settings.style === 'super_ultra_aggressive') {
-      return { ...QUALITY_PROFILES.auto, chessApiDepth: 14, localDepth: 5, localTimeMs: 240 };
-    }
-    return QUALITY_PROFILES.auto;
+    // Single-persona product: the (internal) objective profile keeps the
+    // conservative default; the Ultra persona always escalates depth.
+    if (settings.style === 'normal') return QUALITY_PROFILES.auto;
+    return { ...QUALITY_PROFILES.auto, chessApiDepth: 14, localDepth: 5, localTimeMs: 240 };
   }
 
   function resolveMultiPv(settings = {}, extras = {}) {
@@ -110,9 +109,21 @@
     // shortlist/slip selection needs a wide candidate pool, so auto width is
     // always maximum MultiPV. An explicit user choice still wins.
     if (settings.humanLikeMode === true) return MAX_PROVIDER_LINES;
-    if (extras.earlyKingHunt || settings.style === 'super_ultra_aggressive') return 5;
-    if (settings.style === 'aggressive') return 3;
+    if (extras.earlyKingHunt || settings.style !== 'normal') return 5;
     return 2;
+  }
+
+  // Opponent-aware aggression: the persona's doctrine is calibrated for
+  // weaker opponents. Max chaos pays best below ~800, the signature level
+  // covers the club band through ~1200, and stronger opposition gets the
+  // sound "fastest win" discipline. Unknown ratings return null (Auto
+  // falls back to Level II).
+  function suggestAggressionLevel(rating) {
+    const n = Number(rating);
+    if (!Number.isFinite(n) || n < 100 || n > 4000) return null;
+    if (n < 800) return 3;
+    if (n <= 1200) return 2;
+    return 1;
   }
 
   function clampProviderLines(multiPv) {
@@ -214,8 +225,8 @@
   }
 
   const exported = {
+    suggestAggressionLevel,
     QUALITY_IDS,
-    CANDIDATE_IDS,
     QUALITY_PROFILES,
     QUALITY_LABELS,
     MAX_PROVIDER_LINES,

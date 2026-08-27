@@ -27,14 +27,24 @@
 
   // Exact-move-only product: all primary hints use this single level.
   const EXACT_HINT_LEVEL = 5;
-  const HINT_LEVELS = {
-    [EXACT_HINT_LEVEL]: { name: 'Exact Move', desc: 'Shows the selected move with SAN, squares, style, and plan' }
-  };
+
+  // Ultra Super Aggressive bonus scale. The raw Chaos vocabulary sums to
+  // ~1000-2500 style-points, which dwarfs every other term in the ranking
+  // (aggressive tops out around ~250) and reduces eval loss to noise. All
+  // ultra bonuses are scaled into aggressive's magnitude so objective cost
+  // participates again; the risk budget stays the hard gate.
+  const ULTRA_BONUS_SCALE = 0.125;
+  const EXACT_HINT_LEVEL_NAME = 'Exact Move';
 
   // ─── Playing Styles (6 styles, incl. Berserker) ────────────────────
   const PLAYING_STYLES = {
+    // Internal objective anchor — no longer a user-selectable style. The
+    // product is the single Ultra persona; this profile keeps the objective
+    // fast path alive for diagnostics and as the low anchor of a future
+    // strictness control.
     normal: {
       id: 'normal',
+      internal: true,
       name: 'Normal',
       desc: 'Objective best play with reliable conversion and resilient defense.',
       riskBudget: { winning: 15, equal: 20, worse: 30 },
@@ -43,122 +53,67 @@
       diversity: 0,
       weights: {}
     },
-    aggressive: {
-      id: 'aggressive',
-      name: 'Aggressive',
-      desc: 'Win as quickly as possible through sound forcing play, initiative, and king pressure.',
-      riskBudget: { winning: 35, equal: 85, worse: 140 },
-      sacrificeTolerance: 90,
-      kingHuntBonus: 55,
-      diversity: 0,
-      weights: {
-        check: 75,
-        forcingPly: 24,
-        kingPressure: 22,
-        defenderRemoval: 28,
-        tempo: 26,
-        development: 16,
-        openKingFile: 30,
-        sustainedAttack: 38,
-        soundSacrifice: 45,
-        speculativeSacrifice: -55,
-        simplification: -12,
-        ownKingDanger: -32,
-        unsupportedAttack: -30
-      }
-    },
     super_ultra_aggressive: {
       id: 'super_ultra_aggressive',
       name: 'Ultra Super Aggressive Attack',
       desc: 'A fearless, organized attack built on sound setup first, then a relentless break-through: develop into the enemy king\'s face, rip off the pawn shield, fork/pin/skewer the big pieces, strike the castled or uncastled king, and sacrifice boldly to finish games fast against <=1100 opponents.',
-      // These are objective-evaluation budgets in centipawns, not a claim that
-      // every sacrificed pawn is compensated. They widen as a position worsens.
-      riskBudget: { winning: 200, advantage: 350, equal: 600, worse: 850, desperate: 1200 },
+      // Objective-evaluation budgets in centipawns. Widening as a position
+      // worsens is intentional (create chaos when worse), but the old
+      // 600/850/1200 tiers let unsound 1000cp sacrifices through; exceeding
+      // these tighter budgets now requires verified compensation.
+      riskBudget: { winning: 40, advantage: 120, equal: 200, worse: 300, desperate: 450 },
       sacrificeTolerance: 1500,
       kingHuntBonus: 260,
       diversity: 0.18,
-      weights: {
-        check: 280,
-        doubleCheck: 190,
-        forcingPly: 80,
-        kingPressure: 120,
-        defenderRemoval: 130,
-        tempo: 80,
-        development: 35,
-        openKingFile: 160,
-        sustainedAttack: 190,
-        soundSacrifice: 300,
-        speculativeSacrifice: 180,
-        penetration: 95,
-        deepPenetration: 140,
-        pawnStorm: 120,
-        passedPawnPush: 60,
-        complexity: 80,
-        simplification: -160,
-        ownKingDanger: -5,
-        unsupportedAttack: -5,
-        // ── Grafted Berserker-vocabulary weights (Chaos Attack additions) ──
-        attackUnits: 26,
-        practicalChances: 40,
-        complexityStructural: 45,
-        greekGift: 120,
-        drawContempt: 30,
-        overload: 55,
-        developmentWithAttack: 25,
-        // ── Advanced Chaos Attack weights ──
-        kingCage: 60,
-        kingSuffocation: 220,
-        backRank: 80,
-        shieldStrike: 170,
-        contactCheck: 90,
-        exchangeSac: 200,
-        kingChase: 70,
-        punishUncastled: 100,
-        rookLift: 45,
-        // ── Chaos Attack kill-geometry weights ──
-        kingMobility: 75,
-        smotheredMate: 260,
-        anastasiaMate: 190,
-        arabianMate: 190,
-        bodenMate: 160,
-        forcedMateNet: 300,
-        undefendedHit: 95,
-        // ── Chaos Attack mating-square arithmetic weights ──
-        matingMath: 105,
-        squareOutnumber: 85,
-        // ── Chaos Attack position-level exploitation weights ──
-        hangingPieceGrab: 75,
-        backRankExploit: 90,
-        // ── Chaos Attack opening-trap weights ──
-        scholarTrap: 110,
-        legalsTrap: 100,
-        laskerTrap: 120,
-        // ── Chaos Attack second-move vision weight ──
-        followUpVision: 70,
-        // ── Chaos Attack tactical-toolkit weights ──
-        knightFork: 90,
-        pin: 80,
-        skewer: 85,
-        discoveredAttack: 75,
-        endgameCoup: 70,
-        // ── Fast-finish weights ──
-        earlyQueen: 120,
-        quickPressure: 130,
-        fastFinish: 150,
-        // ── Fast-kill aggression weights ──
-        mateSpeed: 130,
-        narrowEscape: 100,
-        sustainedPressure: 115,
-        windmillAttack: 150,
-        corridorMate: 170,
-        epauletteMate: 180,
-        queenSacForCharge: 165,
-        urgencyTax: -230,
-        attackerTradePenalty: -110
+      // Single source of truth: the live weight table belongs to the style
+      // itself in engine/chaos-attack.js (profile.weights). This used to be
+      // a hand-copied duplicate that had already drifted (missing the V2
+      // siege/sac-mechanism/quiet-phase keys Chaos scores with).
+      get weights() {
+        const chaos = getChaosEngine();
+        return (chaos && chaos.profile && chaos.profile.weights) || {};
       },
       phaseAggressionScale: 1.5
     }
   };
+
+  // ─── Aggression dial (the persona's strength axis) ──────────────────
+  // One style, three intensities — this replaces the retired style
+  // selector. Level I inherits the deleted Aggressive style's soul
+  // ("fastest sound win"), II is the signature persona, III widens the
+  // risk budgets for maximum chaos.
+  const AGGRESSION_LEVELS = {
+    1: {
+      id: 1, name: 'Sound Storm', budgetScale: 0.6, diversity: 0,
+      openingCostCap: 30, conversionFrom: 120,
+      desc: 'Fastest sound win — relentless pressure and clean conversion, no gambling.'
+    },
+    2: {
+      id: 2, name: 'Ultra Attack', budgetScale: 1, diversity: 0.18,
+      openingCostCap: 40, conversionFrom: 200,
+      desc: 'The signature persona — fearless, organized attack with verified compensation.'
+    },
+    3: {
+      id: 3, name: 'Max Chaos', budgetScale: 1.5, diversity: 0.25,
+      openingCostCap: 60, conversionFrom: 200,
+      desc: 'Widest risk budgets and more variety — bring the storm.'
+    }
+  };
+
+  function resolveAggressionLevel(value) {
+    return value === 1 || value === 3 ? value : 2;
+  }
+
+  // Applies a dial level to the ultra profile (other profiles pass through).
+  function applyAggressionLevel(profile, levelId) {
+    if (!profile || profile.id !== 'super_ultra_aggressive') return profile;
+    const cfg = AGGRESSION_LEVELS[resolveAggressionLevel(levelId)];
+    const scaledBudget = {};
+    for (const [tier, cap] of Object.entries(profile.riskBudget)) {
+      scaledBudget[tier] = Math.max(20, Math.round(cap * cfg.budgetScale));
+    }
+    return { ...profile, riskBudget: scaledBudget, diversity: cfg.diversity, openingCostCap: cfg.openingCostCap, aggression: cfg };
+  }
 
   // ─── Ultra Super Aggressive Attack module integration -------------
   // The Ultra Super Aggressive Attack style lives in engine/chaos-attack.js
@@ -195,11 +150,15 @@
     return earlyKingHuntEngine;
   }
 
-  function earlyKingHuntRequested(style, enabled) {
-    return style === 'super_ultra_aggressive' && enabled === true;
+  function earlyKingHuntRequested(_style, enabled) {
+    // Single-persona product: the style gate is always satisfied; the
+    // opt-in flag alone decides. (Signature kept for compatibility.)
+    return enabled === true;
   }
 
-  // Opening repertoires were removed. Style ranks legal engine candidates only.\n\n  // ─── ECO Opening Database (externalised) ───────────────────────────
+  // Opening repertoires were removed. Style ranks legal engine candidates only.
+
+  // ─── ECO Opening Database (externalised) ───────────────────────────
   // Loaded asynchronously from engine/eco.json. Falls back to a minimal
   // inline set if the fetch fails (e.g. CSP, dev environment).
   const ECO_FALLBACK = [
@@ -214,6 +173,16 @@
   let ECO_OPENINGS = ECO_FALLBACK;
   let ecoLoadPromise = null;
 
+  // Resolves once eco.json has been fetched (or failed and fallen back).
+  // Cold-start callers should await this before their first detectOpening,
+  // otherwise only the 7-entry fallback table is matchable.
+  function ensureEcoLoaded() {
+    if (!ecoLoadPromise && typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL) {
+      loadEcoDatabase();
+    }
+    return ecoLoadPromise || Promise.resolve();
+  }
+
   function loadEcoDatabase() {
     if (ecoLoadPromise) return ecoLoadPromise;
     ecoLoadPromise = fetch(chrome.runtime.getURL('engine/eco.json'))
@@ -221,7 +190,6 @@
       .then(data => {
         if (Array.isArray(data) && data.length > 0) {
           ECO_OPENINGS = data;
-          console.log(`[HintEngine] Loaded ${data.length} ECO openings from eco.json`);
         }
       })
       .catch((e) => {
@@ -438,9 +406,10 @@
   }
 
   // Returns '+' for check, '#' for checkmate, '' otherwise.
-  // Lightweight — applies the move, then does a square-attack test on
-  // the opponent king. Mate detection uses a simplified legal-move check
-  // (no castling/en-passant edge cases — rare in PV continuation contexts).
+  // Applies the move, then does a square-attack test on the opponent
+  // king. Mate detection includes the full legal-reply set: en-passant
+  // captures and castling count as legal replies (a position whose only
+  // escape is an e.p. capture is check, not mate).
   function computeCheckOrMateSuffix(uci, fen) {
     if (!uci || uci.length < 4 || !fen) return '';
     try {
@@ -463,8 +432,27 @@
       // The opponent's king is in check if attacked by the just-moved side's pieces.
       const inCheck = isSquareAttacked(newBoard, kingPos, activeColor);
       if (!inCheck) return '';
+      // Context the opponent needs for their legal replies: the en-passant
+      // target created by a double pawn push, and their surviving castling
+      // rights (a rook captured on its home square removes the right).
+      let epTarget = null;
+      const fromSq = uci.slice(0, 2);
+      const toSq = uci.slice(2, 4);
+      const movedPiece = getPieceAt(board, fromSq);
+      if (movedPiece && movedPiece.toLowerCase() === 'p') {
+        const from = squareToCoords(fromSq);
+        const to = squareToCoords(toSq);
+        if (Math.abs(from.row - to.row) === 2) {
+          epTarget = squareName((from.row + to.row) / 2, from.col);
+        }
+      }
+      let castling = parts[2] && parts[2] !== '-' ? parts[2] : '';
+      const rookSquaresLost = { K: 'h1', Q: 'a1', k: 'h8', q: 'a8' };
+      for (const [right, sq] of Object.entries(rookSquaresLost)) {
+        if (toSq === sq) castling = castling.replace(right, '');
+      }
       // Check if opponent has any legal move → if not, it's mate.
-      const hasMove = hasAnyLegalMove(newBoard, opponentColor);
+      const hasMove = hasAnyLegalMove(newBoard, opponentColor, { epTarget, castling });
       return hasMove ? '+' : '#';
     } catch (_) {
       return '';
@@ -529,11 +517,25 @@
     return false;
   }
 
-  function moveLeavesOwnKingSafe(board, fromSq, toSq, isWhite) {
+  function moveLeavesOwnKingSafe(board, fromSq, toSq, isWhite, removeSq) {
     const target = getPieceAt(board, toSq);
     // Kings are never captured in legal chess; checkmate is no legal escape.
     if (target && target.toLowerCase() === 'k') return false;
-    const newBoard = applyMoveToBoard(board, fromSq + toSq);
+    let newBoard;
+    if (removeSq) {
+      // En passant: the captured pawn is NOT on the destination square, so
+      // the generic applyMoveToBoard simulation would leave it on the board
+      // and could mis-detect a discovered check.
+      newBoard = board.map(row => row.slice());
+      const from = squareToCoords(fromSq);
+      const to = squareToCoords(toSq);
+      const rem = squareToCoords(removeSq);
+      newBoard[rem.row][rem.col] = null;
+      newBoard[to.row][to.col] = newBoard[from.row][from.col];
+      newBoard[from.row][from.col] = null;
+    } else {
+      newBoard = applyMoveToBoard(board, fromSq + toSq);
+    }
     const kingChar = isWhite ? 'K' : 'k';
     let kingPos = null;
     for (let r = 0; r < 8 && !kingPos; r++) {
@@ -544,8 +546,35 @@
     return Boolean(kingPos) && !isSquareAttacked(newBoard, kingPos, isWhite ? 'b' : 'w');
   }
 
-  function hasAnyLegalMove(board, color) {
+  function hasAnyLegalMove(board, color, ctx) {
     const isWhite = color === 'w';
+    const epTarget = ctx && typeof ctx.epTarget === 'string' ? ctx.epTarget : null;
+    const castling = ctx && typeof ctx.castling === 'string' ? ctx.castling : '';
+    // Castling is a legal reply in its own right (it also escapes checks the
+    // king could not otherwise move out of). Verify rights, rook placement,
+    // empty transit squares, and an unattacked king path.
+    if (castling) {
+      const home = isWhite ? 7 : 0;
+      const kingChar = isWhite ? 'K' : 'k';
+      const rookChar = isWhite ? 'R' : 'r';
+      const opp = isWhite ? 'b' : 'w';
+      if (board[home][4] === kingChar && !isSquareAttacked(board, { row: home, col: 4 }, opp)) {
+        const kingside = isWhite ? 'K' : 'k';
+        const queenside = isWhite ? 'Q' : 'q';
+        if (castling.includes(kingside) && board[home][7] === rookChar &&
+            !board[home][5] && !board[home][6] &&
+            !isSquareAttacked(board, { row: home, col: 5 }, opp) &&
+            !isSquareAttacked(board, { row: home, col: 6 }, opp)) {
+          return true;
+        }
+        if (castling.includes(queenside) && board[home][0] === rookChar &&
+            !board[home][1] && !board[home][2] && !board[home][3] &&
+            !isSquareAttacked(board, { row: home, col: 3 }, opp) &&
+            !isSquareAttacked(board, { row: home, col: 2 }, opp)) {
+          return true;
+        }
+      }
+    }
     for (let r = 0; r < 8; r++) {
       for (let c = 0; c < 8; c++) {
         const p = board[r][c];
@@ -561,6 +590,7 @@
             if (target && (target === target.toUpperCase()) === isWhite) continue; // can't capture own piece
             const dr = tr - r, dc = tc - c;
             let reachable = false;
+            let epCapture = false;
             if (type === 'p') {
               const forward = isWhite ? -1 : 1;
               if (dc === 0 && dr === forward && !target) reachable = true;
@@ -568,6 +598,12 @@
                 if ((isWhite && r === 6) || (!isWhite && r === 1)) reachable = true;
               }
               if (Math.abs(dc) === 1 && dr === forward && target) reachable = true;
+              // En passant: diagonal to an EMPTY square is legal iff it is the
+              // ep target. The captured pawn sits beside, not on, that square.
+              if (Math.abs(dc) === 1 && dr === forward && !target && squareName(tr, tc) === epTarget) {
+                reachable = true;
+                epCapture = true;
+              }
             } else if (type === 'n') {
               if ((Math.abs(dr) === 2 && Math.abs(dc) === 1) || (Math.abs(dr) === 1 && Math.abs(dc) === 2)) reachable = true;
             } else if (type === 'k') {
@@ -585,7 +621,12 @@
             // Simulate the move and check if own king is left in check.
             const fromSq = squareName(r, c);
             const toSq = squareName(tr, tc);
-            if (moveLeavesOwnKingSafe(board, fromSq, toSq, isWhite)) return true;
+            if (epCapture) {
+              const capturedSq = squareName(tr + (isWhite ? 1 : -1), tc);
+              if (moveLeavesOwnKingSafe(board, fromSq, toSq, isWhite, capturedSq)) return true;
+            } else if (moveLeavesOwnKingSafe(board, fromSq, toSq, isWhite)) {
+              return true;
+            }
           }
         }
       }
@@ -869,17 +910,17 @@
 
   // ─── Winning Plan Generation ───────────────────────────────────────
   function generateWinningPlan(evalScore, scoreType, position, playerColor, fen, style, earlyKingHuntEnabled = false) {
-    const currentStyle = PLAYING_STYLES[style] || PLAYING_STYLES.normal;
+    const currentStyle = PLAYING_STYLES[style] || PLAYING_STYLES.super_ultra_aggressive;
     if (scoreType === 'mate') {
       if (evalScore > 0) return `Force checkmate in ${Math.abs(evalScore)} move${Math.abs(evalScore) !== 1 ? 's' : ''}!`;
       return `Stop the forced mate — use every check, tempo, and escape square available.`;
     }
 
     const phase = detectGamePhase(fen);
-    if (currentStyle.id === 'aggressive') {
-      if (evalScore > 150) return 'Convert fast: keep the initiative, force concessions, and choose the shortest sound route to the king or material gain.';
-      if (evalScore > -80) return 'Seize the initiative now: improve attackers with tempo and force the opponent to react.';
-      return 'Create active counterplay immediately — checks, threats, and tempo are more valuable than passive defense.';
+    // Level I ("Sound Storm") inherits the retired Aggressive style's
+    // convert-fast doctrine for its winning plans.
+    if (currentStyle.aggression?.id === 1 && evalScore > 150) {
+      return 'Convert fast: keep the initiative, force concessions, and choose the shortest sound route to the king or material gain.';
     }
     if (currentStyle.id === 'super_ultra_aggressive' && earlyKingHuntEnabled && phase !== 'endgame') {
       return 'Early King Hunt active: open lines, deploy attackers with tempo, and keep forcing the opponent to defend before the king can consolidate.';
@@ -909,9 +950,6 @@
   }
 
   // ─── Candidate analysis and style scoring ─────────────────────────
-  // Retained as a compatibility hook; the rebuilt scorer is intentionally stateless.
-  function resetSacrificeHistory() {}
-
   // Style scoring is pure: hypothetical candidates never mutate game history.
   function findKing(board, isWhite) {
     const symbol = isWhite ? 'K' : 'k';
@@ -1270,7 +1308,7 @@
       edgePawnMove: piece.toLowerCase() === 'p' && (destination.col === 0 || destination.col === 7),
       supportedDestination: defended,
       calculationBurden: Math.max(0, line.length * 1.2 + (sacrifice ? 3 : 0) + Math.max(0, ownDangerAfter.pressure - ownDangerBefore.pressure) - forcingPly * 0.65),
-followUpUci: line[2] || null,
+      followUpUci: line[2] || null,
       masterGames: 0,
       // plan is assigned below, after the ChaosEngine merges its features.
       humanReasons: [], humanRisks: [],
@@ -1326,8 +1364,11 @@ followUpUci: line[2] || null,
     return features;
   }
 
-  function candidateStyleBonus(candidate, style) {
+  function candidateStyleBonus(candidate, style, context = {}) {
     const weights = style.weights || {};
+    // scoring.conversion — set by the caller when the position is clearly
+    // winning; switches the vocabulary from "create chaos" to "finish fast".
+    const scoring = { conversion: context.conversion === true };
     let bonus = 0;
     const add = (condition, key, amount, reason) => {
       if (!condition || !amount) return;
@@ -1361,10 +1402,38 @@ followUpUci: line[2] || null,
         withinSacrificeTolerance ? 'sacrifice lacks an immediate attacking trigger' : 'sacrifice exceeds the Chaos Attack material limit');
       candidate.sacrificeSoundness = sound ? 'sound' : (withinSacrificeTolerance && candidate.chaosSacrificeTrigger ? 'speculative' : 'unsound');
     }
-    add(candidate.complexity > 0, 'complexity', weights.complexity * Math.min(candidate.complexity, 4), 'creates practical complexity');
-    add(candidate.simplification > 1, 'simplification', weights.simplification * Math.min(candidate.simplification - 1, 3), 'simplifies the attack');
-add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * Math.min(candidate.ownKingDangerDelta, 5), 'weakens your own king');
+    add(candidate.complexity > 0 && !scoring.conversion, 'complexity', weights.complexity * Math.min(candidate.complexity, 4), 'creates practical complexity');
+    // Winning-conversion mode (ported from the retired Aggressive style's
+    // "fastest sound win" discipline): once the position is clearly won,
+    // trading away the opponent's last active pieces is FINISHING, not
+    // timidity — the usual simplification penalty flips into a bonus and
+    // mate-speed urgency is rewarded.
+    if (scoring.conversion) {
+      add(candidate.simplification > 1, 'conversionTrade', (weights.conversionTrade || 90) * Math.min(candidate.simplification - 1, 3),
+        'trades away the last counterplay — time to finish');
+      add(Boolean(candidate.winningMate) || candidate.forcingPly >= 2, 'finishUrgency', weights.mateSpeed || 130,
+        'drives the fastest finish');
+    } else {
+      add(candidate.simplification > 1, 'simplification', weights.simplification * Math.min(candidate.simplification - 1, 3), 'simplifies the attack');
+    }
+    add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * Math.min(candidate.ownKingDangerDelta, 5), 'weakens your own king');
     add(candidate.unsupportedAttack, 'unsupportedAttack', weights.unsupportedAttack, 'attacking piece lacks support');
+    // King safety is part of the attack, not its opposite: early castling is
+    // paid from the style's own quiet-prep weight (only ultra defines it).
+    add(candidate.castling && detectGamePhase(candidate.fen) === 'opening', 'castleEarly', weights.quietKingPrep,
+      'tucks the king away early — safety first, then the storm');
+
+    // attackMomentum must be computed BEFORE the Chaos delegation: its
+    // siege-continuity clause reads candidate.attackMomentum to scale the
+    // continuity bonus, and on a fresh candidate it would otherwise always
+    // read undefined, pinning continuityScale to its 0.6 floor. The
+    // re-assignment after the delegation keeps the engine-owned sum as the
+    // final value (Chaos's calibrateAttackScore overwrites it mid-call).
+    candidate.attackMomentum = (candidate.kingPressureDelta || 0) +
+      (candidate.penetrationDelta || 0) + (candidate.pawnStormDelta || 0);
+    // Winning-conversion context for the style engine (e.g. the queen-trade
+    // veto must not fight clean technique in already-won positions).
+    candidate.conversionMode = scoring.conversion;
 
     // ── Chaos Attack delegation ─────────────────────────────────────────
     // The full grafted Berserker-vocabulary, advanced Chaos, kill-geometry,
@@ -1396,9 +1465,15 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     if (style.id === 'super_ultra_aggressive') {
       const phase = candidate.fen ? detectGamePhase(candidate.fen) : 'middlegame';
       const base = style.phaseAggressionScale || 1;
-      let phaseMult = phase === 'middlegame' ? base : (phase === 'opening' ? 0.8 + base * 0.3 : 1.0);
+      // Opening used to be AMPLIFIED (0.8 + 1.5*0.3 = 1.25), producing Ng5?!
+      // on move four. The build-up phase is now damped; development and king
+      // safety incentives carry the opening instead.
+      let phaseMult = phase === 'middlegame' ? base : (phase === 'opening' ? 0.6 : 1.0);
       if (phase === 'endgame' && candidate.winningMate) phaseMult = Math.max(phaseMult, base);
       if (bonus > 0) bonus *= phaseMult;
+      // Bring the whole ultra vocabulary back into a magnitude where the
+      // eval-loss term and the human shortlist margins can compete with it.
+      bonus *= ULTRA_BONUS_SCALE;
     }
 
     // A9 — Secondary hard ceiling so a single stacked move cannot run away with
@@ -1413,6 +1488,7 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
       candidate.penetrationDelta > 0
     ].filter(Boolean).length;
     if (overlap >= 3 && bonus > 0) bonus /= (1 + (overlap - 2) * 0.12);
+    // Restore the engine-owned momentum after Chaos's internal overwrite.
     candidate.attackMomentum = (candidate.kingPressureDelta || 0) +
       (candidate.penetrationDelta || 0) + (candidate.pawnStormDelta || 0);
     return bonus;
@@ -1420,14 +1496,77 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
 
   // Central style policy. Style may choose among objectively acceptable
   // candidates. It may never override these facts.
-  function styleSafetyAllows(analysis, evalLoss, profile, objectiveBest) {
+  // Verified compensation: the only way a candidate may exceed its risk
+  // budget (or drop a win-probability class). Requires a CONCRETE sacrifice
+  // mechanism (classified by the style engine's geometry, not by "it feels
+  // attacking") plus a forced mate in the PV or a genuinely forcing
+  // sequence — and never more than the desperate ceiling overall.
+  function verifiedCompensation(analysis, evalLoss) {
+    if (!Number.isFinite(evalLoss) || evalLoss > 450) return false;
+    const mechanism = analysis?.sacMechanism;
+    if (mechanism !== 'deflect' && mechanism !== 'lineOpen' && mechanism !== 'tempo') return false;
+    if (analysis?.winningMate) return true;
+    return (analysis?.forcingPly || 0) >= 3 && Boolean(analysis?.givesCheck || analysis?.chaosSacrificeTrigger);
+  }
+
+  const WIN_CLASS_RANK = { losing: 0, worse: 1, equal: 2, advantage: 3, winning: 4 };
+  function winClass(score) {
+    if (!Number.isFinite(score)) return 'equal';
+    if (score > 200) return 'winning';
+    if (score > 50) return 'advantage';
+    if (score >= -50) return 'equal';
+    if (score >= -200) return 'worse';
+    return 'losing';
+  }
+
+  function styleSafetyAllows(analysis, evalLoss, profile, objectiveBest, conversion = false) {
     if (analysis?.invalid) return false;
     if (!Number.isFinite(evalLoss)) return false;
     if (objectiveBest?.pv?.scoreType === 'mate' && objectiveBest.score > 0) return evalLoss === 0;
     if (profile.id !== 'normal' && analysis.ownKingTrapped) return false;
     if (analysis.earlyKingHuntActive && analysis.earlyKingHuntUnsafe) return false;
-    const budget = riskBudgetFor(profile, objectiveBest?.score || 0);
-    if (evalLoss > budget) return false;
+    const bestScore = objectiveBest?.score || 0;
+    // The objective profile never buys out of its budget — escapes are a
+    // style freedom only.
+    const compensated = profile.id !== 'normal' && verifiedCompensation(analysis, evalLoss);
+    // Conversion-trade exemption (the retired Aggressive style's core
+    // discipline): in a clearly won position, trading the opponent's last
+    // active pieces is textbook technique even when it costs eval — as long
+    // as the position STAYS clearly winning. Hard-capped at 120cp and the
+    // class-collapse guard below still applies.
+    const conversionTrade = profile.id !== 'normal' &&
+      !(objectiveBest?.pv?.scoreType === 'mate') &&
+      bestScore > 200 && (analysis.simplification || 0) >= 2 &&
+      evalLoss <= 120 && (bestScore - evalLoss) > 200;
+    const budget = riskBudgetFor(profile, bestScore);
+    if (evalLoss > budget && !compensated && !conversionTrade) return false;
+    // Class-collapse guard: a style pick may never throw away two or more
+    // win-probability classes (winning→equal-or-worse, equal→losing) without
+    // verified compensation. Single-class dips stay governed by the budget,
+    // which already encodes how much chaos each position justifies.
+    const classDrop = WIN_CLASS_RANK[winClass(bestScore)] - WIN_CLASS_RANK[winClass(bestScore - evalLoss)];
+    if (classDrop >= 2 && !compensated) return false;
+    // Opening sanity: in the first eight moves of a quiet position (no
+    // tactics on the board), style pays club-level prices only — develop
+    // and castle first, hunt later. Recognized opening traps (Qh5-class
+    // scholar patterns) and the opted-in Early King Hunt are exempt: the
+    // former are concrete by definition, the latter owns its own safety veto.
+    if (profile.id !== 'normal' && analysis.fen && parseMoveCount(analysis.fen) <= 8 &&
+        Math.abs(bestScore) <= 120 && evalLoss > (profile.openingCostCap ?? 40) && !compensated &&
+        !analysis.earlyKingHuntActive &&
+        !(analysis.scholarTrap || analysis.legalsTrap || analysis.laskerTrap)) return false;
+    // Principle 6 — never trade queens while a weak enemy king is under
+    // fire: the queen is the mating piece. Hard gate (a soft score penalty
+    // could not out-weigh the check/defender geometry the trade itself
+    // collects). Exempt: clean winning-conversion mode (technique decides
+    // once the game is clearly won), forced mates in the candidate's PV,
+    // and materially-winning "trades".
+    if (profile.id !== 'normal' && analysis.queenTradeOffered &&
+        !conversion && !analysis.winningMate && (analysis.materialDelta || 0) <= 60 &&
+        (analysis.punishUncastled || (analysis.kingPressureDelta || 0) > 0 ||
+          (analysis.sustainedPressure || 0) >= 0.5 || analysis.shieldStrike || analysis.kingSuffocation)) {
+      return false;
+    }
     if (profile.id !== 'normal' && analysis.losingMate) return false;
     return true;
   }
@@ -1472,10 +1611,6 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     if (profile.id === 'normal') {
       reward(bestScore > 180 && candidate.simplification > 1, 18, 'converts the advantage with a simpler position');
       penalize(candidate.sacrifice, 26, 'introduces unnecessary material risk');
-} else if (profile.id === 'aggressive') {
-      reward(candidate.playerForcingMoves >= 2, 25, 'renews the threat on consecutive moves');
-      reward(candidate.development && candidate.kingPressureDelta > 0, 20, 'develops directly into the attack');
-      penalize(candidate.sacrificeSoundness === 'speculative', 35, 'the fastest-looking attack is not fully forced');
     } else {
       // ── Chaos human feel delegation ─────────────────────────────────
       // The Chaos-only rewards for the kill-geometry, mating-square math,
@@ -1518,6 +1653,7 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
       if (bestScore > -200) return style.riskBudget.worse;
       return style.riskBudget.desperate;
     }
+    // (Non-ultra profiles keep their compact original budgets.)
     if (bestScore > 150) return style.riskBudget.winning;
     if (bestScore < -100) return style.riskBudget.worse;
     return style.riskBudget.equal;
@@ -1532,11 +1668,61 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     return (hash >>> 0) / 4294967296;
   }
 
+  // Book moves (Masters DB win rates, the owned attack book) live in their
+  // own lane. Their scores are popularity-derived, not engine evaluations,
+  // so mixing them into the cp ranking let fake centipawns outvote real
+  // analysis. Book-only pools rank inside their lane (curated order);
+  // mixed pools append the book lane after the engine ranking, ineligible
+  // for the style pick.
+  function tagBookLane(bookPvs) {
+    return bookPvs
+      .slice()
+      .sort((a, b) => (b.score || 0) - (a.score || 0))
+      .map((pv, rank) => ({
+        ...pv,
+        _styleAnalysis: {
+          mode: 'book',
+          bookLane: true,
+          objectiveRank: rank + 1,
+          styleRank: rank + 1,
+          evalLoss: 0,
+          eligible: true,
+          reasons: [
+            pv._masterData
+              ? `book move — ${pv._masterData.totalGames} master games (${pv._masterData.whiteWinPct}% White wins)`
+              : (pv._bookLine ? `book move — ${pv._bookLine}` : 'book move — opening theory')
+          ],
+          risks: [],
+          masterGames: Number(pv._masterData?.totalGames || 0)
+        }
+      }));
+  }
+
   // Returns PVs in style order. Each PV receives non-invasive _styleAnalysis
   // metadata used to keep hints, candidates, and explanations synchronized.
+  // Book PVs (Masters win rates, owned repertoire) are kept in their own
+  // lane: a pure book pool ranks inside the lane, a mixed pool appends the
+  // book lane (ineligible for the style pick) after the engine ranking.
   function selectPVForStyle(pvs, fen, style, playerColor, humanLikeMode = false, context = {}) {
     if (!Array.isArray(pvs) || pvs.length === 0) return [];
-    const profile = PLAYING_STYLES[style] || PLAYING_STYLES.normal;
+    const bookPvs = pvs.filter(p => p.scoreType === 'book');
+    const enginePvs = pvs.filter(p => p.scoreType !== 'book');
+    if (bookPvs.length > 0 && enginePvs.length === 0) return tagBookLane(bookPvs);
+    if (bookPvs.length === 0) return selectEngineLane(pvs, fen, style, playerColor, humanLikeMode, context);
+    const engineRanked = selectEngineLane(enginePvs, fen, style, playerColor, humanLikeMode, context);
+    const offset = engineRanked.length;
+    const tagged = tagBookLane(bookPvs).map(pv => ({
+      ...pv,
+      _styleAnalysis: { ...pv._styleAnalysis, eligible: false, styleRank: offset + pv._styleAnalysis.styleRank }
+    }));
+    return [...engineRanked, ...tagged];
+  }
+
+  function selectEngineLane(pvs, fen, style, playerColor, humanLikeMode = false, context = {}) {
+    const profile = applyAggressionLevel(
+      PLAYING_STYLES[style] || PLAYING_STYLES.super_ultra_aggressive,
+      context.aggressionLevel
+    );
     const earlyKingHuntEnabled = earlyKingHuntRequested(profile.id, context.earlyKingHuntEnabled);
     if (pvs.length === 1) {
       // A single-PV source cannot be re-ranked, but the opt-in still annotates
@@ -1577,6 +1763,11 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     }
 
     const bestIsWinningMate = objectiveBest.pv.scoreType === 'mate' && objectiveBest.score > 0;
+    // Winning-conversion mode kicks in before mate is forced: with a clear
+    // advantage the persona switches to the retired Aggressive style's
+    // "fastest sound win" discipline (trade counterplay, drive the finish).
+    // Level I converts earlier (from +120), II/III from +200.
+    const conversion = !bestIsWinningMate && objectiveBest.score > (profile.aggression?.conversionFrom ?? 200);
     const budget = riskBudgetFor(profile, objectiveBest.score);
     const candidates = objective.map((entry, rank) => {
       let evalLoss;
@@ -1609,11 +1800,13 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
       analysis.evalLoss = evalLoss;
       analysis.objectiveRank = rank + 1;
       analysis.mode = profile.id;
-      const eligible = styleSafetyAllows(analysis, evalLoss, profile, objectiveBest);
-      const bonus = eligible ? candidateStyleBonus(analysis, profile) : -Infinity;
+      const eligible = styleSafetyAllows(analysis, evalLoss, profile, objectiveBest, conversion);
+      const bonus = eligible ? candidateStyleBonus(analysis, profile, { conversion }) : -Infinity;
       // Aggressive is especially focused on converting quickly: objective cost
       // remains expensive, while checks and sustained forcing play can overcome it.
-      const lossWeight = profile.id === 'normal' ? 1.5 : (profile.id === 'aggressive' ? 1.25 : 0.62);
+      // Ultra paid 0.62 while its bonuses were ~10x every other style's —
+      // with bonuses rescaled, eval cost now carries real weight (1.0).
+      const lossWeight = profile.id === 'normal' ? 1.5 : 1.0;
       const styleScore = eligible ? bonus - evalLoss * lossWeight : -Infinity;
       analysis.attackSubTotal = analysis.attackMomentum ||
         ((analysis.kingPressureDelta || 0) + (analysis.penetrationDelta || 0) + (analysis.pawnStormDelta || 0));
@@ -1621,7 +1814,11 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     });
 
     let eligible = candidates.filter(candidate => candidate.eligible);
-    if (!eligible.length) eligible = [candidates.find(candidate => candidate.index === objectiveBest.index) || candidates[0]];
+    if (!eligible.length) {
+      // Every candidate was vetoed: fall back to the objective best. That
+      // candidate must leave the ineligible list, or it renders twice.
+      eligible = [candidates.find(candidate => candidate.index === objectiveBest.index) || candidates[0]];
+    }
     // C1 — For Chaos, tie-break budget-eligible candidates by concrete attack
     // facts (king pressure + penetration + pawn storm) so the most aggressive
     // candidate within tolerance surfaces first. Budget gate stays authoritative.
@@ -1639,17 +1836,24 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
       // strengths (and good-form / clearly-winning sessions) consider a wider
       // pool of in-character candidates. Hard safety gates are unaffected —
       // every shortlist member already passed styleSafetyAllows.
-      const baseMargin = profile.id === 'normal' ? 32 : (profile.id === 'aggressive' ? 70 : 90);
-      const shortlistMargin = formParams
+      const baseMargin = profile.id === 'normal' ? 32 : 90;
+      const absoluteMargin = formParams
         ? baseMargin * Math.max(0.5, formParams.marginScale)
         : baseMargin;
+      // Absolute margins were calibrated when ultra bonuses ran ~2500 points;
+      // they starved ultra's shortlist to a single candidate, which silently
+      // disabled the strength slider (no slip candidates could ever exist).
+      // A relative component keeps the shortlist populated whatever the
+      // bonus magnitude, capped so it can never admit half the pool.
+      const relativeMargin = Math.abs(standardBest) * 0.12;
+      const shortlistMargin = Math.max(absoluteMargin, Math.min(relativeMargin, absoluteMargin * 4));
       const shortlist = eligible.filter(candidate => standardBest - candidate.styleScore <= shortlistMargin);
       for (const candidate of shortlist) {
         const naturalness = humanNaturalness(candidate.analysis, profile, context, objectiveBest.score);
         // Chaos gives human-naturalness extra weight so a fearless, natural
         // attacking move beats a dry, engine-perfect but unremarkable line.
         // The form model scales this weight by sparring strength.
-        const humanWeightBase = profile.id === 'normal' ? 0.8 : (profile.id === 'aggressive' ? 0.65 : 0.7);
+        const humanWeightBase = profile.id === 'normal' ? 0.8 : 0.7;
         const humanWeight = humanWeightBase * (formParams ? formParams.naturalnessScale : 1);
         candidate.humanScore = candidate.styleScore + naturalness * humanWeight;
       }
@@ -1690,12 +1894,13 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     // Stable, tightly controlled variety for Chaos Attack only. It never applies
     // to mate lines and only considers a near-tied second attacking candidate.
     if (!humanLikeMode && profile.diversity > 0 && !bestIsWinningMate && eligible.length > 1 &&
-        eligible[0].styleScore - eligible[1].styleScore <= 18 &&
+        eligible[0].styleScore - eligible[1].styleScore <= Math.max(2, Math.round(18 * ULTRA_BONUS_SCALE)) &&
         stableFenFraction(fen, profile.id) < profile.diversity) {
       [eligible[0], eligible[1]] = [eligible[1], eligible[0]];
     }
 
-    const ineligible = candidates.filter(candidate => !candidate.eligible).sort((a, b) => b.utility - a.utility);
+    const ineligible = candidates.filter(candidate => !eligible.includes(candidate))
+      .sort((a, b) => b.utility - a.utility);
     return [...eligible, ...ineligible].map((candidate, styleRank) => ({
       ...candidate.pv,
       _styleAnalysis: {
@@ -1735,23 +1940,24 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
         annotations.push(...chaosA.annotate(analysis));
       } else {
         annotations.push('ultra-aggressive attack');
-        annotations.push('aggressive');
+        annotations.push('attacking');
       }
       const earlyA = getEarlyKingHuntEngine();
       if (analysis.earlyKingHuntActive && earlyA) annotations.push(...earlyA.annotate(analysis));
-    } else {
-      annotations.push('aggressive');
     }
     return [...new Set(annotations)];
   }
 
   // ─── Generate Hints (Main Entry) ───────────────────────────────────
-  function generateHints(analysisData, hintLevel, playerColor, style, _legacyRepertoire, humanLikeMode = false, humanContext = {}) {
-    hintLevel = EXACT_HINT_LEVEL;
+  function generateHints(analysisData, _legacyHintLevel, playerColor, style, _legacyRepertoire, humanLikeMode = false, humanContext = {}) {
+    const hintLevel = EXACT_HINT_LEVEL;
     const { fen, pvs, bestMove, source, tablebaseData, openingData } = analysisData;
     const position = assessPosition(fen);
     const isWhite = playerColor === 'w';
-    const currentStyle = PLAYING_STYLES[style] || PLAYING_STYLES.normal;
+    const currentStyle = applyAggressionLevel(
+      PLAYING_STYLES[style] || PLAYING_STYLES.super_ultra_aggressive,
+      humanContext.aggressionLevel
+    );
     const earlyKingHuntEnabled = earlyKingHuntRequested(currentStyle.id, humanContext.earlyKingHuntEnabled);
 
     // Apply the rebuilt, mate-safe style ranking. Normal also receives objective
@@ -1776,7 +1982,7 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
       meta.mode = currentStyle.id;
       meta.humanLikeMode = humanLikeMode;
       meta.limitedCandidates = true;
-      candidateStyleBonus(meta, currentStyle);
+      candidateStyleBonus(meta, currentStyle, { conversion: only.scoreType !== 'mate' && score > 200 });
       if (humanLikeMode) {
         humanNaturalness(meta, currentStyle, { ...humanContext, openingData }, score);
       }
@@ -1793,7 +1999,7 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
 
     const hints = {
       level: hintLevel,
-      levelName: HINT_LEVELS[hintLevel]?.name || 'Unknown',
+      levelName: EXACT_HINT_LEVEL_NAME,
       main: '',
       captions: [],
       threat: '',
@@ -1861,12 +2067,17 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     if (bestPV?._styleAnalysis) {
       const meta = bestPV._styleAnalysis;
       hints.styleAnalysis = meta;
-      if (!humanLikeMode && currentStyle.id !== 'normal') {
+      if (meta.mode === 'book') {
+        hints.captions.push({
+          kind: 'book', label: 'Opening book',
+          text: `${(meta.reasons || ['book move'])[0]} — theory, not an engine evaluation.`
+        });
+      } else if (!humanLikeMode && currentStyle.id !== 'normal') {
         const reasons = (meta.reasons || []).slice(0, 3);
         const risks = (meta.risks || []).slice(0, 2);
         if (reasons.length) {
-          const label = currentStyle.id === 'aggressive' ? 'Fast-win idea' : 'Maximum-pressure idea';
-          hints.captions.push({ kind: 'idea', label, text: `${reasons.join(', ')}.` });
+          const ideaLabel = 'Maximum-pressure idea';
+          hints.captions.push({ kind: 'idea', label: ideaLabel, text: `${reasons.join(', ')}.` });
         }
         if (hintLevel === EXACT_HINT_LEVEL && Number.isFinite(meta.evalLoss) && meta.evalLoss > 0) {
           hints.captions.push({ kind: 'cost', label: 'Objective cost', text: `${(meta.evalLoss / 100).toFixed(1)} pawn${meta.evalLoss === 100 ? '' : 's'} versus the strongest continuation` });
@@ -1929,6 +2140,20 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
       hints.depthQuality = 'standard';
     } else if (bestPV) {
       hints.depthQuality = 'basic';
+    }
+
+    // Candidate-pool transparency: tell the user when style ranking ran on a
+    // locally widened pool, or had to be paused because only one line exists.
+    if (analysisData.poolExpanded) {
+      hints.captions.push({
+        kind: 'context', label: 'Candidate pool',
+        text: 'One cloud line — widened with fast local analysis so style ranking stays active (extra lines are lower confidence).'
+      });
+    } else if (hints.styleAnalysis?.limitedCandidates && (currentStyle.id !== 'normal' || humanLikeMode)) {
+      hints.captions.push({
+        kind: 'context', label: 'Candidate pool',
+        text: 'Only a single analysis line is available — style ranking is paused for this move.'
+      });
     }
 
     // Opening detection
@@ -2397,6 +2622,7 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     classifyMove,
     assessPosition,
     detectOpening,
+    ensureEcoLoaded,
     detectGamePhase,
     describeEval,
     formatEvalBar,
@@ -2407,10 +2633,11 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     selectPVForStyle,
     analyzeCandidate,
     PLAYING_STYLES,
+    AGGRESSION_LEVELS,
+    resolveAggressionLevel,
+    applyAggressionLevel,
     styleSafetyAllows,
-    HINT_LEVELS,
     EXACT_HINT_LEVEL,
-    resetSacrificeHistory,
     // Exposed for deterministic regression tests and progressive-PV consumers.
     applyMoveToFen,
     applyMoveToBoard

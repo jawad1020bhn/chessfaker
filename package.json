@@ -1,0 +1,23 @@
+{
+  "name": "chess-hint-assistant",
+  "version": "13.1.0",
+  "private": true,
+  "description": "Chess Hint Assistant — a Manifest V3 side-panel chess analysis workspace (educational use only).",
+  "author": "jawad1020bhn",
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node scripts/run-tests.mjs",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "package": "bash scripts/package.sh"
+  },
+  "devDependencies": {
+    "eslint": "^9.30.0",
+    "prettier": "^3.6.0"
+  }
+}

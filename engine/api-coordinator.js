@@ -495,6 +495,11 @@
       for (const active of this.activeJobs.values()) {
         if (active.spec.provider === normalized.provider &&
             priorityValue(normalized.priority) < priorityValue(active.spec.priority)) {
+          // Only preempt jobs still waiting for their rate slot. A job that
+          // already reserved (or is mid-flight) keeps running to completion;
+          // per-provider concurrency is 1, so the high-priority job runs
+          // immediately afterwards without burning a second reservation.
+          if (active.reserved) continue;
           active.cancelled = true;
           active.cancelReason = 'preempted';
           if (active.controller) active.controller.abort();
@@ -716,6 +721,11 @@
         if (!availability.allowed) return { ok: false, errorType: availability.errorType, cooldownUntil: availability.until };
         const budget = this._budgetStatus(job, now);
         if (budget.allowed) {
+          // This job now owns a provider rate reservation. Priority
+          // preemption must leave it alone: aborting it would not un-send
+          // the request and the workflow would spend a second reservation
+          // on the retry/failover — a silent budget double-spend.
+          job.reserved = true;
           const state = this.providerStates[job.spec.provider];
           state.recentRequests.push(now);
           state.lastRequestAt = now;
@@ -790,7 +800,10 @@
     async _retry(job, attempt) {
       const cap = this.globalPolicy.retryCapMs;
       const exponential = Math.min(cap, this.globalPolicy.retryBaseMs * Math.pow(2, attempt));
-      await this._sleepForJob(job, this.random() * exponential);
+      // Half base + half jitter: never retry after ~0 ms, never exceed the
+      // exponential cap, evenly spread otherwise-synchronized retries.
+      const delay = exponential * 0.5 + this.random() * exponential * 0.5;
+      await this._sleepForJob(job, delay);
       if (!this.isPositionCurrent(job.spec.positionToken)) return { ok: false, errorType: 'stale_position' };
       return this._waitAndReserve(job);
     }

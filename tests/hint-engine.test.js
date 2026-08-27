@@ -37,17 +37,31 @@ assert.equal(engine.uciToSan('c3d5', pinnedDisambiguation), 'Nd5', 'a pinned alt
 const scholarsMate = 'r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4';
 assert.equal(engine.uciToSan('h5f7', scholarsMate), 'Qxf7#');
 
+// En-passant reply: after this double push the defender's ONLY legal move
+// is the e.p. capture (verified with an external rules engine), so the
+// suffix is check, not mate.
+const epOnlyReply = '4R3/6Q1/8/5k2/5p2/7P/4P3/7K w - - 0 1';
+assert.equal(engine.uciToSan('e2e4', epOnlyReply), 'e4+',
+  'a position whose only legal reply is an en-passant capture must be labelled check, not mate');
+
 const rookCapture = 'r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1';
 assert.equal(engine.applyMoveToFen(rookCapture, 'a1a8').split(' ')[2], 'Kk', 'moving and captured rooks remove both queen-side rights');
 
 
 // Rebuilt three-mode style engine.
-assert.deepEqual(Object.keys(engine.PLAYING_STYLES), ['normal', 'aggressive', 'super_ultra_aggressive']);
+assert.deepEqual(Object.keys(engine.PLAYING_STYLES), ['normal', 'super_ultra_aggressive']);
+assert.equal(engine.PLAYING_STYLES.normal.internal, true, 'normal survives only as the internal objective anchor');
+assert.equal(engine.resolveAggressionLevel(1), 1);
+assert.equal(engine.resolveAggressionLevel(4), 2);
+assert.equal(engine.applyAggressionLevel(engine.PLAYING_STYLES.super_ultra_aggressive, 1).riskBudget.equal, 120,
+  'Level I scales the risk budgets down');
+assert.equal(engine.applyAggressionLevel(engine.PLAYING_STYLES.super_ultra_aggressive, 3).riskBudget.equal, 300,
+  'Level III widens the risk budgets');
 const attackFen = '4k3/8/8/8/8/8/8/3Q2K1 w - - 0 1';
 const quiet = { score: 50, scoreType: 'cp', depth: 25, pv: ['d1d2'] };
 const forcingCheck = { score: 20, scoreType: 'cp', depth: 25, pv: ['d1h5'] };
 assert.equal(engine.selectPVForStyle([quiet, forcingCheck], attackFen, 'normal', 'w')[0].pv[0], 'd1d2');
-assert.equal(engine.selectPVForStyle([quiet, forcingCheck], attackFen, 'aggressive', 'w')[0].pv[0], 'd1h5', 'Aggressive should prefer a sound forcing route to a faster win');
+assert.equal(engine.selectPVForStyle([quiet, forcingCheck], attackFen, 'super_ultra_aggressive', 'w')[0].pv[0], 'd1h5', 'the persona prefers a sound forcing route to a faster win');
 assert.deepEqual(
   JSON.parse(JSON.stringify(engine.selectPVForStyle([quiet, forcingCheck], attackFen, 'super_ultra_aggressive', 'w'))),
   JSON.parse(JSON.stringify(engine.selectPVForStyle([quiet, forcingCheck], attackFen, 'super_ultra_aggressive', 'w'))),
@@ -56,7 +70,8 @@ assert.deepEqual(
 
 const clearlyWinningQuiet = { ...quiet, score: 300 };
 const costlyCheck = { ...forcingCheck, score: 220 };
-assert.equal(engine.selectPVForStyle([clearlyWinningQuiet, costlyCheck], attackFen, 'aggressive', 'w')[0].pv[0], 'd1d2', 'Aggressive must not spend outside its tighter winning budget');
+assert.equal(engine.selectPVForStyle([clearlyWinningQuiet, costlyCheck], attackFen, 'super_ultra_aggressive', 'w', false, { aggressionLevel: 1 })[0].pv[0], 'd1d2',
+  'Level I (Sound Storm) must not spend outside its tighter winning budget');
 
 const fastestMate = { score: 2, scoreType: 'mate', depth: 30, pv: ['d1h5'] };
 const slowerMate = { score: 5, scoreType: 'mate', depth: 30, pv: ['d1d2'] };
@@ -72,15 +87,19 @@ assert.equal(realSac.sacrifice, true, 'material must actually disappear after th
 assert.equal(fakeSac.sacrifice, false, 'an expensive piece capturing a pawn is not automatically a sacrifice');
 const safeQueenMove = { score: 100, scoreType: 'cp', depth: 24, pv: ['d3d2'] };
 const speculativeQueenSac = { score: -40, scoreType: 'cp', depth: 24, pv: ['d3h7', 'g8h7'] };
-const superUltraChoice = engine.selectPVForStyle([safeQueenMove, speculativeQueenSac], sacrificeFen, 'super_ultra_aggressive', 'w')[0];
-assert.equal(superUltraChoice.pv[0], 'd3h7');
-assert.equal(superUltraChoice._styleAnalysis.sacrificeSoundness, 'speculative');
+// Budget reform (v13.2): an uncompensated queen-for-pawn sac at -140cp in a
+// won position is exactly the unsound aggression the reformed gates remove.
+// It may only be chosen with a verified mechanism (mate in PV / forced follow-up).
+const superUltraChoice = engine.selectPVForStyle([safeQueenMove, speculativeQueenSac], sacrificeFen, 'super_ultra_aggressive', 'w');
+assert.equal(superUltraChoice[0].pv[0], 'd3d2', 'a -140cp queen sac without a verified mechanism is vetoed');
+assert.equal(superUltraChoice[1].pv[0], 'd3h7');
+assert.equal(superUltraChoice[1]._styleAnalysis.eligible, false, 'the uncompensated sac is explicitly ineligible');
 
-const aggressiveHint = engine.generateHints({ fen: attackFen, pvs: [quiet, forcingCheck], moveHistory: [] }, 5, 'w', 'aggressive', 'none');
+const aggressiveHint = engine.generateHints({ fen: attackFen, pvs: [quiet, forcingCheck], moveHistory: [] }, 5, 'w', 'super_ultra_aggressive', 'none');
 assert.equal(aggressiveHint.main, 'Qh5+', 'the hero leads with the move itself — no style-name label');
 assert.ok(!/choice:/i.test(aggressiveHint.main), 'no "… choice:" prefix ever reaches the hero');
 const aggressiveIdea = aggressiveHint.captions.find(c => c.kind === 'idea');
-assert.equal(aggressiveIdea?.label, 'Fast-win idea', 'the style idea travels as a caption item, outside the hero');
+assert.equal(aggressiveIdea?.label, 'Maximum-pressure idea', 'the style idea travels as a caption item, outside the hero');
 assert.ok(aggressiveIdea?.text.length > 0, 'the idea caption carries the reason text');
 assert.equal(aggressiveHint.pvs[0].pv[0], 'd1h5');
 
@@ -123,7 +142,7 @@ assert.equal(humanNormal[0].pv[0], 'g1f3');
 assert.match(humanNormal[0]._styleAnalysis.humanSummary, /develops a new piece naturally/);
 assert.equal(humanNormal[0]._styleAnalysis.planContinuity, true);
 assert.equal(
-  engine.selectPVForStyle([quiet, forcingCheck], attackFen, 'aggressive', 'w', true)[0].pv[0],
+  engine.selectPVForStyle([quiet, forcingCheck], attackFen, 'super_ultra_aggressive', 'w', true)[0].pv[0],
   'd1h5',
   'human-like Aggressive must preserve the fastest sound forcing route'
 );
@@ -488,7 +507,7 @@ assert.equal(gatePick[0].pv[0], 'g1f1', 'Chaos refuses a move that boxes in its 
 assert.ok(gatePick[0]._styleAnalysis.eligible, 'the safe move is eligible');
 const gatePickAgg = engine.selectPVForStyle(
   [{ score: 30, scoreType: 'cp', depth: 20, pv: ['g1h1'] }, { score: 0, scoreType: 'cp', depth: 20, pv: ['g1f1'] }],
-  trappedFen, 'aggressive', 'w');
+  trappedFen, 'super_ultra_aggressive', 'w');
 assert.equal(gatePickAgg[0].pv[0], 'g1f1', 'Aggressive also refuses the trapped-king move');
 // H1c — A check that leaves our king boxed is not trapped (the initiative is
 // preserved): Qg2+ with the queen on the g-file.

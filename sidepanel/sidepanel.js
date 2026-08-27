@@ -28,22 +28,41 @@
   let prevEval = null;
   let prevScoreType = 'cp';
   let evalHistory = [];
+  // Per-game aggression telemetry: what the style cost and which of the
+  // six principles fired. Reset with evalHistory on new games.
+  let aggressionStats = null;
+  let aggressionStatsFen = null;
   let lastCriticalAlert = null;
   let isRefreshing = false;
   let refreshSafetyTimer = null;
   let humanPlanState = null;
 
-  const normalizeStyle = (style) => {
-    if (style === 'normal' || style === 'aggressive' || style === 'super_ultra_aggressive') return style;
-    return ['super_aggressive', 'ultra_aggressive_stealth', 'kamikaze', 'berserker'].includes(style)
-      ? 'super_ultra_aggressive'
-      : 'normal';
+  // Single-persona product: the style is constant; legacy intents (Normal,
+  // Aggressive) land on the dial's Level I ("Sound Storm"). 'auto' scales
+  // with the detected opponent rating (fallback: Level II).
+  const STYLE = 'super_ultra_aggressive';
+  const normalizeStyle = () => STYLE;
+  const normalizeAggression = (style, level) => {
+    if (level === 'auto') return 'auto';
+    if ([1, 2, 3].includes(Number(level))) return Number(level);
+    return style === 'normal' || style === 'aggressive' ? 1 : 'auto';
   };
+  let opponentRating = null;
+
+  function effectiveAggressionLevel() {
+    if (settings.aggressionLevel !== 'auto') return settings.aggressionLevel;
+    const suggested = window.AnalysisPolicy
+      ? window.AnalysisPolicy.suggestAggressionLevel(opponentRating)
+      : null;
+    return suggested || 2;
+  }
 
   let settings = {
     analysisQuality: 'auto',
+    theme: 'system',
     candidateLines: 'auto',
-    style: 'normal',
+    style: 'super_ultra_aggressive',
+    aggressionLevel: 'auto',
     // Kept as a style-scoped preference. The engine activates it only when
     // style === 'super_ultra_aggressive'; other styles ignore it completely.
     earlyKingHuntEnabled: false,
@@ -62,19 +81,46 @@
   };
 
   const STYLE_DESCRIPTIONS = {
-    normal: 'Objective best play, reliable conversion, and solid defense. This is the engine\'s strongest recommendation with no style bias.',
-    aggressive: 'Win as fast as possible through sound, forcing play. Push the initiative and keep pressure on the enemy king without throwing material away.',
-    super_ultra_aggressive: 'Fearless, organized attack: build up soundly, then break through with checks, pawn storms, forks, pins and bold sacrifices to finish fast against <=1100 opponents.'
+    1: 'Sound Storm (I): fastest sound win — relentless pressure, early conversion, no gambling.',
+    2: 'Ultra Attack (II): the signature persona — fearless, organized attack with verified compensation.',
+    3: 'Max Chaos (III): widest risk budgets and the most variety. Bring the storm.'
   };
+  const ROMAN = { 1: 'I', 2: 'II', 3: 'III' };
+
+  const LEVEL_NAMES = { 1: 'I · Sound', 2: 'II · Ultra', 3: 'III · Chaos' };
 
   function updateStyleDescription() {
     const el = $('#style-description');
     if (!el) return;
-    el.textContent = STYLE_DESCRIPTIONS[settings.style] || STYLE_DESCRIPTIONS.normal;
+    const level = effectiveAggressionLevel();
+    const auto = settings.aggressionLevel === 'auto';
+    const ratingNote = auto && opponentRating ? ` (opponent ${opponentRating})` : '';
+    el.textContent = auto
+      ? `Auto → ${ROMAN[level]}${ratingNote}. ${STYLE_DESCRIPTIONS[level]}`
+      : STYLE_DESCRIPTIONS[level] || STYLE_DESCRIPTIONS[2];
+    updatePersonaChip(level, auto);
+  }
+
+  // The hero chip mirrors the resolved persona level. It pops whenever the
+  // resolution CHANGES (Auto re-scaling with a new opponent, dial moves).
+  function updatePersonaChip(level, auto) {
+    const chip = $('#persona-chip');
+    if (!chip) return;
+    const label = auto ? `Auto · ${ROMAN[level]}` : LEVEL_NAMES[level] || LEVEL_NAMES[2];
+    if (chip.dataset.level !== String(level) || chip.textContent !== label) {
+      chip.dataset.level = String(level);
+      chip.textContent = label;
+      chip.title = `Ultra Attack — ${auto ? `Auto → ${ROMAN[level]}` : LEVEL_NAMES[level]}` +
+        (auto && opponentRating ? ` (opponent ${opponentRating})` : '');
+      chip.classList.remove('is-resolving');
+      // restart the pop keyframe
+      void chip.offsetWidth;
+      chip.classList.add('is-resolving');
+    }
   }
 
   function isEarlyKingHuntActive() {
-    return settings.style === 'super_ultra_aggressive' && settings.earlyKingHuntEnabled === true;
+    return settings.earlyKingHuntEnabled === true;
   }
 
   // The preference is preserved when the user changes style, but the control
@@ -84,10 +130,9 @@
     const container = $('#early-king-hunt-setting');
     const checkbox = $('#setting-early-king-hunt');
     if (!container || !checkbox) return;
-    const styleAllowsSetting = settings.style === 'super_ultra_aggressive';
-    container.hidden = !styleAllowsSetting;
-    container.setAttribute('aria-hidden', styleAllowsSetting ? 'false' : 'true');
-    checkbox.disabled = !styleAllowsSetting;
+    container.hidden = false;
+    container.setAttribute('aria-hidden', 'false');
+    checkbox.disabled = false;
     checkbox.checked = settings.earlyKingHuntEnabled === true;
   }
 
@@ -100,6 +145,7 @@
   const dom = {
     engineStatus: $('#engine-status'),
     statusDot: $('.status-dot'),
+    aggressionStat: $('#aggression-stat'),
     statusText: $('.status-text'),
     positionContext: $('#position-context'),
     positionTurn: $('#position-turn'),
@@ -179,22 +225,45 @@
     }, delay);
   }
 
+  let backgroundUnreachable = false;
+
+  // Distinguish a dead/recycled service worker from "no internet": a
+  // rejected runtime message (no receiving end / invalidated context)
+  // flips the status dot to the already-styled offline state.
+  function noteBackgroundUnreachable(e) {
+    const msg = String(e?.message || e || '');
+    if (!/receiving end does not exist|extension context invalidated|message port closed/i.test(msg)) return;
+    backgroundUnreachable = true;
+    updateEngineStatus('offline', 'Background unavailable — reopen this panel');
+  }
+
   async function readBoardFromBackground() {
     try {
       const result = await chrome.runtime.sendMessage({ type: 'read_board' });
+      if (backgroundUnreachable) {
+        backgroundUnreachable = false;
+        updateEngineStatus('connecting', 'Reconnected — resuming...');
+      }
       if (result && result.fen) {
         activeTabId = result.tabId ?? activeTabId;
         chrome.runtime.sendMessage({ type: 'panel_state', open: true, tabId: activeTabId }).catch(() => {});
+        if (Number.isFinite(Number(result.opponentRating)) && result.opponentRating !== opponentRating) {
+          opponentRating = Number(result.opponentRating);
+          updateStyleDescription();
+        }
         handlePositionUpdate({
           fen: result.fen,
           playerColor: result.playerColor,
+          opponentRating: result.opponentRating ?? null,
           positionReliable: result.positionReliable === true,
           turnReliable: result.turnReliable === true,
           fenSource: result.fenSource || 'dom-placement',
           gameInfo: { site: result.site, url: result.url, timestamp: result.timestamp, moveHistory: [], tabId: activeTabId }
         });
       }
-    } catch (e) {}
+    } catch (e) {
+      noteBackgroundUnreachable(e);
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -299,6 +368,9 @@
     document.addEventListener('keydown', (e) => {
       // Don't intercept if user is in an input/select field
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+      // Never swallow browser/OS shortcut combos: a bare-key match on 'r'
+      // used to hijack Ctrl/Cmd+R (reload) and Ctrl/Cmd+S (save page).
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
 
       const key = e.key.toLowerCase();
 
@@ -454,7 +526,15 @@
     window.addEventListener('pagehide', () => {
       chrome.runtime.sendMessage({ type: 'panel_state', open: false, tabId: activeTabId }).catch(() => {});
     }, { once: true });
-    startBoardReading();
+    // ECO race: opening detection must not run against the 7-entry fallback
+    // table just because the panel booted faster than eco.json loaded. The
+    // board-reading loop (and with it the first analysis) starts only after
+    // the full ECO table is ready (or its load has failed).
+    Promise.resolve(
+      window.ChessHintEngine && typeof window.ChessHintEngine.ensureEcoLoaded === 'function'
+        ? window.ChessHintEngine.ensureEcoLoaded()
+        : null
+    ).catch(() => {}).then(() => startBoardReading());
     syncWelcome();
     setBalanceEmptyState();
     renderMoveClassificationEmpty();
@@ -529,7 +609,8 @@
   }
 
   function loadSettings() {
-    chrome.storage.local.get('settings', (result) => {
+    chrome.storage.local.get('settings').then((result) => {
+      applyThemePreference();
       if (result.settings) {
         const migrated = window.AnalysisPolicy
           ? window.AnalysisPolicy.migrateLegacySettings(result.settings)
@@ -537,7 +618,9 @@
         settings = {
           ...settings,
           ...migrated,
+          theme: (migrated.theme === 'light' || migrated.theme === 'dark') ? migrated.theme : 'system',
           style: normalizeStyle(migrated.style),
+          aggressionLevel: normalizeAggression(migrated.style, migrated.aggressionLevel),
           earlyKingHuntEnabled: migrated.earlyKingHuntEnabled === true,
           analysisQuality: window.AnalysisPolicy
             ? window.AnalysisPolicy.normalizeQuality(migrated.analysisQuality)
@@ -551,7 +634,7 @@
         if (lastAnalysis) renderAnalysis(lastAnalysis);
       }
     });
-    chrome.storage.local.get('assistedPlayerColor', (result) => {
+    chrome.storage.local.get('assistedPlayerColor').then((result) => {
       if (result.assistedPlayerColor) {
         assistedPlayerColor = result.assistedPlayerColor;
         updatePlayerSelectorUI();
@@ -598,11 +681,22 @@
     ]);
   }
 
+  // Manual theme override. The CSS ships both schemes; 'system' defers to
+  // prefers-color-scheme, 'light'/'dark' pin it via [data-theme] on <html>.
+  function applyThemePreference() {
+    const theme = settings.theme === 'light' || settings.theme === 'dark' ? settings.theme : 'system';
+    document.documentElement.dataset.theme = theme === 'system' ? '' : theme;
+    // Keep native form controls (scrollbars, switches) consistent with the
+    // pinned scheme instead of the OS preference.
+    document.documentElement.style.colorScheme = theme === 'system' ? '' : theme;
+  }
+
   function applySettingsToUI() {
     const mapping = {
       'setting-analysis-quality': settings.analysisQuality,
+      'setting-theme': settings.theme,
       'setting-candidate-lines': settings.candidateLines,
-      'setting-style': settings.style,
+      'setting-aggression': String(settings.aggressionLevel),
       'setting-early-king-hunt': settings.earlyKingHuntEnabled,
       'setting-human-like-mode': settings.humanLikeMode,
       'setting-sparring-strength': settings.sparringStrength,
@@ -774,7 +868,7 @@
       });
     }
 
-    // Theme toggle removed — dark only
+    // Theme preference is handled by applyThemePreference() (see loadSettings).
 
     // Settings and CSP-safe shortcut-help close button + scrim dismissal
     const closeShortcutHelp = document.getElementById('btn-close-shortcut-help');
@@ -786,8 +880,16 @@
 
     const settingEls = {
       'setting-analysis-quality': (v) => { settings.analysisQuality = v; },
+      'setting-theme': (v) => {
+        settings.theme = (v === 'light' || v === 'dark') ? v : 'system';
+        applyThemePreference();
+      },
       'setting-candidate-lines': (v) => { settings.candidateLines = v === 'auto' ? 'auto' : parseInt(v, 10); },
-      'setting-style': (v) => { settings.style = normalizeStyle(v); },
+      'setting-aggression': (v) => {
+        if (v === 'auto') settings.aggressionLevel = 'auto';
+        else settings.aggressionLevel = [1, 2, 3].includes(Number(v)) ? Number(v) : 2;
+        updateStyleDescription();
+      },
       'setting-early-king-hunt': (v) => { settings.earlyKingHuntEnabled = v === true; },
       'setting-human-like-mode': (v) => { settings.humanLikeMode = v; },
       'setting-sparring-strength': (v) => {
@@ -812,7 +914,7 @@
         handler(val);
         const savePromise = saveSettings();
         applySettingsToUI();
-        if ((id === 'setting-style' || id === 'setting-human-like-mode' || id === 'setting-early-king-hunt' || id === 'setting-show-threats') && lastAnalysis) {
+        if ((id === 'setting-aggression' || id === 'setting-human-like-mode' || id === 'setting-early-king-hunt' || id === 'setting-show-threats') && lastAnalysis) {
           humanPlanState = null;
           renderAnalysis(lastAnalysis);
           // Human mode changes routing policy too (steady depth, max MultiPV),
@@ -853,7 +955,7 @@
     });
 
     // APG radiogroup pattern: arrow keys rove between options and select.
-    $$('.md-btn-group[role="radiogroup"]').forEach((group) => {
+    const bindRadiogroupRoving = (group) => {
       group.addEventListener('keydown', (e) => {
         if (!['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].includes(e.key)) return;
         const items = Array.from(group.querySelectorAll('[role="radio"]'));
@@ -865,22 +967,8 @@
         next.focus();
         next.click();
       });
-    });
-
-    // The style choice stack is a radiogroup too — same roving behavior.
-    $$('.md-choice-stack[role="radiogroup"]').forEach((group) => {
-      group.addEventListener('keydown', (e) => {
-        if (!['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].includes(e.key)) return;
-        const items = Array.from(group.querySelectorAll('[role="radio"]'));
-        const index = items.indexOf(document.activeElement);
-        if (index === -1) return;
-        e.preventDefault();
-        const dir = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : -1;
-        const next = items[(index + dir + items.length) % items.length];
-        next.focus();
-        next.click();
-      });
-    });
+    };
+    $$('.md-btn-group[role="radiogroup"]').forEach(bindRadiogroupRoving);
   }
 
   // ─── Passive Provider Status and Local Usage Diagnostics ─────────────
@@ -1011,6 +1099,11 @@
     }
     if (prevFen && currentFen && isNewGame(prevFen, currentFen)) {
       evalHistory = [];
+      aggressionStats = null;
+      aggressionStatsFen = null;
+      updateAggressionStat();
+      opponentRating = null;
+      updateStyleDescription();
       prevEval = null;
       prevScoreType = 'cp';
       lastCriticalAlert = null;
@@ -1020,11 +1113,8 @@
       waitingForOpponent = false;
       renderMoveClassificationEmpty();
       setBalanceEmptyState();
-      // Reset the engine-side correlation tracker + sacrifice history.
+      // Reset the engine-side correlation tracker.
       chrome.runtime.sendMessage({ type: 'reset_correlation' }).catch(() => {});
-      if (window.ChessHintEngine && typeof window.ChessHintEngine.resetSacrificeHistory === 'function') {
-        window.ChessHintEngine.resetSacrificeHistory();
-      }
       // Clear local engine-recommendation tracking too.
       lastEngineRecommendationFen = null;
       lastEngineRecommendationUci = null;
@@ -1235,7 +1325,7 @@
     // auto-analysis. The `isRefreshing` flag is set when the user clicks
     // Refresh and cleared only when this workflow settles.
     if (data.source && wasUserRefresh) {
-      const sourceNames = { 'chess-api': 'Chess-API', 'lichess-cloud': 'Lichess Cloud', 'masters-explorer': 'Masters DB', 'opening-explorer': 'Opening Cache', 'tablebase': 'Tablebase', 'local-engine': 'Local engine' };
+      const sourceNames = { 'chess-api': 'Chess-API', 'lichess-cloud': 'Lichess Cloud', 'masters-explorer': 'Masters DB', 'opening-explorer': 'Opening Cache', 'tablebase': 'Tablebase', 'local-engine': 'Local engine', 'attack-book': 'Attack book' };
       showToast(`Analysis ready via ${sourceNames[data.source] || data.source}`, 'success', 2000);
     }
 
@@ -1276,10 +1366,58 @@
     }
   }
 
+  // ─── Per-game aggression telemetry ──────────────────────────────────
+  const PRINCIPLE_MATCHERS = [
+    ['storms', /tempo|storm/i],
+    ['sacs', /rip open lines|sacrifice|gives up a pawn/i],
+    ['castlingDenied', /castling/i],
+    ['linesOpened', /key line/i],
+    ['mobilized', /mobilizes the last pieces/i],
+    ['checks', /forces a (double )?check/i]
+  ];
+
+  function recordAggressionPick(hints, fen) {
+    if (!hints || !hints.styleAnalysis) return;
+    if (aggressionStatsFen === fen) return;   // one datum per position
+    aggressionStatsFen = fen;
+    if (!aggressionStats) {
+      aggressionStats = { picks: 0, costCp: 0, storms: 0, sacs: 0, castlingDenied: 0, linesOpened: 0, mobilized: 0, checks: 0 };
+    }
+    const meta = hints.styleAnalysis;
+    if (meta.mode === 'book') return;          // theory, not a style pick
+    aggressionStats.picks++;
+    aggressionStats.costCp += Number.isFinite(meta.evalLoss) ? meta.evalLoss : 0;
+    const text = (meta.reasons || []).join(' | ');
+    for (const [key, matcher] of PRINCIPLE_MATCHERS) {
+      if (matcher.test(text)) aggressionStats[key]++;
+    }
+    updateAggressionStat();
+  }
+
+  function updateAggressionStat() {
+    if (!dom.aggressionStat) return;
+    if (!aggressionStats || aggressionStats.picks === 0) {
+      dom.aggressionStat.textContent = '—';
+      dom.aggressionStat.style.color = '';
+      return;
+    }
+    const s = aggressionStats;
+    const pawns = (s.costCp / 100).toFixed(1);
+    const fired = [
+      s.storms ? `${s.storms} storm${s.storms > 1 ? 's' : ''}` : null,
+      s.sacs ? `${s.sacs} sac${s.sacs > 1 ? 's' : ''}` : null,
+      s.castlingDenied ? `${s.castlingDenied}× no-castle` : null,
+      s.linesOpened ? `${s.linesOpened} line${s.linesOpened > 1 ? 's' : ''}` : null,
+      s.mobilized ? `${s.mobilized} mobilized` : null
+    ].filter(Boolean).slice(0, 3).join(', ');
+    dom.aggressionStat.textContent = `−${pawns}p over ${s.picks} picks${fired ? ' · ' + fired : ''}`;
+    dom.aggressionStat.style.color = s.costCp > 600 ? 'var(--md-sys-color-error)' : '';
+  }
+
   // ─── Request Analysis ──────────────────────────────────────────────
   function requestAnalysis(refresh = false) {
     if (!currentFen) return;
-    updateEngineStatus('analyzing', refresh ? 'Refreshing...' : 'Analyzing...');
+    if (!backgroundUnreachable) updateEngineStatus('analyzing', refresh ? 'Refreshing...' : 'Analyzing...');
     setBalanceLoadingState(prevEval !== null);
     const colorToSend = assistedPlayerColor || playerColor || 'w';
     chrome.runtime.sendMessage({
@@ -1314,6 +1452,7 @@
             activePlan: humanPlanState?.activePlan || null,
             openingData: data.openingData,
             earlyKingHuntEnabled: earlyKingHuntActive,
+            aggressionLevel: effectiveAggressionLevel(),
             formSession: settings.humanLikeMode ? (data.formSession || null) : null
           }
         )
@@ -1561,7 +1700,7 @@
   // ─── Caption rail ("Why this move") ────────────────────────────────
   // The hero shows only the move. Every supporting sentence the engine
   // produces travels as a caption item and renders here, outside the hero.
-  const IDEA_KINDS = new Set(['idea', 'capture', 'sacrifice', 'cost', 'risk', 'kinghunt', 'posture', 'reply']);
+  const IDEA_KINDS = new Set(['idea', 'capture', 'sacrifice', 'cost', 'risk', 'kinghunt', 'posture', 'reply', 'context', 'book']);
 
   function renderIdeaRail(captions) {
     if (!dom.ideaSection || !dom.ideaList) return;
@@ -1728,7 +1867,7 @@
       if (dom.hintText) dom.hintText.textContent = data.exactHintBlocked.message;
       if (dom.hintFromTo) dom.hintFromTo.style.display = 'none';
       hideAlternatives();
-      if (dom.hintCard) dom.hintCard.className = 'hint-card exact-move blocked';
+      if (dom.hintCard) dom.hintCard.className = 'hint-card md-hero__stage exact-move blocked';
       hideIdeaRail();
       const warningEl = document.getElementById('fair-play-warning');
       const warningText = document.getElementById('fair-play-warning-text');
@@ -1762,12 +1901,14 @@
       {
         activePlan: humanPlanState?.activePlan || null,
         earlyKingHuntEnabled: isEarlyKingHuntActive(),
+        aggressionLevel: effectiveAggressionLevel(),
         formSession: settings.humanLikeMode ? (data.formSession || null) : null
       }
     );
     if (settings.humanLikeMode && hints.styleAnalysis?.plan) {
       humanPlanState = { activePlan: hints.styleAnalysis.plan, startedAtFen: data.fen };
     }
+    recordAggressionPick(hints, data.fen);
 
     if (dom.hintText) {
       if (hints.bestMoveFromTo) {
@@ -1812,7 +1953,10 @@
     if (dom.hintCard) {
       const styleClass = settings.style === 'super_ultra_aggressive' ? ' super-ultra-mode' : '';
       const humanClass = settings.humanLikeMode ? ' human-mode' : '';
-      dom.hintCard.className = 'hint-card exact-move' + styleClass + humanClass;
+      // Keep md-hero__stage: rewriting className wholesale on the first
+      // render previously dropped it, losing the hero's z-index stacking
+      // and min-height so hint text could paint beneath the blobs.
+      dom.hintCard.className = 'hint-card md-hero__stage exact-move' + styleClass + humanClass;
     }
 
   }
