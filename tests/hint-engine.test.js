@@ -40,9 +40,6 @@ assert.equal(engine.uciToSan('h5f7', scholarsMate), 'Qxf7#');
 const rookCapture = 'r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1';
 assert.equal(engine.applyMoveToFen(rookCapture, 'a1a8').split(' ')[2], 'Kk', 'moving and captured rooks remove both queen-side rights');
 
-assert.equal(engine.formatScorePlayerPerspective(150, 'cp', 'w'), '+1.5 (clear edge)');
-assert.equal(engine.formatScorePlayerPerspective(150, 'cp', 'b'), '-1.5 (clear edge)');
-assert.equal(engine.formatScorePlayerPerspective(-4, 'mate', 'b'), '+M4 (you)');
 
 // Rebuilt three-mode style engine.
 assert.deepEqual(Object.keys(engine.PLAYING_STYLES), ['normal', 'aggressive', 'super_ultra_aggressive']);

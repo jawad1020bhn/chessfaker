@@ -47,7 +47,11 @@
         ownKingRisk: -100,
         unsupportedAttack: -55,
         slowQueen: -45,
-        concreteCompensation: 80
+        concreteCompensation: 80,
+        // ── V2 strategic layer ──
+        queenWindowEntry: 160,
+        complexDefenderRemoval: 150,
+        complexProgress: 95
       }
     };
 
@@ -70,7 +74,13 @@
       earlyKingHuntDirectAttack: false,
       earlyKingHuntUnsafe: false,
       earlyKingHuntSafe: true,
-      earlyKingHuntBonus: 0
+      earlyKingHuntBonus: 0,
+      // V2 strategic-layer defaults
+      earlyKingHuntQueenWindowOpen: false,
+      earlyKingHuntComplexDefenderRemoved: false,
+      earlyKingHuntComplexProgress: 0,
+      earlyKingHuntSlowQueenOut: false,
+      earlyKingHuntOpenFlightsAfter: null
     });
 
     function isWhite(piece) {
@@ -179,6 +189,90 @@
       return Number.isFinite(Number(value)) ? Number(value) : 0;
     }
 
+    // ── V2: target-complex selection ──────────────────────────────────
+    // Pick the weakest square complex around the enemy king from concrete
+    // facts: castling state, pawn-shield integrity, and which flight squares
+    // are already covered. The hunt aims at a SQUARE, not just "the king".
+    function selectTargetComplex(board, attackerIsWhite, king) {
+      if (!king) return null;
+      const enemyIsWhite = !attackerIsWhite;
+      // Shield pawns stand between the king and its own back rank:
+      // a black king's shield sits one row toward row 1, a white king's
+      // one row toward row 6.
+      const shieldRow = attackerIsWhite ? king.row + 1 : king.row - 1;
+      const shieldPawns = [];
+      for (let dc = -1; dc <= 1; dc++) {
+        const c = king.col + dc;
+        const r = shieldRow;
+        if (c < 0 || c > 7 || r < 0 || r > 7) continue;
+        const p = board[r][c];
+        if (p && p.toLowerCase() === 'p' && (p === p.toUpperCase()) === enemyIsWhite) {
+          shieldPawns.push({ col: c, row: r });
+        }
+      }
+      // Flight squares that are NOT under our attack = escape hatches.
+      let openFlights = 0;
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+        if (dr === 0 && dc === 0) continue;
+        const tr = king.row + dr, tc = king.col + dc;
+        if (tr < 0 || tr > 7 || tc < 0 || tc > 7) continue;
+        if (!isSquareAttacked(board, { row: tr, col: tc }, attackerIsWhite ? 'w' : 'b')) openFlights++;
+      }
+      return {
+        king,
+        shieldIntact: shieldPawns.length >= 2,
+        missingShieldCols: [-1, 0, 1]
+          .map(dc => king.col + dc)
+          .filter(c => c >= 0 && c <= 7)
+          .filter(c => !shieldPawns.some(p => p.col === c)),
+        openFlights
+      };
+    }
+
+    // ── V2: queen-entry window gating ─────────────────────────────────
+    // A queen sortie is only "in the window" when three things hold:
+    //   1. ENTRY    — it lands deep in the enemy zone (past the 4th rank),
+    //   2. SUPPORT  — a friendly piece defends its landing square, and
+    //   3. NO TEMPO LOSS — the enemy has no cheap developing hit on it
+    //      (a pawn or minor piece attacks the landing square).
+    function queenEntryWindow(afterBoard, destination, playerIsWhite, givesCheck, tempoThreatCount) {
+      if (!destination) return false;
+      const enteredDeep = playerIsWhite ? destination.row <= 3 : destination.row >= 4;
+      if (!enteredDeep) return false;
+      let supported = false;
+      for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+        const p = afterBoard[r][c];
+        if (!p || (p === p.toUpperCase()) !== playerIsWhite) continue;
+        const t = p.toLowerCase();
+        if (t === 'q') continue;
+        if (pieceAttacksSquare(afterBoard, r, c, destination.row, destination.col)) { supported = true; break; }
+      }
+      if (!supported) return false;
+      if (givesCheck || (Number(tempoThreatCount) || 0) > 0) return true;
+      // No-cheap-hit check: any enemy pawn/minor attacking the square?
+      for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+        const p = afterBoard[r][c];
+        if (!p || (p === p.toUpperCase()) === playerIsWhite) continue;
+        const t = p.toLowerCase();
+        if (t !== 'p' && t !== 'n' && t !== 'b') continue;
+        if (pieceAttacksSquare(afterBoard, r, c, destination.row, destination.col)) return false;
+      }
+      return true;
+    }
+
+    // ── V2: defender-removal ordering ─────────────────────────────────
+    // Reward removing the piece that actually guards the target complex.
+    function removesComplexDefender(afterBoard, captured, destination, target, attackerIsWhite) {
+      if (!captured || !target || !destination) return false;
+      // The captured piece sat within the king's zone and was guarding one of
+      // the still-open flight squares or the shield gap.
+      const dist = Math.max(
+        Math.abs(destination.row - target.king.row),
+        Math.abs(destination.col - target.king.col));
+      if (dist > 2) return false;
+      return isSquareAttacked(afterBoard, target.king, attackerIsWhite ? 'w' : 'b');
+    }
+
     function computeFeatures(ctx = {}) {
       const {
         fen,
@@ -266,6 +360,31 @@
         immediateThreat * 0.9 + lineOpening * 1.1 + targetDelta * 0.7 + forceResponse * 0.7
       );
 
+      // ── V2 strategic layer ───────────────────────────────────────────
+      const targetBefore = selectTargetComplex(board, playerIsWhite, opponentKingBefore);
+      const targetAfter = selectTargetComplex(after, playerIsWhite, opponentKingAfter);
+      // Queen-entry window: a safe deep entry with support, no cheap hit.
+      const queenWindowOpen = piece === 'Q' || piece === 'q'
+        ? queenEntryWindow(after, destination, playerIsWhite, givesCheck,
+          numeric(candidate.tempoThreatCount))
+        : false;
+      // Removing the specific defender that guards the target complex.
+      const complexDefenderRemoved = removesComplexDefender(
+        after, captured, destination, targetAfter || targetBefore, playerIsWhite);
+      // Target-complex progress: fewer open flights or a broken shield.
+      let complexProgress = 0;
+      if (targetBefore && targetAfter) {
+        complexProgress += Math.max(0, targetBefore.openFlights - targetAfter.openFlights) * 0.8;
+        if (targetBefore.shieldIntact && !targetAfter.shieldIntact) complexProgress += 1.2;
+        complexProgress += Math.max(0,
+          (targetAfter.missingShieldCols.length - targetBefore.missingShieldCols.length)) * 0.5;
+      }
+      complexProgress = Math.min(3, complexProgress);
+      // A slow early-queen sortie outside the entry window stays penalized —
+      // but one inside the window is now REWARDED instead of merely tolerated.
+      const slowQueenOut = candidate.earlyQueenMove && piece?.toLowerCase() === 'q' &&
+        !queenWindowOpen && !candidate.tempo && !directAttack;
+
       return {
         earlyKingHuntActive: true,
         earlyKingHuntPhase: info.phase,
@@ -287,6 +406,12 @@
         earlyKingHuntUnsafe: unsafe,
         earlyKingHuntSafe: !unsafe,
         earlyKingHuntBonus: 0,
+        // V2 strategic-layer outputs
+        earlyKingHuntQueenWindowOpen: queenWindowOpen,
+        earlyKingHuntComplexDefenderRemoved: complexDefenderRemoved,
+        earlyKingHuntComplexProgress: Number(complexProgress.toFixed(3)),
+        earlyKingHuntSlowQueenOut: slowQueenOut,
+        earlyKingHuntOpenFlightsAfter: targetAfter ? targetAfter.openFlights : null,
         // These aliases make the feature easy to inspect in diagnostics and
         // keep the terminology readable to callers outside this module.
         earlyTargetVulnerability: Number(targetDelta.toFixed(3)),
@@ -360,6 +485,28 @@
         scaled('concreteCompensation', Math.min(2, candidate.earlyKingHuntConcreteCompensation / 4)),
         'has concrete compensation for the attacking risk');
 
+      // ── V2 strategic layer ───────────────────────────────────────────
+      // Queen-entry window: a deep, supported queen entry that cannot be hit
+      // cheaply is a first-class hunting move — no longer merely "tolerated".
+      add(candidate.earlyKingHuntQueenWindowOpen === true, 'queenWindowEntry',
+        scaled('queenWindowEntry', 1),
+        'the queen enters through a supported window the defense cannot strike');
+      // Defender-removal ordering: removing the piece that actually guards
+      // the target complex outranks generic capture bonuses.
+      add(candidate.earlyKingHuntComplexDefenderRemoved === true, 'complexDefenderRemoval',
+        scaled('complexDefenderRemoval', 1),
+        'removes the specific defender guarding the king\u2019s weak complex');
+      // Target-complex progress: closing flights and cracking the shield.
+      add((candidate.earlyKingHuntComplexProgress || 0) > 0, 'complexProgress',
+        scaled('complexProgress', Math.min(3, candidate.earlyKingHuntComplexProgress)),
+        'closes flight squares and cracks the pawn shield around the target');
+      // Slow queen sorties OUTSIDE the window are now penalized harder than
+      // before — the old slowQueen nudge becomes a real gate.
+      if (candidate.earlyKingHuntSlowQueenOut === true) {
+        add(true, 'slowQueen', -Math.abs(scaled('slowQueen', 1.6)),
+          'queen sortie outside the entry window only helps the defender develop');
+      }
+
       candidate.earlyKingHuntBonus = Math.round(amount);
       return amount;
     }
@@ -372,12 +519,23 @@
       if (features.earlyKingHuntDeployment > 0) tags.push('rapid deployment');
       if (features.earlyKingHuntForceResponse > 0) tags.push('forces defense');
       if (features.earlyKingHuntSacrificeValue >= 4) tags.push('sound attacking sacrifice');
+      // V2 strategic layer
+      if (features.earlyKingHuntQueenWindowOpen) tags.push('queen entry window');
+      if (features.earlyKingHuntComplexDefenderRemoved) tags.push('key defender removed');
+      if ((features.earlyKingHuntComplexProgress || 0) > 1) tags.push('target complex closing');
       return tags;
     }
 
     function choosePlan(features) {
       if (!features?.earlyKingHuntActive) return null;
-      if (features.earlyKingHuntImmediateThreat >= 4 && features.earlyKingHuntForceResponse >= 3) return 'launch the Early King Hunt with forcing checks';
+      // V2: plans now name the concrete target complex so consecutive hints
+      // keep attacking the SAME square complex.
+      const flights = features.earlyKingHuntOpenFlightsAfter;
+      if (features.earlyKingHuntImmediateThreat >= 4 && features.earlyKingHuntForceResponse >= 3) {
+        return `launch the Early King Hunt with forcing checks${Number.isFinite(flights) ? ` (${flights} flight squares left)` : ''}`;
+      }
+      if (features.earlyKingHuntComplexDefenderRemoved) return 'remove every guard of the weak king-side complex';
+      if (features.earlyKingHuntQueenWindowOpen) return 'use the queen entry window while it stays open';
       if (features.earlyKingHuntLineOpening > 0) return 'open lines and bring every attacker toward the king';
       if (features.earlyKingHuntDeployment > 0) return 'develop with tempo and accelerate the king-side attack';
       if (features.earlyKingHuntSacrificeValue >= 4) return 'sacrifice only where the king cannot escape the attack';

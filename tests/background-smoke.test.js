@@ -88,6 +88,14 @@ const context = {
         topGames: []
       });
     }
+    if (remoteMode === 'masters' && url.includes('explorer.lichess.ovh/lichess')) {
+      // Player-explorer enrichment used by the sparring-range popularity path.
+      return makeResponse({
+        white: 400, draws: 210, black: 300,
+        moves: [{ uci: 'b1c3', san: 'Nc3', white: 180, draws: 95, black: 125, averageRating: 1750 }],
+        topGames: []
+      });
+    }
     // Lichess cloud-eval reports cp/mate relative to the side to move. For a
     // black-to-move position, +120cp means Black is better and must be stored
     // as -120 (White-relative) for the eval bar / ranking / classification.

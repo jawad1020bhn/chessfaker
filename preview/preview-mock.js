@@ -43,6 +43,9 @@
   async function route(message) {
     switch (message && message.type) {
       case 'read_board':
+        // ?noboard freezes the pre-game state so the hero welcome can be
+        // inspected in isolation.
+        if (new URLSearchParams(location.search).has('noboard')) return {};
         return {
           fen: PREVIEW_FEN,
           tabId: 'preview',
@@ -62,18 +65,26 @@
         // +0.4 to mate-in-1 classifies as a Blunder (the last move was
         // Black's Nf6, which allowed Qxf7#), and the Balance tile leans
         // "you" with a +M1 headline. Both Expressive states demo at once.
+        // The quiet pass carries a near-best alternative so the
+        // "Also consider" rail demos too (it rightly hides once a mate
+        // exists — nothing shares its value).
         dispatch({
           type: 'analysis_update',
           data: {
             ...mockAnalysis(fen),
             pvs: [
               { score: 40, scoreType: 'cp', depth: 18, pv: ['b1c3'] },
-              { score: 20, scoreType: 'cp', depth: 18, pv: ['d2d3'] }
+              { score: 34, scoreType: 'cp', depth: 18, pv: ['d2d3'] },
+              { score: 28, scoreType: 'cp', depth: 17, pv: ['c1e3'] }
             ]
           }
         });
         await delay(480);
-        dispatch({ type: 'analysis_update', data: mockAnalysis(fen) });
+        // Append ?hold to freeze the quiet pass (alternatives visible,
+        // no mate yet) — handy for inspecting that state in isolation.
+        if (!new URLSearchParams(location.search).has('hold')) {
+          dispatch({ type: 'analysis_update', data: mockAnalysis(fen) });
+        }
         return null;
       case 'health_check':
         return {};

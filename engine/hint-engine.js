@@ -1432,14 +1432,6 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     return true;
   }
 
-  function scoreMoveForStyle(uci, fen, rawScore, scoreType, style, playerColor) {
-    const profile = PLAYING_STYLES[style] || PLAYING_STYLES.normal;
-    if (profile.id === 'normal') return rawScore;
-    const candidate = analyzeCandidate(fen, [uci], playerColor, rawScore, scoreType);
-    candidate.evalLoss = 0;
-    return rawScore + candidateStyleBonus(candidate, profile);
-  }
-
   function humanNaturalness(candidate, profile, context = {}, bestScore = 0) {
     let score = 0;
     const reward = (condition, amount, reason) => {
@@ -1609,6 +1601,11 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
       const firstMove = entry.pv.pv?.[0];
       const openingMove = context.openingData?.moves?.find(move => move.uci === firstMove);
       analysis.masterGames = Number(entry.pv._masterData?.totalGames || openingMove?.total || 0);
+      // V2 siege continuity: remember whether this candidate advances the same
+      // plan as the previous hint. The Chaos styleBonus converts this into a
+      // real bonus so consecutive picks form one coherent attack instead of
+      // greedy per-move choices.
+      analysis.siegeContinuity = Boolean(context.activePlan && analysis.plan === context.activePlan);
       analysis.evalLoss = evalLoss;
       analysis.objectiveRank = rank + 1;
       analysis.mode = profile.id;
@@ -1633,33 +1630,56 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
       (profile.id === 'super_ultra_aggressive' ? (b.analysis.attackSubTotal - a.analysis.attackSubTotal) : 0) ||
       b.utility - a.utility);
     if (humanLikeMode && eligible.length > 0 && !bestIsWinningMate) {
+      const formModule = (typeof globalThis !== 'undefined' && globalThis.HumanForm) || null;
+      const formParams = formModule
+        ? formModule.paramsFor(context.formSession, fen, objectiveBest.score)
+        : null;
       const standardBest = eligible[0].styleScore;
-      const shortlistMargin = profile.id === 'normal' ? 32 : (profile.id === 'aggressive' ? 70 : 90);
+      // Base margin per style, scaled by the form model: lower sparring
+      // strengths (and good-form / clearly-winning sessions) consider a wider
+      // pool of in-character candidates. Hard safety gates are unaffected —
+      // every shortlist member already passed styleSafetyAllows.
+      const baseMargin = profile.id === 'normal' ? 32 : (profile.id === 'aggressive' ? 70 : 90);
+      const shortlistMargin = formParams
+        ? baseMargin * Math.max(0.5, formParams.marginScale)
+        : baseMargin;
       const shortlist = eligible.filter(candidate => standardBest - candidate.styleScore <= shortlistMargin);
       for (const candidate of shortlist) {
         const naturalness = humanNaturalness(candidate.analysis, profile, context, objectiveBest.score);
         // Chaos gives human-naturalness extra weight so a fearless, natural
         // attacking move beats a dry, engine-perfect but unremarkable line.
-        const humanWeight = profile.id === 'normal' ? 0.8 : (profile.id === 'aggressive' ? 0.65 : 0.7);
+        // The form model scales this weight by sparring strength.
+        const humanWeightBase = profile.id === 'normal' ? 0.8 : (profile.id === 'aggressive' ? 0.65 : 0.7);
+        const humanWeight = humanWeightBase * (formParams ? formParams.naturalnessScale : 1);
         candidate.humanScore = candidate.styleScore + naturalness * humanWeight;
       }
       shortlist.sort((a, b) => b.humanScore - a.humanScore || b.styleScore - a.styleScore || b.utility - a.utility);
-      // C2 — Human Chaos "surprise" selection. When the top engine line is a
-      // cold, obvious pick and a close human-natural attacking alternative
-      // exists, prefer the alternative with stable per-position probability.
-      // This keeps hints feeling like a human coach's choice instead of an
-      // exact Stockfish/chess-api echo, which is also fair-play friendly.
-      if (profile.id === 'super_ultra_aggressive' && shortlist.length > 1) {
+      // C2 — Human "in-character" selection, driven by the deterministic form
+      // model. Instead of always playing the top-ranked candidate, weaker
+      // sparring strengths (and relaxed winning positions) sometimes choose a
+      // slightly worse but fully safe shortlist move — exactly how real players
+      // of that strength behave. Deterministic per (session seed, fen), so the
+      // same position never flickers between choices.
+      if (formParams && shortlist.length > 1) {
         const top = shortlist[0];
-        const topIsEngineLine = top.pv.pv?.[0] === objectiveBest.pv.pv?.[0];
-        const surprise = shortlist.findIndex((c, index) => index > 0 &&
-          c.pv.pv?.[0] !== objectiveBest.pv.pv?.[0] &&
-          (c.analysis.naturalnessScore || 0) > 30 &&
-          top.humanScore - c.humanScore <= 18);
-        if (topIsEngineLine && surprise > 0 && stableFenFraction(fen, 'human-chaos-surprise') < 0.5) {
-          const chosen = shortlist[surprise];
-          shortlist[surprise] = shortlist[0];
-          shortlist[0] = chosen;
+        const roll = stableFenFraction(fen, `${context.formSession?.seed || ''}|slip`);
+        const slipLossCeiling = Number.isFinite(formParams.slipLossCeiling) ? formParams.slipLossCeiling : 100;
+        if (roll < formParams.slipChance) {
+          const slipCandidates = shortlist.filter((c, index) => index > 0 &&
+            (top.pv.pv?.[0] !== c.pv.pv?.[0]) &&
+            Number.isFinite(c.analysis.evalLoss) &&
+            c.analysis.evalLoss <= slipLossCeiling);
+          if (slipCandidates.length > 0) {
+            // Prefer the most human-natural slipped option; ties break by rank.
+            slipCandidates.sort((a, b) =>
+              (b.analysis.naturalnessScore || 0) - (a.analysis.naturalnessScore || 0));
+            const chosen = slipCandidates[0];
+            const chosenIndex = shortlist.indexOf(chosen);
+            if (chosenIndex > 0) {
+              shortlist[chosenIndex] = shortlist[0];
+              shortlist[0] = chosen;
+            }
+          }
         }
       }
       const shortlisted = new Set(shortlist);
@@ -1880,7 +1900,6 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
 
     // Continuation
     if (bestPV && bestPV.pv) {
-      hints.continuation = formatContinuation(bestPV.pv, hintLevel, isWhite, fen || '');
     }
 
     // Move classification — from the mover's perspective (the side that
@@ -2134,7 +2153,6 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
 
     // Continuation
     if (bestPV.pv) {
-      hints.continuation = formatContinuation(bestPV.pv, hintLevel, isWhite, fen);
     }
   }
 
@@ -2261,48 +2279,6 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
   }
 
   // ─── Format Continuation ───────────────────────────────────────────
-  function formatContinuation(pv, hintLevel, isWhite, fen) {
-    if (!pv || pv.length === 0) return [];
-    if (!fen) return [];
-
-    const parts = fen.split(' ');
-    const activeColor = parts[1] || 'w';
-    let moveNumber = parseInt(parts[5]) || 1;
-
-    const maxMoves = Math.min(pv.length, 18);
-    const result = [];
-    let currentFen = fen;
-    let currentBoard = parseFENPlacement(fen.split(' ')[0]);
-
-    for (let i = 0; i < maxMoves; i++) {
-      const uci = pv[i];
-      const from = uci.substring(0, 2);
-      const to = uci.substring(2, 4);
-
-      const san = uciToSan(uci, currentFen);
-      const piece = getPieceAt(currentBoard, from);
-      const isWhiteMove = (i % 2 === 0) === (activeColor === 'w');
-
-      result.push({
-        move: san,
-        uci,
-        from,
-        to,
-        isWhiteMove,
-        moveNumber: isWhiteMove ? moveNumber : undefined,
-        pieceName: piece ? PIECE_NAMES[piece.toLowerCase()] : null
-      });
-
-      if (!isWhiteMove) moveNumber++;
-
-      currentBoard = applyMoveToBoard(currentBoard, uci);
-      currentFen = applyMoveToFen(currentFen, uci);
-    }
-
-    return result;
-  }
-
-  // ─── Format Move ───────────────────────────────────────────────────
   function formatMove(uci, fen) {
     if (!uci) return null;
     return uciToSan(uci, fen);
@@ -2347,166 +2323,6 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
   }
 
   // ─── Candidate Move Evaluation (Style-Aware) ──────────────────────
-  function evaluateCandidateMoves(pvs, playerColor, fen) {
-    if (!pvs || pvs.length === 0) return [];
-    if (!fen) return [];
-    const isWhite = playerColor === 'w';
-
-    const fenParts = fen.split(' ');
-    const activeColor = fenParts[1] || 'w';
-    const isAssistedPlayerTurn = activeColor === playerColor;
-    const isOpponentTurn = !isAssistedPlayerTurn;
-
-    const bestScore = isWhite ? (pvs[0]?.score || 0) : -(pvs[0]?.score || 0);
-    const bestScoreType = pvs[0]?.scoreType || 'cp';
-
-    return pvs.slice(0, 5).map((pv, idx) => {
-      const rawScore = isWhite ? pv.score : -pv.score;
-      const delta = rawScore - bestScore;
-      const absDelta = Math.abs(delta);
-
-      let quality, qualityClass;
-      const styleMeta = pv._styleAnalysis;
-      if (idx === 0 && styleMeta?.objectiveRank > 1) {
-        quality = `${styleMeta.humanLikeMode ? 'Human Choice' : 'Style Choice'} · objective #${styleMeta.objectiveRank}`;
-        qualityClass = 'cm-best';
-      } else if (idx === 0) {
-        quality = styleMeta?.humanLikeMode ? 'Human + Objective Best' : 'Objective Best';
-        qualityClass = 'cm-best';
-      }
-      else if (absDelta <= 10) { quality = 'Equal Best'; qualityClass = 'cm-best'; }
-      else if (absDelta <= 30) { quality = 'Great'; qualityClass = 'cm-good'; }
-      else if (absDelta <= 80) { quality = 'Good'; qualityClass = 'cm-good'; }
-      else if (absDelta <= 200) { quality = 'Inaccuracy'; qualityClass = 'cm-ok'; }
-      else { quality = 'Mistake'; qualityClass = 'cm-bad'; }
-
-      let evalDisplay;
-      if (pv.scoreType === 'mate') {
-        evalDisplay = rawScore > 0 ? `+M${rawScore}` : `-M${Math.abs(rawScore)}`;
-      } else {
-        evalDisplay = rawScore >= 0 ? `+${(rawScore / 100).toFixed(1)}` : (rawScore / 100).toFixed(1);
-      }
-
-      let deltaDisplay = '';
-      if (idx > 0) {
-        if (pv.scoreType === 'mate' && bestScoreType === 'mate') {
-          deltaDisplay = 'mate diff';
-        } else {
-          deltaDisplay = delta >= 0 ? `+${(delta / 100).toFixed(1)}` : (delta / 100).toFixed(1);
-        }
-      }
-
-      const winPct = pv.scoreType === 'mate'
-        ? (rawScore > 0 ? 99 : 1)
-        : 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * rawScore)) - 1);
-
-      // PLAYER-FIRST: When opponent's turn, show the PLAYER's best
-      // response as the primary candidate move, with opponent's move as context.
-      // When it's the player's turn, show their move directly.
-      let candidateMoveUci, candidateMoveFen, opponentMoveUci, opponentMoveSan;
-      const board = parseFENPlacement(fen.split(' ')[0]);
-
-      if (isOpponentTurn && pv.pv && pv.pv.length > 1) {
-        // Opponent moves first (pv[0]), player responds (pv[1])
-        opponentMoveUci = pv.pv[0];
-        candidateMoveUci = pv.pv[1];
-        const fenAfterOpp = applyMoveToFen(fen, opponentMoveUci);
-        candidateMoveFen = fenAfterOpp;
-        opponentMoveSan = uciToSan(opponentMoveUci, fen);
-      } else if (isOpponentTurn && pv.pv && pv.pv.length === 1) {
-        // Only opponent's move in PV — no player response available
-        // Still show the opponent's move but label it clearly
-        opponentMoveUci = pv.pv[0];
-        candidateMoveUci = null;
-        candidateMoveFen = fen;
-        opponentMoveSan = uciToSan(opponentMoveUci, fen);
-      } else {
-        // Player's turn — show their move directly
-        candidateMoveUci = pv.pv && pv.pv.length > 0 ? pv.pv[0] : null;
-        candidateMoveFen = fen;
-        opponentMoveUci = null;
-        opponentMoveSan = null;
-      }
-
-      let fromTo = '';
-      if (candidateMoveUci && candidateMoveUci.length >= 4) {
-        const from = candidateMoveUci.substring(0, 2);
-        const to = candidateMoveUci.substring(2, 4);
-        const lookupBoard = isOpponentTurn && opponentMoveUci
-          ? applyMoveToBoard(board, opponentMoveUci)
-          : board;
-        const piece = getPieceAt(lookupBoard, from);
-        const pieceName = piece ? PIECE_NAMES[piece.toLowerCase()] : '';
-        const isPieceWhite = piece && piece === piece.toUpperCase();
-        const sidePrefix = isPieceWhite ? 'White:' : 'Black:';
-        fromTo = pieceName ? `${sidePrefix} ${from}\u2192${to}` : `${from}-${to}`;
-      } else if (!candidateMoveUci && opponentMoveUci) {
-        // No player response available — show opponent's move as context
-        const from = opponentMoveUci.substring(0, 2);
-        const to = opponentMoveUci.substring(2, 4);
-        const piece = getPieceAt(board, from);
-        const pieceName = piece ? PIECE_NAMES[piece.toLowerCase()] : '';
-        const isPieceWhite = piece && piece === piece.toUpperCase();
-        const oppLabel = isPieceWhite ? 'White' : 'Black';
-        fromTo = pieceName ? `${oppLabel}: ${from}\u2192${to}` : `${oppLabel}: ${from}-${to}`;
-      }
-
-      // SAN display — show player's response move as primary
-      let san;
-      if (candidateMoveUci) {
-        san = uciToSan(candidateMoveUci, candidateMoveFen);
-        // When opponent's turn, prepend context about opponent's move
-        if (isOpponentTurn && opponentMoveSan) {
-          san = `${san} (if ${opponentMoveSan})`;
-        }
-      } else if (opponentMoveSan) {
-        san = `Wait: ${opponentMoveSan}`;
-      } else {
-        san = '???';
-      }
-
-      return {
-        rank: idx + 1,
-        san,
-        fromTo,
-        evalDisplay,
-        evalScore: rawScore,
-        scoreType: pv.scoreType || 'cp',
-        delta,
-        deltaDisplay,
-        quality,
-        qualityClass,
-        winPct: Math.max(2, Math.min(98, winPct)),
-        depth: pv.depth || 0,
-        pv: pv.pv || [],
-        isOpponentTurn,
-        opponentMoveSan,
-        candidateMoveUci,
-        objectiveRank: styleMeta?.objectiveRank || idx + 1,
-        styleReason: styleMeta?.humanLikeMode
-          ? (styleMeta?.humanReasons?.[0] || styleMeta?.reasons?.[0] || '')
-          : (styleMeta?.reasons?.[0] || ''),
-        styleRisk: styleMeta?.humanLikeMode
-          ? (styleMeta?.humanRisks?.[0] || styleMeta?.risks?.[0] || '')
-          : (styleMeta?.risks?.[0] || ''),
-        naturalnessScore: styleMeta?.naturalnessScore ?? null,
-        humanLikeMode: Boolean(styleMeta?.humanLikeMode),
-        styleRank: styleMeta?.styleRank || idx + 1,
-        sacrificeSoundness: styleMeta?.sacrificeSoundness || '',
-        aggression: {
-          check: Boolean(styleMeta?.givesCheck),
-          sacrifice: Boolean(styleMeta?.sacrifice),
-          kingPressureDelta: Number(styleMeta?.kingPressureDelta || 0),
-          penetrationDelta: Number(styleMeta?.penetrationDelta || 0),
-          pawnStormDelta: Number(styleMeta?.pawnStormDelta || 0),
-          complexity: Number(styleMeta?.complexity || 0),
-          evalLoss: Number(styleMeta?.evalLoss || 0),
-          depth: Number(styleMeta?.depth || pv.depth || 0)
-        }
-      };
-    });
-  }
-
   // ─── Critical Moment Detection ─────────────────────────────────────
   function detectCriticalMoment(evalHistory, currentEval, currentScoreType, playerColor) {
     if (evalHistory.length < 2) return null;
@@ -2575,157 +2391,6 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     return alerts[0];
   }
 
-  // ─── Endgame Technique Coaching ─────────────────────────────────────
-  function generateEndgameCoach(fen, playerColor, tablebaseData, analysisData) {
-    if (!fen || typeof fen !== 'string') return null;
-    const phase = detectGamePhase(fen);
-    if (phase !== 'endgame' && !tablebaseData) return null;
-
-    const parts = fen.split(' ');
-    const board = parseFENPlacement(parts[0]);
-    const isWhite = playerColor === 'w';
-    const position = assessPosition(fen);
-
-    const coach = { phaseLabel: '', techniques: [], plan: '', steps: [] };
-
-    const material = position.material;
-    const totalMaterial = material.whiteVal + material.blackVal;
-
-    if (tablebaseData && tablebaseData.isTablebase) {
-      coach.phaseLabel = 'Tablebase Endgame \u2014 Perfect Play Available';
-    } else if (totalMaterial <= 6) {
-      coach.phaseLabel = 'Basic Endgame';
-    } else if (totalMaterial <= 13) {
-      coach.phaseLabel = 'Minor Piece Endgame';
-    } else if (material.whitePieces?.q || material.blackPieces?.q) {
-      coach.phaseLabel = 'Queen Endgame';
-    } else {
-      coach.phaseLabel = 'Rook Endgame';
-    }
-
-    const myPassedPawns = isWhite ? position.pawnStructure.whitePassedPawns : position.pawnStructure.blackPassedPawns;
-    const oppPassedPawns = isWhite ? position.pawnStructure.blackPassedPawns : position.pawnStructure.whitePassedPawns;
-    const myBishops = isWhite ? material.whitePieces.b : material.blackPieces.b;
-    const oppBishops = isWhite ? material.blackPieces.b : material.whitePieces.b;
-    const myRooks = isWhite ? material.whitePieces.r : material.blackPieces.r;
-    const myKing = isWhite ? position.kingSafety.wKingPos : position.kingSafety.bKingPos;
-    const oppKing = isWhite ? position.kingSafety.bKingPos : position.kingSafety.wKingPos;
-
-    const kingRow = myKing ? myKing.row : -1;
-    const kingCol = myKing ? myKing.col : -1;
-    const isKingActive = isWhite ? (kingRow <= 4) : (kingRow >= 3);
-    if (!isKingActive && totalMaterial <= 13) {
-      coach.techniques.push({ icon: '\u265A', text: 'Activate your king! In endgames, the king should march to the center or toward key squares.' });
-    }
-
-    if (myPassedPawns > 0) {
-      coach.techniques.push({ icon: '\u265F', text: `You have ${myPassedPawns} passed pawn${myPassedPawns > 1 ? 's' : ''}. Advance with king support ("king plus passed pawn = win").` });
-    }
-
-    if (totalMaterial <= 6 && myKing && oppKing) {
-      const kingDistFile = Math.abs(kingCol - oppKing.col);
-      const kingDistRank = Math.abs(kingRow - oppKing.row);
-      if (kingDistFile <= 2 && kingDistRank <= 2 && kingDistFile === kingDistRank) {
-        const opposition = (kingDistFile + kingDistRank) % 2 === 1;
-        coach.techniques.push({
-          icon: '\u2B50',
-          text: opposition ? 'You have the opposition! Maintain it to outmaneuver the enemy king.' : 'Fight for the opposition! Try to get your king directly facing the enemy king with 1 square gap.'
-        });
-      }
-    }
-
-    if (myRooks > 0 && myPassedPawns > 0) {
-      coach.techniques.push({ icon: '\u265C', text: 'Place your rook behind your passed pawn (on the same file). Rook + passed pawn is a powerful combination.' });
-    }
-
-    if (myRooks > 0 && oppBishops === 0 && (isWhite ? material.blackPieces.r : material.whitePieces.r) > 0 && myPassedPawns > 0 && totalMaterial <= 8) {
-      const balance = isWhite ? material.balance : -material.balance;
-      coach.techniques.push({
-        icon: '\u265C',
-        text: balance > 0 ? 'Rook + Pawn vs Rook: Build a "bridge" (Lucena) to shield your king from checks while promoting.' : 'Rook vs Rook+Pawn: Use Philidor defense \u2014 keep your rook on the 3rd rank until the pawn advances, then check from behind.'
-      });
-    }
-
-    if (myBishops >= 1 && oppBishops >= 1 && totalMaterial <= 10) {
-      coach.techniques.push({ icon: '\u265D', text: 'Opposite-colored bishops: Drawing chances are high if defending, but attacking with bishop + pawns can be decisive.' });
-    }
-
-    if (totalMaterial <= 8 && !tablebaseData) {
-      coach.techniques.push({ icon: '\u26A0', text: 'Watch for zugzwang \u2014 a position where any move worsens your situation. Try to put your opponent in zugzwang first.' });
-    }
-
-    if (oppPassedPawns > 0) {
-      coach.techniques.push({ icon: '\u25A2', text: `Enemy has ${oppPassedPawns} passed pawn${oppPassedPawns > 1 ? 's' : ''}. Use the "square of the pawn" rule to determine if your king can catch it.` });
-    }
-
-    if (tablebaseData) {
-      const cat = tablebaseData.category || 'unknown';
-      if (cat === 'win' || cat === 'syzygy-win') coach.plan = 'Follow tablebase moves precisely to convert the win. Every move matters!';
-      else if (cat === 'draw') coach.plan = "Hold the draw with precise tablebase play. Stay active and don't passively defend.";
-      else coach.plan = 'Defend stubbornly. In endgames, even losing positions require perfect play from the opponent.';
-    } else {
-      const evalScore = analysisData?.pvs?.[0];
-      const score = evalScore ? (isWhite ? evalScore.score : -evalScore.score) : 0;
-      if (score > 200) coach.plan = 'Simplify the position: trade pieces (not pawns), advance your passed pawns, activate your king.';
-      else if (score > 50) coach.plan = 'Improve your position gradually. Activate your king, create a second weakness, then push.';
-      else if (score > -50) coach.plan = 'Equal endgame. Focus on piece activity, king centralization, and small pawn advances.';
-      else if (score > -200) coach.plan = "Defend actively. Look for counterplay, don't just sit passively. Create threats.";
-      else coach.plan = 'Defend tenaciously. Create complications, set traps, and fight for every tempo.';
-    }
-
-    if (analysisData?.pvs?.[0]?.pv) {
-      const pv = analysisData.pvs[0].pv;
-      const activeColor = parts[1] || 'w';
-      coach.steps = pv.slice(0, 6).map((uci, i) => {
-        const from = uci.substring(0, 2);
-        const to = uci.substring(2, 4);
-        const piece = i === 0 ? getPieceAt(board, from) : null;
-        const san = i === 0 ? uciToSan(uci, fen) : uci;
-        const isPlayerMove = (activeColor === playerColor) ? (i % 2 === 0) : (i % 2 === 1);
-        let desc = '';
-        if (i === 0) { desc = piece ? `Move ${PIECE_NAMES[piece.toLowerCase()]} ${from}\u2192${to}` : `${from}\u2192${to}`; }
-        else { desc = isPlayerMove ? 'Your reply' : "Opponent's expected move"; }
-        return { num: i + 1, move: san, desc, isPlayerMove };
-      });
-    }
-
-    if (tablebaseData?.moves?.length > 0) {
-      const bestTbMove = tablebaseData.moves.find(m => m.category === 'win' || m.category === 'syzygy-win' || m.category === 'variant-win') || tablebaseData.moves.find(m => m.category === 'draw') || tablebaseData.moves[0];
-      if (bestTbMove) {
-        coach.steps.unshift({ num: 0, move: bestTbMove.san || bestTbMove.uci, desc: `Tablebase: ${bestTbMove.category} ${bestTbMove.dtm ? '(M' + Math.abs(bestTbMove.dtm) + ')' : ''}`, isPlayerMove: true });
-      }
-    }
-
-    return coach;
-  }
-
-  // ─── Player-perspective score formatting ───────────────────────────
-  // Returns a string like "+1.5 (you)" / "-0.8 (opp)" / "+M5 (you)" that
-  // makes it obvious whose favour the eval is in, regardless of whether
-  // the assisted player is White or Black. Used by the side panel for
-  // candidate-move rows and eval-bar labels.
-  function formatScorePlayerPerspective(score, scoreType, playerColor) {
-    if (score === null || score === undefined || isNaN(score)) return '—';
-    const isWhite = playerColor === 'w';
-    // score is White-perspective; flip for Black-assist to get player-perspective
-    const playerScore = isWhite ? score : -score;
-    if (scoreType === 'mate') {
-      if (playerScore > 0) return `+M${playerScore} (you)`;
-      if (playerScore < 0) return `-M${Math.abs(playerScore)} (opp)`;
-      return 'Mate';
-    }
-    const pawns = playerScore / 100;
-    if (pawns > 5) return `+${pawns.toFixed(1)} (winning)`;
-    if (pawns > 2) return `+${pawns.toFixed(1)} (decisive)`;
-    if (pawns > 0.5) return `+${pawns.toFixed(1)} (clear edge)`;
-    if (pawns > 0) return `+${pawns.toFixed(1)} (slight)`;
-    if (pawns === 0) return '0.0 (equal)';
-    if (pawns > -0.5) return `${pawns.toFixed(1)} (slight)`;
-    if (pawns > -2) return `${pawns.toFixed(1)} (clear edge)`;
-    if (pawns > -5) return `${pawns.toFixed(1)} (decisive)`;
-    return `${pawns.toFixed(1)} (winning)`;
-  }
-
   // ─── Public API ────────────────────────────────────────────────────
   window.ChessHintEngine = {
     generateHints,
@@ -2736,13 +2401,9 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     describeEval,
     formatEvalBar,
     formatPVs,
-    formatContinuation,
     formatMove,
     uciToSan,
-    evaluateCandidateMoves,
     detectCriticalMoment,
-    generateEndgameCoach,
-    scoreMoveForStyle,
     selectPVForStyle,
     analyzeCandidate,
     PLAYING_STYLES,
@@ -2750,7 +2411,6 @@ add(candidate.ownKingDangerDelta > 0, 'ownKingDanger', weights.ownKingDanger * M
     HINT_LEVELS,
     EXACT_HINT_LEVEL,
     resetSacrificeHistory,
-    formatScorePlayerPerspective,
     // Exposed for deterministic regression tests and progressive-PV consumers.
     applyMoveToFen,
     applyMoveToBoard

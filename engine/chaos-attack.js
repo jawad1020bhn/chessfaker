@@ -144,7 +144,27 @@
         epauletteMate: 180,
         queenSacForCharge: 165,
         urgencyTax: -230,
-        attackerTradePenalty: -110
+        attackerTradePenalty: -110,
+        // ── V2 strategic-layer weights ──
+        // Siege continuity: consecutive hints advancing ONE coherent plan
+        // beat greedy re-picking every position.
+        siegeContinuity: 95,
+        // Sacrifice mechanism classification: a sacrifice must state its
+        // mechanism (deflection of the only defender / line opening /
+        // tempo gain) AND show concrete follow-up, or it is penalized as
+        // unexplained rather than romanticized as fearless.
+        sacMechanismDeflect: 150,
+        sacMechanismLineOpen: 135,
+        sacMechanismTempo: 115,
+        unexplainedSacrifice: -130,
+        // Quiet attacking prep: Kh1/Rfd1/h3 — the net-closing moves real
+        // strong attackers play between blows.
+        quietKingPrep: 80,
+        quietRookFile: 70,
+        quietPawnWedge: 60,
+        // Zero-freedom initiative: lines where every opponent reply is a
+        // king move, capture, or block — the defender never gets a free move.
+        zeroFreedom: 170
       },
       phaseAggressionScale: 1.5
     };
@@ -633,6 +653,83 @@
       return false;
     }
 
+    // ── V2 strategic layer ─────────────────────────────────────────────
+    // Classify WHY a sacrifice works. A real attacker's sacrifice states its
+    // mechanism: it deflects the key defender, rips open the cover, or keeps
+    // the initiative with check — and shows concrete follow-up. A material
+    // drop with none of these is not fearless, it is unexplained.
+    function classifySacMechanism(ctx) {
+      const { board, after, captured, destination, materialDelta, playerIsWhite,
+        opponentKingBefore, givesCheck, line } = ctx;
+      if (!Number.isFinite(materialDelta) || materialDelta > -150) return null;
+      const openedLine = pawnShieldStrike(captured, destination, opponentKingBefore) ||
+        discoveredAttack(board, after, destination, playerIsWhite).discovered;
+      let deflectedKeyDefender = false;
+      if (captured && opponentKingBefore) {
+        const dist = Math.max(
+          Math.abs(destination.row - opponentKingBefore.row),
+          Math.abs(destination.col - opponentKingBefore.col));
+        deflectedKeyDefender = dist <= 2;
+      }
+      const hasFollowUp = Array.isArray(line) && line.length >= 3;
+      if (openedLine && (hasFollowUp || givesCheck)) return 'lineOpen';
+      if (deflectedKeyDefender && hasFollowUp) return 'deflect';
+      if (givesCheck && hasFollowUp) return 'tempo';
+      return null;
+    }
+
+    // Zero-freedom initiative: fraction of the defender's plies in the PV
+    // that are king moves or recaptures (i.e., forced). 1.0 means the
+    // defender never gets a free move in the whole calculated line.
+    function measureInitiativeFreedom(startBoard, line, startFen, playerColor) {
+      let defenderPlies = 0, forcedPlies = 0;
+      let scanBoard = startBoard, scanFen = startFen;
+      for (const move of (line || [])) {
+        if (!move || move.length < 4) continue;
+        const mover = (scanFen.split(' ')[1] || 'w');
+        const wasCapture = Boolean(getPieceAt(scanBoard, move.slice(2, 4)));
+        const movingPiece = (getPieceAt(scanBoard, move.slice(0, 2)) || '').toLowerCase();
+        if (mover !== playerColor) {
+          defenderPlies++;
+          if (movingPiece === 'k' || wasCapture) forcedPlies++;
+        }
+        scanBoard = applyMoveToBoard(scanBoard, move);
+        scanFen = applyMoveToFen(scanFen, move);
+      }
+      return defenderPlies > 0 ? forcedPlies / defenderPlies : 0;
+    }
+
+    // Quiet attacking prep: the between-blows moves real strong attackers
+    // play — tuck the king, swing the last rook to the open file, gain space
+    // with a pawn wedge — recognized as FIRST-CLASS attacking moves.
+    function classifyQuietPrep(ctx) {
+      const { fen, after, piece, destination, givesCheck, captured, playerIsWhite,
+        opponentKingAfter, ownKingAfter, pressureDelta } = ctx;
+      if (givesCheck || captured) return null;
+      if (!piece || !destination) return null;
+      if (detectGamePhase(fen) === 'endgame') return null;
+      const type = piece.toLowerCase();
+      if (type === 'k' && ownKingAfter) {
+        const shelterRows = playerIsWhite ? [7, 6] : [0, 1];
+        if (shelterRows.includes(destination.row) && pressureDelta >= 0) return 'kingSafety';
+      }
+      if (type === 'r' && opponentKingAfter) {
+        const col = destination.col;
+        let pawnsOnFile = 0;
+        for (let r = 0; r < 8; r++) {
+          const p = after[r][col];
+          if (p === 'P' || p === 'p') pawnsOnFile++;
+        }
+        if (pawnsOnFile === 0 && Math.abs(col - opponentKingAfter.col) <= 2) return 'rookFile';
+      }
+      if (type === 'p' && opponentKingAfter) {
+        const manhattan = Math.abs(destination.row - opponentKingAfter.row) +
+          Math.abs(destination.col - opponentKingAfter.col);
+        if (manhattan <= 4 && pressureDelta >= 0) return 'pawnWedge';
+      }
+      return null;
+    }
+
     // ── Per-move feature computation ──────────────────────────────────
     // Replicates the delta block that used to live inside the host's
     // `analyzeCandidate`, producing a flat feature blob the host merges in.
@@ -742,6 +839,18 @@
       const epauletteMate = epauletteMateDetect(board, after, destination, opponentKingAfter, playerIsWhite);
       const windmill = windmillDetect(board, after, destination, playerIsWhite, opponentKingAfter, givesCheck, line, fen, playerColor);
       const queenSac = queenSacForCharge(after, piece, destination, materialDelta, forcedMateNet, playerIsWhite);
+
+      // V2 strategic layer
+      const sacMechanism = classifySacMechanism({
+        board, after, captured, destination, materialDelta, playerIsWhite,
+        opponentKingBefore, givesCheck, line
+      });
+      const defenderForcedRatio = measureInitiativeFreedom(board, line, fen, playerColor);
+      const quietPrepKind = classifyQuietPrep({
+        fen, after, piece, destination, givesCheck, captured, playerIsWhite,
+        opponentKingAfter, ownKingAfter,
+        pressureDelta: pressureAfter.pressure - pressureBefore.pressure
+      });
       // Pressure sustained across the PV: fraction of our plies that deliver a
       // check or sit within a forced-mate chain — the higher, the closer to a
       // kill. Only meaningful when the line keeps driving at the king.
@@ -761,6 +870,7 @@
         scanFen = applyMoveToFen(scanFen, move);
       }
       const sustainedPressure = totalOurPlies > 0 ? (checkedPlies / totalOurPlies) : 0;
+      const zeroFreedom = defenderForcedRatio >= 0.99 && totalOurPlies >= 2;
       // Speed scalar: reward how early a mate/closing reaches ply 1 with a
       // mate line; else gently prefer fewer plies to the target.
       let mateSpeed = 0;
@@ -832,6 +942,10 @@
         epauletteMate,
         windmill,
         queenSac,
+        sacMechanism,
+        defenderForcedRatio,
+        zeroFreedom,
+        quietPrepKind,
         sustainedPressure,
         mateSpeed,
         narrowEscape,
@@ -947,6 +1061,42 @@
         'urgencyTax', weights.urgencyTax, 'the attack must land now — no time to dawdle');
       add(candidate.attackerTradeOff, 'attackerTradePenalty', weights.attackerTradePenalty,
         'bargains away an attacker for a mere tempo');
+
+      // ── V2 strategic layer ───────────────────────────────────────────
+      // Siege continuity: advancing the SAME plan as the previous pick is
+      // worth real points; a coherent siege beats greedy per-move re-picking.
+      if (candidate.siegeContinuity === true) {
+        const continuityScale = Math.min(1.5, 0.6 + (Number(candidate.attackMomentum) || 0) * 0.15);
+        add(true, 'siegeContinuity', weights.siegeContinuity * continuityScale,
+          `advances the same plan — the ${candidate.plan || 'attack'} siege continues`);
+      }
+      // Sacrifice mechanism classification. Sound mechanisms earn their
+      // weight; an unexplained material drop is penalized even here.
+      if (candidate.sacrifice) {
+        if (candidate.sacMechanism === 'deflect') {
+          add(true, 'sacMechanismDeflect', weights.sacMechanismDeflect,
+            'sacrifice deflects the key defender from the king zone with a concrete follow-up');
+        } else if (candidate.sacMechanism === 'lineOpen') {
+          add(true, 'sacMechanismLineOpen', weights.sacMechanismLineOpen,
+            'sacrifice rips open the king\u2019s cover along a fresh line');
+        } else if (candidate.sacMechanism === 'tempo') {
+          add(true, 'sacMechanismTempo', weights.sacMechanismTempo,
+            'sacrifice keeps the initiative with check and a ready follow-up');
+        } else if (!candidate.winningMate) {
+          add(true, 'unexplainedSacrifice', weights.unexplainedSacrifice,
+            'the material drop has no stated mechanism — an attacker explains the point first');
+        }
+      }
+      // Zero-freedom initiative: every defender reply in the line was forced.
+      add(candidate.zeroFreedom, 'zeroFreedom', weights.zeroFreedom,
+        'every reply is forced — the defense never gets a free move');
+      // Quiet attacking prep: net-closing moves between blows.
+      add(candidate.quietPrepKind === 'kingSafety',
+        'quietKingPrep', weights.quietKingPrep, 'tucks the king safe before reopening the attack');
+      add(candidate.quietPrepKind === 'rookFile', 'quietRookFile', weights.quietRookFile,
+        'swings the rook to the open file toward the king');
+      add(candidate.quietPrepKind === 'pawnWedge', 'quietPawnWedge', weights.quietPawnWedge,
+        'gains space with a pawn wedge near the enemy king');
 
       return calibrateAttackScore(amount, candidate, weights);
     }

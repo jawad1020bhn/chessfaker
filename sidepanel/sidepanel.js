@@ -48,6 +48,7 @@
     // style === 'super_ultra_aggressive'; other styles ignore it completely.
     earlyKingHuntEnabled: false,
     humanLikeMode: false,
+    sparringStrength: 1100,
     autoAnalyze: true,
     showThreats: true,
     showCriticalMoments: true,
@@ -117,9 +118,13 @@
     materialBalance: $('#material-balance'),
     hintText: $('#hint-text'),
     hintFromTo: $('#hint-fromto'),
+    heroWelcome: $('#hero-welcome'),
     ideaSection: $('#idea-section'),
     ideaList: $('#idea-list'),
     hintCard: $('#hint-card'),
+    altsSection: $('#alts-section'),
+    altsList: $('#alts-list'),
+    evalSpark: $('#eval-sparkline'),
     moveClassSection: $('#move-class-section'),
     moveClassDisplay: $('#move-class-display'),
     settingsPanel: $('#settings-panel'),
@@ -209,56 +214,85 @@
       if (oldest) oldest.remove();
     }
 
-    const icons = { success: '\u2713', error: '\u2717', warning: '\u26A0', info: '\u2139' };
-    const safeType = Object.hasOwn(icons, type) ? type : 'info';
+    const safeType = Object.hasOwn({ success: 1, error: 1, warning: 1, info: 1 }, type) ? type : 'info';
     const toast = document.createElement('div');
     toast.className = `toast toast-${safeType}`;
+    // The icon is a Material-symbol mask rendered by CSS — no text glyphs.
     const icon = document.createElement('span');
     icon.className = 'toast-icon';
-    icon.textContent = icons[safeType];
+    icon.setAttribute('aria-hidden', 'true');
     const messageElement = document.createElement('span');
     messageElement.className = 'toast-message';
     messageElement.textContent = String(message ?? '');
     toast.append(icon, messageElement);
     container.appendChild(toast);
+    attachSwipeDismiss(toast);
 
     setTimeout(() => {
+      if (!toast.isConnected) return;
       toast.classList.add('toast-exit');
       setTimeout(() => toast.remove(), 300);
     }, duration);
+  }
+
+  // Drag a toast sideways past ~56px and it flings away instead of waiting
+  // out its timer. Below the threshold it springs back home.
+  function attachSwipeDismiss(toast) {
+    let startX = null;
+    let dx = 0;
+    const settle = () => {
+      if (startX === null) return;
+      startX = null;
+      if (Math.abs(dx) > 56) {
+        toast.classList.add('dismiss-swipe');
+        toast.style.transform = `translateX(${dx > 0 ? 130 : -130}%)`;
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 240);
+      } else if (dx !== 0) {
+        toast.classList.add('dismiss-swipe');
+        toast.style.transform = '';
+        setTimeout(() => toast.classList.remove('dismiss-swipe'), 240);
+      }
+      dx = 0;
+    };
+    toast.addEventListener('pointerdown', (e) => {
+      startX = e.clientX;
+      try { toast.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+    toast.addEventListener('pointermove', (e) => {
+      if (startX === null) return;
+      dx = e.clientX - startX;
+      if (Math.abs(dx) > 4) toast.style.transform = `translateX(${dx}px)`;
+    });
+    toast.addEventListener('pointerup', settle);
+    toast.addEventListener('pointercancel', settle);
   }
 
   // ═══════════════════════════════════════════════════════════════════════
   // ─── Keyboard Shortcuts ──────────────────────────────────────────────
   // ═══════════════════════════════════════════════════════════════════════
   let shortcutHelpVisible = false;
-  let lastFocusedBeforeHelp = null;
-  const HELP_OUT_MS = 200; // matches mdSheetOut in CSS
+  const shortcutDialog = document.getElementById('shortcut-help');
+  const REDUCED_MOTION = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  function openShortcutHelp() {
-    const help = document.getElementById('shortcut-help');
-    if (!help || shortcutHelpVisible) return;
+  function openShortcuts() {
+    if (!shortcutDialog) return;
     shortcutHelpVisible = true;
-    lastFocusedBeforeHelp = document.activeElement;
-    help.classList.remove('is-closing');
-    help.style.display = 'block';
+    shortcutDialog.classList.remove('md-dialog--closing');
+    shortcutDialog.style.display = 'block';
     const closeBtn = document.getElementById('btn-close-shortcut-help');
     if (closeBtn) closeBtn.focus();
   }
 
-  function closeShortcutHelp() {
-    const help = document.getElementById('shortcut-help');
-    if (!help || !shortcutHelpVisible) return;
+  function closeShortcuts() {
+    if (!shortcutDialog || shortcutDialog.style.display === 'none') return;
     shortcutHelpVisible = false;
-    help.classList.add('is-closing');
+    shortcutDialog.classList.add('md-dialog--closing');
     setTimeout(() => {
-      help.classList.remove('is-closing');
-      help.style.display = 'none';
-    }, HELP_OUT_MS);
-    if (lastFocusedBeforeHelp && typeof lastFocusedBeforeHelp.focus === 'function') {
-      lastFocusedBeforeHelp.focus();
-    }
-    lastFocusedBeforeHelp = null;
+      shortcutDialog.style.display = 'none';
+      shortcutDialog.classList.remove('md-dialog--closing');
+      if (dom.btnSettings) dom.btnSettings.focus();
+    }, REDUCED_MOTION ? 0 : 200);
   }
 
   function initKeyboardShortcuts() {
@@ -275,7 +309,9 @@
           break;
         case 's':
           e.preventDefault();
-          if (dom.settingsPanel && dom.settingsPanel.style.display !== 'none') {
+          if (dom.settingsPanel && dom.settingsPanel.classList.contains('md-sheet--closing')) {
+            openSettingsSheet();   // cancel the closing motion, come straight back
+          } else if (dom.settingsPanel && dom.settingsPanel.style.display !== 'none') {
             closeSettingsSheet();
           } else {
             openSettingsSheet();
@@ -283,7 +319,7 @@
           break;
         case 'escape':
           if (shortcutHelpVisible) {
-            closeShortcutHelp();
+            closeShortcuts();
           } else if (dom.settingsPanel && dom.settingsPanel.style.display !== 'none') {
             closeSettingsSheet();
           }
@@ -291,30 +327,36 @@
         case '?':
           e.preventDefault();
           if (shortcutHelpVisible) {
-            closeShortcutHelp();
+            closeShortcuts();
           } else {
-            openShortcutHelp();
+            openShortcuts();
           }
           break;
         default:
           break;
       }
     });
+  }
 
-    // The shortcuts dialog is modal: keep Tab inside while it is open.
-    const help = document.getElementById('shortcut-help');
-    if (help) {
-      help.addEventListener('keydown', (e) => {
-        if (e.key !== 'Tab' || !shortcutHelpVisible) return;
-        const focusables = help.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
-        const visible = Array.from(focusables).filter((el) => el.offsetParent !== null && !el.disabled);
-        if (visible.length === 0) return;
+  // The shortcut dialog is modal: Tab cycles inside it until it closes.
+  function initDialogFocusTrap() {
+    if (!shortcutDialog) return;
+    const FOCUSABLE = 'button, [href], [tabindex]:not([tabindex="-1"])';
+    shortcutDialog.addEventListener('keydown', (e) => {
+      if (e.key !== 'Tab') return;
+      const focusables = Array.from(shortcutDialog.querySelectorAll(FOCUSABLE))
+        .filter((el) => el.offsetParent !== null);
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
         e.preventDefault();
-        const index = visible.indexOf(document.activeElement);
-        const next = visible[(index + (e.shiftKey ? -1 : 1) + visible.length) % visible.length];
-        next.focus();
-      });
-    }
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    });
   }
 
   function finishRefresh() {
@@ -347,23 +389,26 @@
     if (dom.evalSection) {
       dom.evalSection.dataset.state = 'loading';
     }
-    if (dom.evalDescription) {
-      if (!hasPrevScore) {
-        // Fresh position: shimmer skeleton in the description line.
-        dom.evalDescription.textContent = '';
-        const skeleton = document.createElement('span');
-        skeleton.className = 'md-skeleton';
-        skeleton.style.width = '18ch';
-        skeleton.textContent = 'Analyzing position';
-        dom.evalDescription.appendChild(skeleton);
-      } else {
-        dom.evalDescription.textContent = 'Analyzing position…';
-      }
-    }
+    if (dom.evalStaleBadge) dom.evalStaleBadge.style.display = 'none';
     if (!hasPrevScore) {
-      if (dom.evalWhiteLabel) dom.evalWhiteLabel.textContent = '—';
-      if (dom.evalBlackLabel) dom.evalBlackLabel.textContent = '—';
-      if (dom.evalStaleBadge) dom.evalStaleBadge.style.display = 'none';
+      // First analysis of the position: shimmer placeholders instead of
+      // static dashes so the loading state feels alive, not broken.
+      renderBalanceSkeleton();
+    } else if (dom.evalDescription) {
+      dom.evalDescription.textContent = 'Analyzing position…';
+    }
+  }
+
+  // Skeleton shimmer reads the tile's role color via currentColor.
+  function renderBalanceSkeleton() {
+    if (dom.evalDescription) {
+      dom.evalDescription.innerHTML = '<span class="md-skeleton" style="width:58%">&#8203;</span>';
+    }
+    if (dom.evalWhiteLabel) {
+      dom.evalWhiteLabel.innerHTML = '<span class="md-skeleton" style="width:3.5ch">&#8203;</span>';
+    }
+    if (dom.evalBlackLabel) {
+      dom.evalBlackLabel.innerHTML = '<span class="md-skeleton" style="width:3.5ch">&#8203;</span>';
     }
   }
 
@@ -378,6 +423,7 @@
     if (dom.evalWhiteLabel) dom.evalWhiteLabel.textContent = '—';
     if (dom.evalBlackLabel) dom.evalBlackLabel.textContent = '—';
     if (dom.evalBarWhite) dom.evalBarWhite.style.transform = 'scaleX(0.5)';
+    renderEvalSparkline();
   }
 
   function setBalanceEmptyState() {
@@ -391,6 +437,7 @@
     if (dom.evalWhiteLabel) dom.evalWhiteLabel.textContent = '—';
     if (dom.evalBlackLabel) dom.evalBlackLabel.textContent = '—';
     if (dom.evalBarWhite) dom.evalBarWhite.style.transform = 'scaleX(0.5)';
+    renderEvalSparkline();
   }
 
   // ─── Initialize ────────────────────────────────────────────────────
@@ -398,9 +445,11 @@
     loadSettings();
     applySettingsToUI();
     bindEvents();
+    initMdSliders();
     initSegmentedControls();
     initKeyboardShortcuts();
     initSettingsFocusTrap();
+    initDialogFocusTrap();
     chrome.runtime.sendMessage({ type: 'panel_state', open: true }).catch(() => {});
     window.addEventListener('pagehide', () => {
       chrome.runtime.sendMessage({ type: 'panel_state', open: false, tabId: activeTabId }).catch(() => {});
@@ -409,9 +458,36 @@
     syncWelcome();
     setBalanceEmptyState();
     renderMoveClassificationEmpty();
+    initScrollElevation();
+    initVersionStamp();
     updateEngineStatus('connecting', 'Connecting to cloud...');
     updateCorrelationStat();   // initialise "0 / 0 (0%)" display
     runHealthCheck();          // passive status only; does not call providers
+  }
+
+  // ─── Scroll-aware app bar elevation ─────────────────────────────────
+  // One rAF-throttled scroll listener flips `.is-scrolled` on the app shell;
+  // the CSS carries the whole visual response.
+  function initScrollElevation() {
+    const canvas = document.querySelector('.md-canvas');
+    const app = document.getElementById('app');
+    if (!canvas || !app) return;
+    let ticking = false;
+    const update = () => {
+      ticking = false;
+      app.classList.toggle('is-scrolled', canvas.scrollTop > 4);
+    };
+    canvas.addEventListener('scroll', () => {
+      if (!ticking) { ticking = true; requestAnimationFrame(update); }
+    }, { passive: true });
+  }
+
+  // ─── Version stamp ──────────────────────────────────────────────────
+  function initVersionStamp() {
+    const el = document.getElementById('app-version-stamp');
+    if (!el) return;
+    const manifest = chrome.runtime && chrome.runtime.getManifest ? chrome.runtime.getManifest() : null;
+    el.textContent = manifest ? `Felt · v${manifest.version}` : '';
   }
 
   // Focus trap for the settings panel so Tab can't escape
@@ -483,6 +559,38 @@
     });
   }
 
+  // ─── M3E slider: custom visuals driven by the native range input ─────
+  function initMdSliders() {
+    $$('[data-md-slider]').forEach((slider) => {
+      const input = slider.querySelector('input[type="range"]');
+      const fill = slider.querySelector('.md-slider__fill');
+      const handle = slider.querySelector('.md-slider__handle');
+      if (!input || !fill || !handle) return;
+
+      const render = () => {
+        const min = Number(input.min) || 0;
+        const max = Number(input.max) || 100;
+        const frac = Math.min(1, Math.max(0, (Number(input.value) - min) / (max - min)));
+        fill.style.width = `${frac * 100}%`;
+        handle.style.left = `${frac * 100}%`;
+      };
+
+      let bumpTimer = null;
+      const bumpChip = () => {
+        const chip = document.getElementById('sparring-strength-value');
+        if (!chip) return;
+        chip.classList.add('is-bumped');
+        clearTimeout(bumpTimer);
+        bumpTimer = setTimeout(() => chip.classList.remove('is-bumped'), 140);
+      };
+
+      input.addEventListener('input', () => { render(); bumpChip(); });
+      input.addEventListener('pointerdown', () => slider.classList.add('is-dragging'));
+      window.addEventListener('pointerup', () => slider.classList.remove('is-dragging'));
+      render();
+    });
+  }
+
   function saveSettings() {
     return Promise.all([
       chrome.storage.local.set({ settings }),
@@ -497,6 +605,7 @@
       'setting-style': settings.style,
       'setting-early-king-hunt': settings.earlyKingHuntEnabled,
       'setting-human-like-mode': settings.humanLikeMode,
+      'setting-sparring-strength': settings.sparringStrength,
       'setting-auto-analyze': settings.autoAnalyze,
       'setting-show-threats': settings.showThreats,
       'setting-show-critical-moments': settings.showCriticalMoments,
@@ -512,6 +621,12 @@
     });
     const humanStatus = document.querySelector('.human-mode-status');
     if (humanStatus) humanStatus.textContent = settings.humanLikeMode ? 'On' : 'Off';
+    const strengthRow = document.getElementById('sparring-strength-row');
+    if (strengthRow) strengthRow.hidden = !settings.humanLikeMode;
+    const strengthOutput = document.getElementById('sparring-strength-value');
+    if (strengthOutput) strengthOutput.textContent = String(settings.sparringStrength);
+    const thinkingNote = document.getElementById('human-thinking-note');
+    if (thinkingNote) thinkingNote.hidden = !settings.humanLikeMode;
     $$('.human-mode-opt').forEach(btn => {
       const active = (btn.dataset.mode === 'on') === settings.humanLikeMode;
       btn.setAttribute('aria-checked', active ? 'true' : 'false');
@@ -529,14 +644,10 @@
       const selected = String(field.type === 'checkbox' ? field.checked : field.value) === String(btn.dataset.value);
       btn.classList.toggle('is-selected', selected);
       btn.setAttribute('aria-checked', selected ? 'true' : 'false');
-      // APG roving tabindex: only the checked option takes Tab.
-      btn.tabIndex = selected ? 0 : -1;
     });
     $$('.human-mode-opt').forEach((btn) => {
       const active = (btn.dataset.mode === 'on') === settings.humanLikeMode;
       btn.classList.toggle('is-selected', active);
-      btn.setAttribute('aria-checked', active ? 'true' : 'false');
-      btn.tabIndex = active ? 0 : -1;
     });
   }
 
@@ -665,12 +776,11 @@
 
     // Theme toggle removed — dark only
 
-    // Settings and CSP-safe shortcut-help close button + scrim
-    const closeShortcutBtn = document.getElementById('btn-close-shortcut-help');
-    if (closeShortcutBtn) closeShortcutBtn.addEventListener('click', closeShortcutHelp);
-    document.querySelectorAll('[data-close-shortcuts]').forEach((el) => {
-      el.addEventListener('click', closeShortcutHelp);
-    });
+    // Settings and CSP-safe shortcut-help close button + scrim dismissal
+    const closeShortcutHelp = document.getElementById('btn-close-shortcut-help');
+    if (closeShortcutHelp) closeShortcutHelp.addEventListener('click', closeShortcuts);
+    const shortcutScrim = document.querySelector('[data-close-shortcuts]');
+    if (shortcutScrim) shortcutScrim.addEventListener('click', closeShortcuts);
     if (dom.btnSettings) dom.btnSettings.addEventListener('click', openSettingsSheet);
     if (dom.btnCloseSettings) dom.btnCloseSettings.addEventListener('click', closeSettingsSheet);
 
@@ -680,6 +790,12 @@
       'setting-style': (v) => { settings.style = normalizeStyle(v); },
       'setting-early-king-hunt': (v) => { settings.earlyKingHuntEnabled = v === true; },
       'setting-human-like-mode': (v) => { settings.humanLikeMode = v; },
+      'setting-sparring-strength': (v) => {
+        const strength = Math.round(Number(v));
+        settings.sparringStrength = Number.isFinite(strength) ? strength : 1100;
+        const out = document.getElementById('sparring-strength-value');
+        if (out) out.textContent = String(settings.sparringStrength);
+      },
       'setting-auto-analyze': (v) => { settings.autoAnalyze = v; },
       'setting-show-threats': (v) => { settings.showThreats = v; },
       'setting-show-critical-moments': (v) => { settings.showCriticalMoments = v; },
@@ -699,6 +815,11 @@
         if ((id === 'setting-style' || id === 'setting-human-like-mode' || id === 'setting-early-king-hunt' || id === 'setting-show-threats') && lastAnalysis) {
           humanPlanState = null;
           renderAnalysis(lastAnalysis);
+          // Human mode changes routing policy too (steady depth, max MultiPV),
+          // so a fresh analysis must replace results fetched under the old one.
+          if (id === 'setting-human-like-mode' && currentFen) {
+            savePromise.finally(() => requestAnalysis(true));
+          }
         }
         if (['setting-use-chess-api', 'setting-use-lichess-cloud', 'setting-use-masters-explorer', 'setting-analysis-quality', 'setting-candidate-lines'].includes(id) && currentFen) {
           // Ensure the worker sees the new source policy before it routes.
@@ -732,23 +853,33 @@
     });
 
     // APG radiogroup pattern: arrow keys rove between options and select.
-    const roveGroup = (group, e) => {
-      if (!['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].includes(e.key)) return;
-      const items = Array.from(group.querySelectorAll('[role="radio"]'));
-      const index = items.indexOf(document.activeElement);
-      if (index === -1) return;
-      e.preventDefault();
-      const dir = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : -1;
-      const next = items[(index + dir + items.length) % items.length];
-      next.focus();
-      next.click();
-    };
     $$('.md-btn-group[role="radiogroup"]').forEach((group) => {
-      group.addEventListener('keydown', (e) => roveGroup(group, e));
+      group.addEventListener('keydown', (e) => {
+        if (!['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].includes(e.key)) return;
+        const items = Array.from(group.querySelectorAll('[role="radio"]'));
+        const index = items.indexOf(document.activeElement);
+        if (index === -1) return;
+        e.preventDefault();
+        const dir = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : -1;
+        const next = items[(index + dir + items.length) % items.length];
+        next.focus();
+        next.click();
+      });
     });
-    // The style choice cards are a radiogroup too — same roving contract.
+
+    // The style choice stack is a radiogroup too — same roving behavior.
     $$('.md-choice-stack[role="radiogroup"]').forEach((group) => {
-      group.addEventListener('keydown', (e) => roveGroup(group, e));
+      group.addEventListener('keydown', (e) => {
+        if (!['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].includes(e.key)) return;
+        const items = Array.from(group.querySelectorAll('[role="radio"]'));
+        const index = items.indexOf(document.activeElement);
+        if (index === -1) return;
+        e.preventDefault();
+        const dir = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : -1;
+        const next = items[(index + dir + items.length) % items.length];
+        next.focus();
+        next.click();
+      });
     });
   }
 
@@ -857,6 +988,9 @@
   function syncWelcome() {
     const app = document.getElementById('app');
     if (app) app.classList.toggle('no-position', !currentFen);
+    // The welcome block lives inside the hero stage: visible only while no
+    // board exists at all, hidden the moment any real content can land.
+    if (dom.heroWelcome) dom.heroWelcome.hidden = Boolean(currentFen);
   }
 
   function handlePositionUpdate(message) {
@@ -923,6 +1057,7 @@
       waitingForOpponent = false;
       updateEngineStatus('unknown', 'Turn unavailable: waiting for a verified position');
       if (dom.hintText) dom.hintText.textContent = 'Turn information is unavailable for this board.';
+      if (dom.hintFromTo) dom.hintFromTo.style.display = 'none';
       hideIdeaRail();
       return;
     }
@@ -939,6 +1074,7 @@
       updateEngineStatus('online', `Opponent's turn: waiting...`);
       if (dom.hintText && !lastAnalysis) {
         dom.hintText.textContent = `Waiting for opponent's move...`;
+        if (dom.hintFromTo) dom.hintFromTo.style.display = 'none';
       }
     }
   }
@@ -963,9 +1099,8 @@
   }
 
   // Pull current correlation stats from background and render them in
-  // the "Sensible moves" row of the position-info card. The stat is a
-  // human-likeness guard: high = your moves look natural/human (fair-play safe),
-  // low = you are blindly copying the engine's exact top picks.
+  // the "Sensible moves" row of the position-info card: high = you are
+  // following the coach's reasoning, low = blindly copying engine picks.
   function updateCorrelationStat() {
     if (!dom.correlationStat) return;
     chrome.runtime.sendMessage({ type: 'get_correlation_stats' }).then((stats) => {
@@ -975,8 +1110,7 @@
       }
       const pct = stats.total > 0 ? Math.round((stats.matches / stats.total) * 100) : 0;
       dom.correlationStat.textContent = `${stats.matches} / ${stats.total} (${pct}%)`;
-      // Color cue — green = human-like (safe), yellow = mixed, red = copying
-      // the engine's exact line (fair-play risk).
+      // Color cue — green = own thinking, yellow = mixed, red = copying.
       if (stats.total === 0) {
         dom.correlationStat.style.color = 'var(--text-secondary)';
       } else if (pct >= 80) {
@@ -1002,6 +1136,7 @@
     if (data.reason === 'turn_unknown') {
       updateEngineStatus('unknown', 'Turn unavailable: waiting for a verified position');
       if (dom.hintText) dom.hintText.textContent = 'Turn information is unavailable for this board.';
+      if (dom.hintFromTo) dom.hintFromTo.style.display = 'none';
       return;
     }
 
@@ -1011,6 +1146,7 @@
       updateEngineStatus('online', "Opponent's turn: waiting...");
       if (dom.hintText && !lastAnalysis) {
         dom.hintText.textContent = `Waiting for opponent's move...`;
+        if (dom.hintFromTo) dom.hintFromTo.style.display = 'none';
       }
     }
   }
@@ -1177,7 +1313,8 @@
           {
             activePlan: humanPlanState?.activePlan || null,
             openingData: data.openingData,
-            earlyKingHuntEnabled: earlyKingHuntActive
+            earlyKingHuntEnabled: earlyKingHuntActive,
+            formSession: settings.humanLikeMode ? (data.formSession || null) : null
           }
         )
       : objectivePvs;
@@ -1254,9 +1391,8 @@
       dom.evalBar.setAttribute('aria-valuenow', String(Math.max(-10, Math.min(10, evalPawns))));
       dom.evalBar.setAttribute('aria-valuetext', `${scoreStr} for ${isWhite ? 'White' : 'Black'}`);
       // The fulcrum reads `--eval-pct` from an ancestor, so it lives on the
-      // tile, not on the bar itself. Clamp the travel so a one-sided score
-      // never pushes the 22px fulcrum off the edge of the meter.
-      if (dom.evalSection) dom.evalSection.style.setProperty('--eval-pct', String(Math.max(5, Math.min(95, pct))));
+      // tile, not on the bar itself.
+      if (dom.evalSection) dom.evalSection.style.setProperty('--eval-pct', String(pct));
     }
     if (dom.evalStaleBadge) dom.evalStaleBadge.style.display = isStale ? 'inline-flex' : 'none';
     if (dom.evalSection) {
@@ -1268,6 +1404,51 @@
     }
     if (dom.evalWhiteLabel) dom.evalWhiteLabel.textContent = isWhite ? scoreStr : oppStr;
     if (dom.evalBlackLabel) dom.evalBlackLabel.textContent = isWhite ? oppStr : scoreStr;
+    renderEvalSparkline();
+  }
+
+  // ─── Eval trend sparkline ──────────────────────────────────────────
+  // The Balance tile already owns evalHistory; this draws the last stretch
+  // of it as a single quiet polyline under the ribbon. White's perspective,
+  // clamped to ±6 pawns, with a dashed zero line and an end dot. Hidden
+  // until two points exist so early positions stay calm.
+  const SPARK_WINDOW = 20;
+  function renderEvalSparkline() {
+    if (!dom.evalSpark) return;
+    const points = evalHistory.slice(-SPARK_WINDOW);
+    if (points.length < 2) {
+      dom.evalSpark.classList.remove('is-live');
+      dom.evalSpark.replaceChildren();
+      return;
+    }
+    const W = 120, H = 28, MID = H / 2;
+    const clampPawns = (cp) => Math.max(-600, Math.min(600, cp)) / 100;
+    // Mate scores sit at the rail; centipawn scores map linearly to ±6.
+    const values = points.map((p) => (p.scoreType === 'mate' ? Math.sign(p.score || 1) * 6 : clampPawns(p.score)));
+    const min = Math.min(...values), max = Math.max(...values);
+    const span = Math.max(max - min, 1.5);
+    const step = W / (points.length - 1);
+    const y = (v) => MID - ((v - min) / span - 0.5) * (H - 8);
+    const d = values.map((v, i) => `${i === 0 ? 'M' : 'L'}${(i * step).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
+    const lastX = ((points.length - 1) * step).toFixed(1);
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.setAttribute('preserveAspectRatio', 'none');
+    const zero = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    zero.setAttribute('class', 'spark-zero');
+    zero.setAttribute('x1', '0'); zero.setAttribute('x2', String(W));
+    zero.setAttribute('y1', String(MID)); zero.setAttribute('y2', String(MID));
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    line.setAttribute('class', 'spark-line');
+    line.setAttribute('d', d);
+    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    dot.setAttribute('class', 'spark-dot');
+    dot.setAttribute('cx', lastX);
+    dot.setAttribute('cy', y(values[values.length - 1]).toFixed(1));
+    dot.setAttribute('r', '2.5');
+    svg.append(zero, line, dot);
+    dom.evalSpark.replaceChildren(svg);
+    dom.evalSpark.classList.add('is-live');
   }
 
   function updateEvalDescription(score, scoreType, effectiveColor) {
@@ -1282,11 +1463,12 @@
     if (app) app.classList.toggle('analyzing', status === 'analyzing' || status === 'connecting');
   }
 
-  const SHEET_OUT_MS = 200; // matches mdSheetOut in CSS
+  let settingsSheetCloseTimer = null;
 
   function openSettingsSheet() {
     if (!dom.settingsPanel) return;
-    dom.settingsPanel.classList.remove('is-closing');
+    if (settingsSheetCloseTimer) clearTimeout(settingsSheetCloseTimer);
+    dom.settingsPanel.classList.remove('md-sheet--closing');
     dom.settingsPanel.style.display = 'flex';
     // The sheet was hidden, so its segmented groups measured as zero.
     requestAnimationFrame(() => requestAnimationFrame(syncAllSegments));
@@ -1296,13 +1478,13 @@
   function closeSettingsSheet() {
     if (!dom.settingsPanel) return;
     const panel = dom.settingsPanel;
-    if (panel.style.display === 'none' || panel.classList.contains('is-closing')) return;
-    // Settle out before unmounting — no hard cut on the way down.
-    panel.classList.add('is-closing');
-    setTimeout(() => {
-      panel.classList.remove('is-closing');
+    if (panel.style.display === 'none' || panel.classList.contains('md-sheet--closing')) return;
+    panel.classList.add('md-sheet--closing');
+    settingsSheetCloseTimer = setTimeout(() => {
       panel.style.display = 'none';
-    }, SHEET_OUT_MS);
+      panel.classList.remove('md-sheet--closing');
+      settingsSheetCloseTimer = null;
+    }, REDUCED_MOTION ? 0 : 210);
   }
 
   function renderPositionInfo(data) {
@@ -1422,6 +1604,98 @@
     if (dom.ideaList) dom.ideaList.textContent = '';
   }
 
+  // ─── Also consider (alternative lines) ─────────────────────────────
+  // Candidate PVs beyond the recommended move, rendered read-only in the
+  // caption-rail dialect: piece chip + SAN + a share-of-best meter. Only
+  // lines close to the best score qualify — real alternatives, not filler.
+  function renderAlternatives(data) {
+    if (!dom.altsSection || !dom.altsList) return;
+    const pvs = Array.isArray(data.pvs) ? data.pvs : [];
+    const effectiveColor = assistedPlayerColor || playerColor || 'w';
+    const rows = [];
+    for (let i = 1; i < pvs.length && rows.length < 3; i++) {
+      const pv = pvs[i];
+      if (!pv || !Array.isArray(pv.pv) || !pv.pv[0]) continue;
+      const uci = pv.pv[0];
+      const san = window.ChessHintEngine && typeof window.ChessHintEngine.uciToSan === 'function'
+        ? window.ChessHintEngine.uciToSan(uci, data.fen)
+        : uci;
+      if (!san) continue;
+      const isWhite = effectiveColor === 'w';
+      // Score in the assisted player's perspective; alternatives are judged
+      // by how much of the best line's value they keep.
+      const myScore = isWhite ? pv.score : -pv.score;
+      const bestScore = (() => {
+        const b = pvs[0];
+        if (!b) return myScore;
+        const bs = isWhite ? b.score : -b.score;
+        return b.scoreType === 'mate' ? (bs > 0 ? 10000 - Math.abs(bs) * 100 : -10000 + Math.abs(bs) * 100)
+          : bs;
+      })();
+      const mineLinear = pv.scoreType === 'mate' ? (myScore > 0 ? 10000 - Math.abs(myScore) * 100 : -10000 + Math.abs(myScore) * 100)
+        : myScore;
+      const share = bestScore > 0 ? Math.max(5, Math.min(100, Math.round((mineLinear / bestScore) * 100))) : 100;
+      if (share < 70 && pv.scoreType !== 'mate') continue;   // clearly worse: not worth the pixels
+      const scoreStr = pv.scoreType === 'mate'
+        ? (myScore > 0 ? `M${Math.abs(myScore)}` : `−M${Math.abs(myScore)}`)
+        : `${myScore >= 0 ? '+' : ''}${(myScore / 100).toFixed(1)}`;
+      rows.push({
+        san,
+        piece: PIECE_GLYPHS[effectiveColor === 'w' ? 'White' : 'Black'][sanPieceName(san)] || '',
+        sideClass: effectiveColor === 'w' ? 'md-alt-row--white' : 'md-alt-row--black',
+        scoreStr,
+        isMate: pv.scoreType === 'mate',
+        share
+      });
+    }
+    dom.altsList.textContent = '';
+    if (rows.length === 0) {
+      dom.altsSection.hidden = true;
+      return;
+    }
+    rows.forEach((row, index) => {
+      const el = document.createElement('div');
+      el.className = `md-alt-row ${row.sideClass}`;
+      el.setAttribute('role', 'listitem');
+      el.style.setProperty('--i', String(index));
+      el.style.setProperty('--share', String(row.share));
+      const piece = document.createElement('span');
+      piece.className = 'md-alt-row__piece';
+      piece.setAttribute('aria-hidden', 'true');
+      piece.textContent = row.piece;
+      const san = document.createElement('span');
+      san.className = 'md-alt-row__san';
+      san.textContent = row.san;
+      const meter = document.createElement('span');
+      meter.className = 'md-alt-row__meter';
+      meter.title = `Keeps about ${row.share}% of the best line's value`;
+      const fill = document.createElement('span');
+      fill.className = 'md-alt-row__meter-fill';
+      meter.appendChild(fill);
+      const score = document.createElement('span');
+      score.className = 'md-alt-row__score' + (row.isMate ? ' is-mate' : '');
+      score.textContent = row.scoreStr;
+      el.append(piece, san, meter, score);
+      dom.altsList.appendChild(el);
+    });
+    dom.altsSection.hidden = false;
+  }
+
+  // "Nf3" → "knight"; supports O-O castling (king), captures, and promotions.
+  function sanPieceName(san) {
+    const s = String(san || '');
+    if (/^O-O/.test(s)) return 'king';
+    const letter = s.charAt(0);
+    const map = { N: 'knight', B: 'bishop', R: 'rook', Q: 'queen', K: 'king' };
+    return map[letter] || 'pawn';
+  }
+
+  function hideAlternatives() {
+    if (!dom.altsSection) return;
+    dom.altsSection.hidden = true;
+    if (dom.altsList) dom.altsList.textContent = '';
+  }
+
   // "White: knight: d1 → f3" becomes a piece-glyph + squares lockup.
   // Anything that isn't that shape falls back to plain text.
   const PIECE_GLYPHS = {
@@ -1438,31 +1712,35 @@
     }
     const [, side, pieceName, from, to] = match;
     const glyph = (PIECE_GLYPHS[side] || PIECE_GLYPHS.White)[pieceName] || '';
+    const pieceCls = side === 'White' ? 'is-white' : 'is-black';
     dom.hintFromTo.innerHTML =
-      `<span class="sq-piece">${glyph}</span>` +
+      `<span class="sq-piece ${pieceCls}">${glyph}</span>` +
       `<span class="sq">${h(from)}</span>` +
       `<span class="sq-arrow" aria-hidden="true">\u2192</span>` +
       `<span class="sq">${h(to)}</span>`;
+    const warningEl = document.getElementById('fair-play-warning');
+    if (warningEl) warningEl.style.display = 'none';
   }
 
   // ─── Hint Rendering ────────────────────────────────────────────────
   function renderHints(data) {
-    const warningEl = document.getElementById('fair-play-warning');
-    const warningText = document.getElementById('fair-play-warning-text');
     if (data.exactHintBlocked) {
       if (dom.hintText) dom.hintText.textContent = data.exactHintBlocked.message;
       if (dom.hintFromTo) dom.hintFromTo.style.display = 'none';
+      hideAlternatives();
       if (dom.hintCard) dom.hintCard.className = 'hint-card exact-move blocked';
       hideIdeaRail();
+      const warningEl = document.getElementById('fair-play-warning');
+      const warningText = document.getElementById('fair-play-warning-text');
       if (warningEl) warningEl.style.display = 'flex';
       if (warningText) warningText.textContent = data.exactHintBlocked.message;
       return;
     }
-    // A later successful analysis must clear a previously shown block.
-    if (warningEl) warningEl.style.display = 'none';
     if (!data.pvs || data.pvs.length === 0) {
       if (dom.hintText) dom.hintText.textContent = 'Waiting for analysis...';
+      if (dom.hintFromTo) dom.hintFromTo.style.display = 'none';
       hideIdeaRail();
+      hideAlternatives();
       return;
     }
 
@@ -1483,7 +1761,8 @@
       settings.humanLikeMode,
       {
         activePlan: humanPlanState?.activePlan || null,
-        earlyKingHuntEnabled: isEarlyKingHuntActive()
+        earlyKingHuntEnabled: isEarlyKingHuntActive(),
+        formSession: settings.humanLikeMode ? (data.formSession || null) : null
       }
     );
     if (settings.humanLikeMode && hints.styleAnalysis?.plan) {
@@ -1491,9 +1770,16 @@
     }
 
     if (dom.hintText) {
-      dom.hintText.textContent = hints.main;
-      dom.hintText.classList.add('fade-in');
-      setTimeout(() => dom.hintText.classList.remove('fade-in'), 300);
+      if (hints.bestMoveFromTo) {
+        // The lockup (big piece + squares) is the hero content — the SAN label
+        // would be redundant beside it, so it stays silent.
+        dom.hintText.textContent = '';
+        dom.hintText.classList.remove('fade-in');
+      } else {
+        dom.hintText.textContent = hints.main;
+        dom.hintText.classList.add('fade-in');
+        setTimeout(() => dom.hintText.classList.remove('fade-in'), 300);
+      }
     }
 
     const captions = Array.isArray(hints.captions) ? hints.captions.slice() : [];
@@ -1512,6 +1798,7 @@
       }
     }
     renderIdeaRail(captions);
+    renderAlternatives(data);
 
     if (dom.hintFromTo) {
       if (hints.bestMoveFromTo) {
@@ -1522,13 +1809,12 @@
       }
     }
 
-    // The hero wash is driven entirely by the hint-card state classes
-    // (.super-ultra-mode / .human-mode) — the CSS reads them via :has().
     if (dom.hintCard) {
       const styleClass = settings.style === 'super_ultra_aggressive' ? ' super-ultra-mode' : '';
       const humanClass = settings.humanLikeMode ? ' human-mode' : '';
       dom.hintCard.className = 'hint-card exact-move' + styleClass + humanClass;
     }
+
   }
 
   function renderMoveClassificationEmpty() {
@@ -1537,6 +1823,7 @@
     dom.moveClassSection.dataset.state = 'empty';
     dom.moveClassDisplay.innerHTML = `
       <div class="md-verdict__empty">
+        <span class="md-verdict__empty-icon" aria-hidden="true"></span>
         <p class="md-verdict__empty-text">Play a move to see how it rated</p>
       </div>
     `;
@@ -1560,6 +1847,11 @@
       moverText = isPlayerMover ? 'Your last move' : "Opponent's last move";
     }
 
+    // A settings change re-renders the same stored analysis; only a genuinely
+    // new classification earns the pop + count-up.
+    const isNewVerdict = dom.moveClassSection.dataset.verdictKey !== `${opts && opts.moveSan}|${cls.label}|${acc}`;
+    dom.moveClassSection.dataset.verdictKey = `${opts && opts.moveSan}|${cls.label}|${acc}`;
+
     dom.moveClassSection.dataset.verdict = cls.label.toLowerCase();
     dom.moveClassSection.dataset.state = 'data';
     const symbol = cls.symbol
@@ -1578,6 +1870,26 @@
         </span>
       </div>
     `;
+    if (isNewVerdict && !REDUCED_MOTION) {
+      dom.moveClassSection.classList.remove('pop');
+      void dom.moveClassSection.offsetHeight;
+      dom.moveClassSection.classList.add('pop');
+      const ringVal = dom.moveClassDisplay.querySelector('.md-verdict__ring-val');
+      if (ringVal) animateCountUp(ringVal, acc, 520);
+    }
+  }
+
+  // Small rAF count-up for the verdict accuracy figure. Ends exactly on the
+  // real value; skipped entirely under reduced motion.
+  function animateCountUp(el, target, duration) {
+    const start = performance.now();
+    const tick = (now) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);   // ease-out cubic
+      el.textContent = String(Math.round(eased * target));
+      if (t < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
   }
 
   // ─── Start ─────────────────────────────────────────────────────────

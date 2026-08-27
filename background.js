@@ -3,6 +3,7 @@ importScripts(
   'engine/api-coordinator.js',
   'engine/analysis-contract.js',
   'engine/analysis-policy.js',
+  'engine/human-form.js',
   'engine/local-engine.js'
 );
 
@@ -34,6 +35,8 @@ const DEFAULT_SETTINGS = {
   // Ultra Super Aggressive style before honoring this flag.
   earlyKingHuntEnabled: false,
   humanLikeMode: false,
+  // Sparring partner strength for "play human" mode (HumanForm anchors).
+  sparringStrength: 1100,
   autoAnalyze: true,
   showThreats: true,
   showCriticalMoments: true,
@@ -61,6 +64,8 @@ function normalizeSettings(value = {}) {
     ? migrated.style
     : DEFAULT_SETTINGS.style;
   for (const key of booleanKeys) normalized[key] = typeof migrated[key] === 'boolean' ? migrated[key] : DEFAULT_SETTINGS[key];
+  const strength = Math.round(Number(migrated.sparringStrength));
+  normalized.sparringStrength = Number.isFinite(strength) ? strength : DEFAULT_SETTINGS.sparringStrength;
   return normalized;
 }
 
@@ -301,17 +306,17 @@ function semanticSourceOrder(fen, settings = DEFAULT_SETTINGS) {
 }
 
 
-// ─── Engine-correlation / human-likeness guard ───────────────────────
+// ─── Engine-correlation coach ──────────────────────────────────────────
 // Stores the engine's first-choice UCI move keyed by FEN-of-side-to-move.
 // When the side panel is in human-like mode it also stores the human-natural
 // recommendation for the same FEN. A player move that blindly copies the
-// engine's exact top pick (while a different human recommendation was offered)
-// is flagged as "bot-like"; any natural or recommended move counts as
-// "sensible/human". This drives the fair-play-safe "Sensible moves" stat.
+// engine's exact top pick (while a different natural recommendation was
+// offered) is flagged as copying; any own or recommended move counts as
+// "sensible". This drives the training "Sensible moves" stat.
 const ENGINE_MOVE_BY_FEN_LIMIT = 200;
 const engineMoveByFen = new Map();
 const humanMoveByFen = new Map();
-const correlationWindow = []; // array of booleans (true = human-like move)
+const correlationWindow = []; // array of booleans (true = sensible move)
 let correlationMatches = 0;
 let correlationTotal = 0;
 
@@ -380,8 +385,7 @@ function recordPlayerMove(prevFen, payload) {
   let sensible;
   if (humanMove && humanMove !== engineTop) {
     // Human-like mode: a blind copy of the engine's exact top pick (ignoring
-    // the different human recommendation) is bot-like. Everything else —
-    // including the player's own natural move — is human and safe.
+    // the different natural recommendation) is copying, not thinking.
     sensible = playedUci !== engineTop;
   } else {
     // Standard mode: playing the suggested move is sensible play.
@@ -1262,18 +1266,28 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
       localOverride.openingData = bestResult.openingData || openingDataFromMastersResult(bestResult);
       localOverride.playerColor = playerColor;
       localOverride.moveHistory = options.moveHistory || [];
-      localOverride.humanContext = { source: usedSource, qualityClass: bestResult.qualityClass };
       return localOverride;
     }
   }
 
-  // Use cached opening data immediately. A remote enrichment is allowed only
-  // for a current, plausible opening while the panel feature is enabled and
-  // the low-priority budget still has capacity.
-  if (hasReliablePositionMetadata && settings.showOpeningExplorer === true && isPlausibleOpening(fen)) {
+  // Offline sparring realism: in "play human" mode, human-game statistics stay
+  // useful into the early middlegame, so explorer enrichment runs over the
+  // extended sparring range (moves ~1-18) instead of only plausible openings.
+  const sparringHuman = settings.humanLikeMode === true;
+  const enrichmentRangeOk = sparringHuman
+    ? AnalysisPolicy.isSparringRangeFen(fen)
+    : isPlausibleOpening(fen);
+  if (hasReliablePositionMetadata && settings.showOpeningExplorer === true && enrichmentRangeOk) {
     if (usedSource === 'masters-explorer') bestResult.openingData = openingDataFromMastersResult(bestResult);
     const cachedOpening = bestResult.openingData ? null : await apiCoordinator.getCached(openingCacheKey(fen), 'openingExplorer');
     if (cachedOpening?.ok) bestResult.openingData = cachedOpening.data;
+
+    // In sparring range, a cached player-explorer result also counts as usable
+    // popularity data even when it did not win source selection.
+    if (!bestResult.openingData && sparringHuman && usedSource !== 'opening-explorer') {
+      const sparringCachedOpening = await apiCoordinator.getCached(openingCacheKey(fen), 'openingExplorer');
+      if (sparringCachedOpening?.ok) bestResult.openingData = sparringCachedOpening.data;
+    }
 
     const shouldEnrich = !bestResult.openingData && usedSource !== 'masters-explorer' &&
       apiCoordinator.isPositionCurrent(positionToken) &&
@@ -1289,7 +1303,27 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
     }
   }
 
+  // Attach the deterministic form session so the panel's style/human-like
+  // selection uses exactly the same parameters the background computed.
+  if (sparringHuman) {
+    bestResult.formSession = getFormSession(settings);
+  }
+
   return bestResult;
+}
+
+// ─── Sparring form session ─────────────────────────────────────────────
+// One stable session per game, keyed by the correlation tracker's game id.
+// Deterministic given the game: re-analyzing a position never re-rolls form.
+function getFormSession(settings) {
+  const humanForm = (typeof self !== 'undefined' && self.HumanForm) ||
+    (typeof globalThis !== 'undefined' ? globalThis.HumanForm : null);
+  if (!humanForm) return null;
+  const rating = Number(settings.sparringStrength) || humanForm.RATING_DEFAULT;
+  return humanForm.createSession({
+    rating,
+    seed: `game-${lastAnalysisGameId || 'default'}`
+  });
 }
 
 // ─── Error Classification for User-Friendly Messages ─────────────────
@@ -1702,9 +1736,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
-  // The side panel reports the human-natural move it actually recommended
-  // (from its style/human-like selection), so the correlation guard can
-  // distinguish human-like play from blind engine-top copies.
+  // The side panel reports the natural move it actually recommended
+  // (from its style/human-like selection), so the coach can distinguish
+  // the player's own choices from blind engine-top copies.
   if (msgType === 'record_human_recommendation') {
     recordHumanRecommendation(message.fen, message.uci);
     sendResponse({ ok: true });
@@ -1753,6 +1787,12 @@ chrome.runtime.onInstalled.addListener(() => {
       }
 
       if (s.humanLikeMode === undefined) { s.humanLikeMode = false; updated = true; }
+      if (s.sparringStrength === undefined) { s.sparringStrength = 1100; updated = true; }
+      else {
+        const strength = Math.round(Number(s.sparringStrength));
+        s.sparringStrength = Number.isFinite(strength) ? strength : 1100;
+        if (s.sparringStrength !== strength) updated = true;
+      }
       if (s.earlyKingHuntEnabled === undefined) { s.earlyKingHuntEnabled = false; updated = true; }
       else if (typeof s.earlyKingHuntEnabled !== 'boolean') { s.earlyKingHuntEnabled = Boolean(s.earlyKingHuntEnabled); updated = true; }
       if (s.hintLevel !== undefined) { delete s.hintLevel; updated = true; }

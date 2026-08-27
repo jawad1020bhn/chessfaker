@@ -2,6 +2,41 @@
 
 Greenfield UI for the Chess Coach side panel. The previous layout is not a source.
 
+## Depth pass (v13, this revision)
+
+New surfaces on the same tokens — no new direction, more depth per surface.
+
+- **The hero teaches when there is nothing to show.** A dedicated welcome
+  state (`#hero-welcome`) replaces the dead "Waiting for a board…" string:
+  a knight on a morphing pedestal blob (the brand mark's idle animation,
+  reused), a short title, and one sentence of instruction. It hides the
+  moment any board exists; every other hero state plays over it.
+- **Balance gained a memory.** A 28dp sparkline under the ribbon draws the
+  recent evaluation swing from the `evalHistory` the controller already
+  keeps (last 20 analyses, White's perspective, clamped ±6 pawns, dashed
+  zero line, end dot). It stays hidden until two points exist, so early
+  positions stay calm. New tile states: `data-state="stale"` dims the
+  side labels.
+- **"Also consider" — alternatives as information, not buttons.** Candidate
+  PVs beyond the recommendation render read-only in the caption-rail
+  dialect: piece glyph chip (piece-identity colors), SAN, a thin
+  share-of-best meter that springs in staggered, and a tabular score.
+  Mate scores carry tertiary urgency. Lines keeping <70% of the best
+  line's value are dropped — real alternatives only, max three rows.
+- **Verdicts land with weight.** A fresh classification pops the stage once
+  on the spatial spring and counts the accuracy figure up from zero
+  (ease-out cubic, ~520ms). Re-renders of the same stored analysis
+  (settings changes) are fingerprinted and replay silently. Reduced
+  motion skips both.
+- **The app bar earns its keep on scroll.** One rAF-throttled listener
+  flips `.is-scrolled`; CSS adds a hairline edge + container tint so
+  scrolled content doesn't collide with the identity row.
+- **Toasts dismiss by hand.** Pointer-drag a toast sideways past ~56px and
+  it flings out with spring physics; below threshold it springs home.
+  Timer dismissal now checks `isConnected` so a swiped toast can't exit twice.
+- **Settings sheet stamps its version** (`Felt · v13.0.0`, read live from
+  the manifest) so bug reports self-identify.
+
 ## Product jobs
 
 1. Read the recommended move in under a second.
@@ -44,12 +79,44 @@ transformed, and `--eval-pct` was written to the bar instead of the tile the
 fulcrum inherits from. The HTML, CSS, and JS now implement one contract each,
 and `tests/panel-wiring.test.js` locks the three layers together so a future
 edit cannot silently disconnect them again. The win-probability breakdown
-(`You 52% · Opp 48%`) is a pair of opposite-identity chips inside the meter
-itself — each chip inverts against the half it sits on (inverse-surface over
-White's light fill, lightest-surface over Black's inverse-surface remainder,
-with a hairline ring) so the figures stay legible on both halves in both
-themes, mirroring the light/dark piece identity — and it never competes
+(`You 52% · Opp 48%`) is a pair of inverse-surface pills inside the meter
+itself — one per side, following the player's color — so it never competes
 with the ribbon side labels, which carry the +/- score.
+
+## Quality pass (this revision)
+
+A consistency and contrast sweep over the same tokens — no new direction.
+
+- **Role-retint is total — but type stays neutral.** Every muted/emphasized
+  text inside the Balance and Last-move tiles reads `--balance-role-muted/fg`
+  and `--verdict-role-muted/fg`, and those resolve to the surface tokens so
+  the words always render in the default white/grey. A `you`/`opp`/verdict
+  retint recolors the *container* (and the fulcrum / ring arc) only — the
+  text color never shifts to match a red or green box.
+- **Loading shimmers, it doesn't wait.** The Balance tile's skeleton
+  shimmer (`.md-skeleton`) is now wired into `setBalanceLoadingState` for
+  first analyses; re-analyses keep the previous numbers under
+  "Analyzing position…".
+- **Dead accent plumbing removed.** The `--hint-accent` writes and the
+  `--accent-gold/aggressive/super-ultra` aliases are gone; the mode wash is
+  container color only. `--accent-yellow` now maps to the tertiary token so
+  the correlation stat keeps contrast in dark mode.
+- **Shape scale grew one rung.** `--md-sys-shape-xxl: 48px` (M3 Expressive
+  extra-extra-large) for the shortcuts sheet; the sheet's corner radius
+  reads 48 top / 36 bottom. Wrapping segmented groups round their sliding
+  pill with `xl` instead of a full-pill bulge.
+- **Motion completes both ways.** Toasts enter (not just exit), the settings
+  sheet and shortcuts dialog animate out, and the dialog gains a scrim fade.
+  Reduced-motion users skip the close delays entirely.
+- **Shortcuts dialog is modal for real.** Scrim click closes, Tab traps
+  inside, focus moves to the close button on open and returns to Settings
+  on close.
+- **Micro-polish.** Material-symbol masks replace the toast font glyphs;
+  the verdict ghost state gets a pawn-in-blob; the Ultra-only Early King
+  Hunt row rises in on reveal; `.md-btn` gains tonal/outlined hover layers;
+  the style choice cards rove with arrow keys like every other radiogroup;
+  good verdicts (best/excellent/good) share the rounded organic radius of
+  brilliant/great instead of falling back to the neutral shape.
 
 ## Expressive tactics used
 
@@ -85,6 +152,7 @@ effects curve for color/opacity.
 - **Status row** — morphing loader while analyzing; turn line with state tint
 - **Hero** — primary container; switches to secondary (human) or tertiary (ultra); displays only the SAN move
 - **Caption rail** — "Why this move": idea, capture/sacrifice, cost, risk, king-hunt, balance posture
+- **Alternatives rail** — "Also consider": read-only candidate lines with piece chip + share-of-best meter
 - **Squares lockup** — piece glyph + from/to square chips inside the hero
 - **Balance tile** — content-first scorecard: kicker + prose description;
   a 32dp dual-identity ribbon (white fill from the left, inverse-surface remainder)
@@ -112,53 +180,6 @@ effects curve for color/opacity.
 - `prefers-reduced-motion` disables springs
 - Settings and shortcuts are modal dialogs with focus trap and Escape
 - All segmented radiogroups support arrow-key roving (APG)
-
-## Quality pass (this revision)
-
-Fixes that close the gaps between the documented system and the shipped UI.
-
-- **Role tokens are now consumed, not just declared.** `--balance-role-muted`
-  and `--verdict-role-muted` were defined but every consumer used a hardcoded
-  `on-surface-variant` / `on-surface`, leaving grey stragglers over colored
-  containers when a tile leaned or a verdict landed. Kickers, descriptions,
-  the stale badge, mover line, metric, verdict word and the accuracy ring
-  now all read the tile's own `-role-fg` / `-role-muted` tokens.
-- **Meter chips are legible on both halves in both themes** (see Balance).
-- **Hero display type is a single canonical token.** The redundant
-  `md-typescale-display-sm-em` class was removed from the move line (it was
-  silently overridden by `.hint-text`'s clamp); the hero now renders at a
-  true display scale, `clamp(1.75rem, 7vw, 2.25rem)`.
-- **Dead wires removed.** `--hint-accent` (JS wrote it, CSS never read it),
-  `--hero-shift`, the empty `:has()` rule, and the `--accent-gold /
-  --accent-aggressive / --accent-super-ultra` aliases that only fed it.
-  `--accent-yellow` is now a token reference (`tertiary`) so the correlation
-  stat keeps contrast in dark mode.
-- **Style-scoped controls actually hide.** Author `display: flex` was
-  overriding the UA `[hidden]` rule, so the Early King Hunt row stayed
-  visible (disabled) outside Ultra attack. `.md-switch-row[hidden]` now
-  wins, matching the existing `.md-idea[hidden]` precedent.
-- **Skeleton shimmer is wired.** The `.md-skeleton` rule existed but no state
-  used it; the Balance loading state now renders a shimmer placeholder in
-  the description line for fresh positions (keeps prior scores on refresh).
-- **Fulcrum travel is clamped** (5–95%) so a one-sided score never pushes
-  the 22px marker off the edge of the meter.
-- **Motion is symmetric.** The settings sheet and the shortcuts dialog now
-  animate out (settle on the effects curve) as well as in (rise on the
-  spatial spring) — no hard cuts on either side; the status dot fades
-  between states instead of snapping.
-- **Interaction + keyboard polish.** The dialog scrim closes the shortcuts
-  sheet (it previously did nothing); the shortcuts dialog traps Tab and
-  restores focus on close; the hidden settings `<select>`s and the
-  human-mode checkbox are no longer tabbable; the style choice cards got
-  APG roving (arrow keys) and roving tabindex like every other radiogroup;
-  segmented items grew to a 40px hit height; the fair-play warning banner
-  clears itself once analysis succeeds again.
-- **Coherence nits.** Settings section headings are `on-surface` like the
-  canvas headings (brand green is reserved for states, choices and the
-  hero); the toast joined the organic radius family (it was the only 4px
-  corner in the system); diagnostics figures are tabular-nums; the turn
-  line's `pending` state got its outline tint to complete the
-  verified / partial / pending story.
 
 ## Dev preview
 

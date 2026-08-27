@@ -16,6 +16,7 @@
   --md-sys-shape-lg: 16px;
   --md-sys-shape-xl: 28px;
   --md-sys-shape-xl-inc: 36px;
+  --md-sys-shape-xxl: 48px;   /* Expressive extra-extra-large — sheets, dialogs */
   --md-sys-shape-full: 999px;
 
   /* ── Motion ── */
@@ -69,9 +70,8 @@
   --md-sys-color-scrim: #000000;
   --md-sys-color-shadow: #000000;
 
-  /* Aliases for JS-set inline accents — all theme-aware token references,
-     so a value that reads green/amber/red in light mode keeps contrast in
-     dark mode too (no hardcoded light-theme hexes). */
+  /* Legacy aliases used by existing JS inline styles — mapped onto live
+     tokens so dark mode keeps contrast (yellow follows tertiary). */
   --accent-green: var(--md-sys-color-primary);
   --accent-yellow: var(--md-sys-color-tertiary);
   --accent-red: var(--md-sys-color-error);
@@ -338,6 +338,12 @@ body {
   color: var(--md-sys-color-primary);
   border: 1px solid var(--md-sys-color-outline);
 }
+.md-btn--tonal:hover {
+  background: color-mix(in oklab, var(--md-sys-color-on-secondary-container) 8%, var(--md-sys-color-secondary-container));
+}
+.md-btn--outlined:hover {
+  background: color-mix(in oklab, var(--md-sys-color-primary) 8%, transparent);
+}
 .md-btn:disabled { opacity: 0.38; cursor: not-allowed; }
 .md-btn-row { display: flex; gap: var(--md-sys-space-2); flex-wrap: wrap; margin-top: var(--md-sys-space-4); }
 
@@ -378,6 +384,11 @@ body {
 }
 .md-segmented.is-ready .md-segmented__indicator { opacity: 1; }
 
+/* A wrapping group (e.g. quality on narrow panels) can make the pill a wide
+   rectangle — a full-pill radius would bulge it. Follow the container's
+   extra-large rounding instead. */
+.md-btn-group--wrap .md-segmented__indicator { border-radius: var(--md-sys-shape-xl); }
+
 .md-btn-group__item {
   appearance: none;
   position: relative;
@@ -393,7 +404,7 @@ body {
   font-size: 0.75rem;
   font-weight: 650;
   padding: 8px 12px;
-  min-height: 40px;
+  min-height: 36px;
   border-radius: var(--md-sys-shape-full);
   cursor: pointer;
   transition:
@@ -403,23 +414,10 @@ body {
 .md-btn-group__item:hover { color: var(--md-sys-color-on-surface); }
 .md-btn-group__item:active { transform: scale(0.92); }
 .md-btn-group__item.is-selected,
-.md-btn-group__item[aria-checked="true"],
-.player-btn.active {
+.md-btn-group__item[aria-checked="true"] {
   color: var(--seg-role-fg, var(--md-sys-color-on-secondary-container));
 }
 
-/* Side selector — the pill itself carries the chess-piece identity:
-   a light piece pill for White, a dark piece pill for Black. */
-#player-selector {
-  --seg-role-bg: var(--md-piece-light);
-  --seg-role-fg: var(--md-piece-light-on);
-  --seg-ring: inset 0 0 0 1.5px var(--md-sys-color-outline-variant);
-}
-#player-selector[data-selected="b"] {
-  --seg-role-bg: var(--md-sys-color-inverse-surface);
-  --seg-role-fg: var(--md-sys-color-inverse-on-surface);
-  --seg-ring: none;
-}
 .piece-dot {
   width: 10px;
   height: 10px;
@@ -430,9 +428,74 @@ body {
 }
 .piece-dot--light { background: var(--md-piece-light); border: 1.5px solid var(--md-sys-color-outline); }
 .piece-dot--dark { background: var(--md-piece-light-on); border: 1.5px solid transparent; }
-.player-btn[aria-checked="true"] .piece-dot { transform: scale(1.2); }
-.player-btn[data-color="w"][aria-checked="true"] .piece-dot--light { border-color: var(--md-sys-color-on-surface); }
-.player-btn[data-color="b"][aria-checked="true"] .piece-dot--dark { border-color: var(--md-piece-light); }
+
+/* ── Side selector: the piece switch ──
+   A real M3 switch: a compact pill track with a circular thumb that springs
+   between sides. Both kings are drawn on the track ends (inline SVG, always
+   visible) so the meaning never hides; the thumb carries the coached king and
+   repaints to that side's piece color. The track tints toward the piece tone
+   on state. Driven purely by data-selected — no JS measuring. */
+.md-side-switch {
+  position: relative;
+  width: 76px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: var(--md-sys-shape-full);
+  background: var(--side-track, var(--md-sys-color-surface-container-high));
+  border: 1px solid var(--md-sys-color-outline-variant);
+  transition: background-color var(--md-sys-motion-med) var(--md-sys-motion-effects);
+}
+.md-side-switch[data-selected="w"] {
+  --side-track: color-mix(in oklab, var(--md-piece-light) 24%, var(--md-sys-color-surface-container-high));
+  --side-bg: var(--md-piece-light);
+  --side-fg: var(--md-piece-light-on);
+}
+.md-side-switch[data-selected="b"] {
+  --side-track: color-mix(in oklab, var(--md-piece-light-on) 28%, var(--md-sys-color-surface-container-high));
+  --side-bg: var(--md-piece-light-on);
+  --side-fg: var(--md-piece-light);
+}
+.md-side-switch__thumb {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--side-bg);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.35), inset 0 0 0 0.5px rgb(255 255 255 / 0.15);
+  pointer-events: none;
+  transition:
+    transform var(--md-sys-motion-med) var(--md-sys-motion-spatial),
+    background-color var(--md-sys-motion-med) var(--md-sys-motion-effects);
+  will-change: transform;
+}
+.md-side-switch[data-selected="b"] .md-side-switch__thumb { transform: translateX(32px); }
+.md-side-switch__king {
+  width: 22px;
+  height: 22px;
+  color: var(--side-fg);
+  transition:
+    color var(--md-sys-motion-fast) var(--md-sys-motion-effects),
+    transform var(--md-sys-motion-med) var(--md-sys-motion-spatial);
+}
+.md-side-switch__hit {
+  appearance: none;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 50%;
+  border: 0;
+  background: transparent;
+  z-index: 1;
+  cursor: pointer;
+}
+.md-side-switch__hit[data-color="w"] { left: 0; border-radius: var(--md-sys-shape-full) 0 0 var(--md-sys-shape-full); }
+.md-side-switch__hit[data-color="b"] { right: 0; border-radius: 0 var(--md-sys-shape-full) var(--md-sys-shape-full) 0; }
+.md-side-switch__hit:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
 
 /* ── Status ── */
 .md-status {
@@ -452,7 +515,6 @@ body {
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
-  transition: background-color var(--md-sys-motion-fast) var(--md-sys-motion-effects);
 }
 .status-dot.offline, .status-dot.error { background: var(--md-sys-color-error); }
 .status-dot.connecting, .status-dot.analyzing { background: var(--md-sys-color-tertiary); }
@@ -478,7 +540,6 @@ body {
 .context-turn { transition: color var(--md-sys-motion-fast) var(--md-sys-motion-effects); }
 #position-context.verified .context-turn { color: var(--md-sys-color-primary); }
 #position-context.partial .context-turn { color: var(--md-sys-color-tertiary); }
-#position-context.pending .context-turn { color: var(--md-sys-color-outline); }
 
 /* ── Canvas ── */
 .md-canvas {
@@ -496,7 +557,7 @@ body {
   padding: var(--md-sys-space-5);
   border-radius: var(--md-sys-shape-xl-inc);
   background: var(--md-sys-color-primary-container);
-  color: var(--md-sys-color-on-primary-container);
+  color: var(--md-sys-color-on-surface);
   min-height: 148px;
   overflow: hidden;
   transition: background-color var(--md-sys-motion-med) var(--md-sys-motion-effects),
@@ -528,12 +589,10 @@ body {
 }
 .md-hero__meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--md-sys-space-2); position: relative; z-index: 1; }
 .md-hero__kicker { opacity: 0.78; letter-spacing: 0.12em; }
-.md-hero__stage { position: relative; z-index: 1; min-height: 84px; }
+.md-hero__stage { position: relative; z-index: 1; min-height: 84px; text-align: center; }
 .hint-text {
   font-family: var(--md-ref-typeface-brand);
-  /* The move is the only display type on the canvas. True display scale
-     (≈ display-sm), responsive so long SAN never crowds the stage. */
-  font-size: clamp(1.75rem, 7vw, 2.25rem);
+  font-size: clamp(1.6rem, 6vw, 2.2rem);
   font-weight: 800;
   letter-spacing: -0.03em;
   line-height: 1.15;
@@ -544,38 +603,75 @@ body {
   from { opacity: 0.2; transform: translateY(8px) scale(0.98); }
   to { opacity: 1; transform: none; }
 }
-.md-hero__squares,
+/* ── Move lockup ─────────────────────────────────────────────────
+   The hero lead-in. A big rendered piece on top, then the squares as
+   a large centered lockup: "♖" / "a1 → e1". */
 .hint-fromto {
-  margin-top: var(--md-sys-space-3);
-  display: inline-flex;
+  margin-top: var(--md-sys-space-2);
+  display: grid;
+  grid-template-columns: auto auto auto;
+  justify-content: center;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-radius: var(--md-sys-shape-full);
-  background: color-mix(in oklab, currentColor 10%, transparent);
+  column-gap: 10px;
+  row-gap: 8px;
+  width: 100%;
+  text-align: center;
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
-  font-size: 0.75rem;
-  font-weight: 700;
-  transition: background-color var(--md-sys-motion-med) var(--md-sys-motion-effects);
 }
-.sq-piece { font-size: 1.05rem; line-height: 1; margin-right: 2px; }
+/* The moving piece — rendered large with a soft studio drop. */
+.sq-piece {
+  grid-column: 1 / -1;
+  justify-self: center;
+  font-family: var(--md-ref-typeface-brand);
+  font-size: 3.75rem;
+  line-height: 1;
+  transform: translateY(0.04em);
+  animation: mdHeroPieceLift 560ms var(--md-sys-motion-spatial) both;
+}
+.sq-piece.is-white {
+  color: var(--md-piece-light);
+  filter: drop-shadow(0 3px 5px color-mix(in oklab, var(--md-sys-color-on-surface) 45%, transparent));
+}
+.sq-piece.is-black {
+  color: var(--md-piece-light-on);
+  filter: drop-shadow(0 3px 5px color-mix(in oklab, white 14%, transparent));
+}
+/* Squares lockup — big, bold, centered chips joined by an arrow. */
 .sq {
-  padding: 2px 7px;
-  border-radius: var(--md-sys-shape-sm);
+  display: inline-grid;
+  place-items: center;
+  padding: 8px 14px;
+  border-radius: var(--md-sys-shape-md);
   background: color-mix(in oklab, currentColor 13%, transparent);
+  border: 1px solid color-mix(in oklab, currentColor 20%, transparent);
+  font-size: 1.3rem;
+  font-weight: 800;
   letter-spacing: 0.04em;
-  transition: background-color var(--md-sys-motion-med) var(--md-sys-motion-effects);
+  transition:
+    background-color var(--md-sys-motion-med) var(--md-sys-motion-effects),
+    border-color var(--md-sys-motion-med) var(--md-sys-motion-effects);
 }
-.sq-arrow { opacity: 0.66; font-weight: 500; }
+.sq-arrow {
+  font-size: 1.7rem;
+  font-weight: 600;
+  opacity: 0.75;
+  line-height: 1;
+}
+@keyframes mdHeroPieceLift {
+  from { transform: translateY(10px) scale(0.86); opacity: 0; }
+  to { transform: translateY(0.04em); opacity: 1; }
+}
 .hint-card.blocked .hint-text { color: var(--md-sys-color-error); }
-/* Aggression / human voice washes the whole hero in its role container. */
+.hint-card.super-ultra-mode { --hero-shift: 8deg; }
+.hint-card.super-ultra-mode ~ .md-hero__meta,
+.md-hero:has(.super-ultra-mode) {
+  /* hero already uses container color; aggression is a tertiary wash */
+}
 .md-hero:has(.super-ultra-mode) {
   background: var(--md-sys-color-tertiary-container);
-  color: var(--md-sys-color-on-tertiary-container);
 }
 .md-hero:has(.human-mode) {
   background: var(--md-sys-color-secondary-container);
-  color: var(--md-sys-color-on-secondary-container);
 }
 
 /* ── Caption rail (The idea) ──
@@ -693,16 +789,15 @@ body {
     color var(--md-sys-motion-med) var(--md-sys-motion-effects),
     border-radius var(--md-sys-motion-slow) var(--md-sys-motion-spatial);
 }
+/* Lean retints the container only. Foreground stays on the neutral
+   surface tokens so the text reads white/grey no matter how red or green
+   the box becomes. */
 .md-balance[data-lean="you"] {
   --balance-role-bg: var(--md-sys-color-primary-container);
-  --balance-role-fg: var(--md-sys-color-on-primary-container);
-  --balance-role-muted: color-mix(in oklab, var(--md-sys-color-on-primary-container) 72%, transparent);
   border-radius: 36px 24px 32px 20px;
 }
 .md-balance[data-lean="opp"] {
   --balance-role-bg: var(--md-sys-color-error-container);
-  --balance-role-fg: var(--md-sys-color-on-error-container);
-  --balance-role-muted: color-mix(in oklab, var(--md-sys-color-on-error-container) 72%, transparent);
   border-radius: 20px 34px 18px 36px;
 }
 .md-balance__orb {
@@ -733,9 +828,8 @@ body {
   justify-content: space-between;
   gap: 8px;
 }
-/* All secondary text on the tile reads the tile's own role tokens, so a
-   lean retint recolors the whole surface — kicker, description, badge and
-   side labels travel together (no grey stragglers over role containers). */
+/* Muted text follows the tile's live role, so a "you"/"opp" retint never
+   strands the kicker or description on a mismatched on-surface-variant. */
 .md-balance__kicker { color: var(--balance-role-muted); letter-spacing: 0.12em; }
 .md-balance__stale {
   display: inline-flex;
@@ -775,30 +869,63 @@ body {
   100% { background-position: -200% 0; }
 }
 .md-balance__ribbon { position: relative; z-index: 1; margin-top: var(--md-sys-space-5); }
+
+/* The beam: an M3-expressive meter with a slightly bulged, asymmetric
+   silhouette instead of a perfect pill — it reads as a sculpted object, not
+   a flat progress bar. A soft sheen sweeps across, and a center tick marks
+   the equal-split "zero" point. */
 .eval-bar {
   position: relative;
-  height: 32px;
-  border-radius: var(--md-sys-shape-full);
+  height: 36px;
+  border-radius: 34px 26px 30px 22px;
   overflow: visible;
   display: flex;
-  background: var(--md-sys-color-inverse-surface);
-  box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--md-sys-color-outline) 22%, transparent);
+  background: linear-gradient(
+    180deg,
+    var(--md-sys-color-inverse-surface),
+    color-mix(in oklab, var(--md-sys-color-inverse-surface) 86%, var(--md-sys-color-outline) 14%)
+  );
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 26%, transparent),
+    inset 0 0 0 1.5px color-mix(in oklab, var(--md-sys-color-outline) 20%, transparent),
+    0 2px 12px color-mix(in oklab, var(--md-sys-color-shadow) 20%, transparent);
+}
+.eval-bar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent 6%, color-mix(in oklab, white 14%, transparent) 42%, transparent 74%);
+  pointer-events: none;
+}
+.eval-bar::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: 50%;
+  width: 2px;
+  border-radius: 2px;
+  background: color-mix(in oklab, var(--md-sys-color-outline-variant) 85%, transparent);
+  transform: translateX(-0.5px);
+  pointer-events: none;
 }
 .eval-bar-white {
-  background: var(--md-piece-light);
+  background: linear-gradient(
+    180deg,
+    var(--md-piece-light),
+    color-mix(in oklab, var(--md-piece-light) 88%, var(--md-piece-light-on))
+  );
   width: 100%;
   height: 100%;
   border-radius: inherit;
   transform-origin: left center;
+  box-shadow: inset -2px 0 6px color-mix(in oklab, var(--md-piece-light-on) 16%, transparent);
   transition: transform var(--md-sys-motion-slow) var(--md-sys-motion-spatial);
 }
-/* The win-probability breakdown lives inside the meter: one chip per side.
-   Each chip inverts against the half it sits on — the left chip is the
-   inverse surface over White's light fill, the right chip is the lightest
-   surface over Black's inverse-surface remainder. That keeps a legible
-   figure on both halves in both themes, and mirrors the light/dark piece
-   identity used everywhere else. A hairline ring keeps the chip defined
-   even when its fill and the meter half share a value. */
+/* The win-probability breakdown lives inside the meter: a pill on each side
+   ("You 52%" / "Opp 48%"). The inverse-surface chip keeps legible contrast
+   over both the white fill and the dark remainder of the track. */
 .eval-bar-pct {
   position: absolute;
   top: 50%;
@@ -806,6 +933,9 @@ body {
   z-index: 2;
   padding: 3px 8px;
   border-radius: var(--md-sys-shape-full);
+  background: var(--md-sys-color-inverse-surface);
+  color: var(--md-sys-color-inverse-on-surface);
+  box-shadow: 0 1px 3px color-mix(in oklab, var(--md-sys-color-shadow) 24%, transparent);
   font-family: var(--md-ref-typeface-brand);
   font-size: 0.6875rem;
   font-weight: 800;
@@ -814,19 +944,10 @@ body {
   line-height: 1;
   white-space: nowrap;
   pointer-events: none;
-  box-shadow: inset 0 0 0 1px var(--md-sys-color-outline-variant);
   transition: opacity var(--md-sys-motion-fast) var(--md-sys-motion-effects);
 }
-.eval-bar-pct--left {
-  left: 6px;
-  background: var(--md-sys-color-inverse-surface);
-  color: var(--md-sys-color-inverse-on-surface);
-}
-.eval-bar-pct--right {
-  right: 6px;
-  background: var(--md-sys-color-surface-container-lowest);
-  color: var(--md-sys-color-on-surface);
-}
+.eval-bar-pct--left { left: 6px; }
+.eval-bar-pct--right { right: 6px; }
 /* No live analysis yet — the meter stays a silent placeholder and the
    breakdown pills fade out. */
 .md-balance[data-state="empty"] .eval-bar-pct,
@@ -835,16 +956,20 @@ body {
   opacity: 0;
 }
 /* The morphing fulcrum rides the White/Black split. `--eval-pct` is set on
-   the tile (an ancestor) so the value inherits down to this absolute child. */
+   the tile (an ancestor) so the value inherits down to this absolute child.
+   It reads as a weight resting on the beam: a light halo ring (the beam's
+   color) plus a tonal core with the leading side's role color. */
 .md-balance__fulcrum {
   position: absolute;
   top: 50%;
   left: calc(var(--eval-pct, 50) * 1%);
-  width: 22px;
-  height: 22px;
-  border-radius: 42% 58% 50% 50%;
+  width: 24px;
+  height: 24px;
+  border-radius: 44% 56% 48% 52%;
   background: var(--md-sys-color-primary);
-  box-shadow: 0 4px 12px color-mix(in oklab, var(--md-sys-color-shadow) 28%, transparent);
+  box-shadow:
+    0 0 0 5px color-mix(in oklab, var(--md-sys-color-inverse-surface) 72%, transparent),
+    0 6px 16px color-mix(in oklab, var(--md-sys-color-shadow) 32%, transparent);
   transform: translate(-50%, -50%);
   transition:
     left var(--md-sys-motion-slow) var(--md-sys-motion-spatial),
@@ -853,14 +978,28 @@ body {
   pointer-events: none;
   animation: mdShapeIdle 7s var(--md-sys-motion-effects) infinite;
 }
+.md-balance__fulcrum::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--md-sys-color-on-primary);
+  transform: translate(-50%, -50%);
+  transition: background-color var(--md-sys-motion-fast) var(--md-sys-motion-effects);
+}
 .md-balance[data-lean="you"] .md-balance__fulcrum {
   background: var(--md-sys-color-primary);
   border-radius: 58% 42% 38% 62%;
 }
+.md-balance[data-lean="you"] .md-balance__fulcrum::after { background: var(--md-sys-color-on-primary); }
 .md-balance[data-lean="opp"] .md-balance__fulcrum {
   background: var(--md-sys-color-error);
   border-radius: 32% 68% 55% 45%;
 }
+.md-balance[data-lean="opp"] .md-balance__fulcrum::after { background: var(--md-sys-color-on-error); }
 .eval-labels {
   display: flex;
   justify-content: space-between;
@@ -875,7 +1014,8 @@ body {
   min-height: 28px;
 }
 /* Both side labels carry the same emphasized weight — the piece dots carry
-   identity, so neither side is muted into secondary status. */
+   identity, so neither side is muted into secondary status. The color still
+   follows the tile's live role so a lean retint keeps full contrast. */
 .eval-label {
   font-weight: 750;
   color: var(--balance-role-fg);
@@ -915,7 +1055,7 @@ body {
 }
 .md-banner--error .md-banner__icon { -webkit-mask-image: var(--md-icon-error); mask-image: var(--md-icon-error); }
 .md-banner__kicker { opacity: 0.8; margin-bottom: 4px; }
-.critical-moment-section { position: relative; padding-right: 44px; }
+.critical-moment-section { position: relative; padding-right: 44px; color: var(--md-sys-color-on-surface); }
 .md-banner__icon--float {
   position: absolute;
   top: 12px;
@@ -957,8 +1097,8 @@ body {
    ring. Shape gets sharper as the verdict worsens. */
 .md-verdict {
   --verdict-role-bg: var(--md-sys-color-secondary-container);
-  --verdict-role-fg: var(--md-sys-color-on-secondary-container);
-  --verdict-role-muted: color-mix(in oklab, var(--md-sys-color-on-secondary-container) 72%, transparent);
+  --verdict-role-fg: var(--md-sys-color-on-surface);
+  --verdict-role-muted: var(--md-sys-color-on-surface-variant);
   --verdict-ring: var(--md-sys-color-primary);
   position: relative;
   overflow: hidden;
@@ -974,38 +1114,33 @@ body {
 .md-verdict[data-verdict="none"],
 .md-verdict[data-verdict="empty"] {
   --verdict-role-bg: var(--md-sys-color-surface-container-lowest);
-  --verdict-role-fg: var(--md-sys-color-on-surface);
-  --verdict-role-muted: var(--md-sys-color-on-surface-variant);
   border-radius: 28px 34px 24px 30px;
 }
+/* Verdict retints the container only — the type always stays on the neutral
+   surface tokens (white/grey) so it reads the same over green, amber, or red. */
 .md-verdict[data-verdict="brilliant"],
 .md-verdict[data-verdict="great"] {
   --verdict-role-bg: var(--md-sys-color-primary-container);
-  --verdict-role-fg: var(--md-sys-color-on-primary-container);
-  --verdict-role-muted: color-mix(in oklab, var(--md-sys-color-on-primary-container) 72%, transparent);
   --verdict-ring: var(--md-sys-color-primary);
   border-radius: 36px 22px 34px 18px;
 }
+/* Every good verdict shares the rounded organic shape — the radius only
+   sharpens when the move gets worse. */
 .md-verdict[data-verdict="best"],
 .md-verdict[data-verdict="excellent"],
 .md-verdict[data-verdict="good"] {
   --verdict-role-bg: var(--md-sys-color-primary-container);
-  --verdict-role-fg: var(--md-sys-color-on-primary-container);
-  --verdict-role-muted: color-mix(in oklab, var(--md-sys-color-on-primary-container) 72%, transparent);
   --verdict-ring: var(--md-sys-color-primary);
+  border-radius: 34px 24px 36px 22px;
 }
 .md-verdict[data-verdict="inaccuracy"],
 .md-verdict[data-verdict="mistake"] {
   --verdict-role-bg: var(--md-sys-color-tertiary-container);
-  --verdict-role-fg: var(--md-sys-color-on-tertiary-container);
-  --verdict-role-muted: color-mix(in oklab, var(--md-sys-color-on-tertiary-container) 72%, transparent);
   --verdict-ring: var(--md-sys-color-tertiary);
   border-radius: 20px 28px 16px 32px;
 }
 .md-verdict[data-verdict="blunder"] {
   --verdict-role-bg: var(--md-sys-color-error-container);
-  --verdict-role-fg: var(--md-sys-color-on-error-container);
-  --verdict-role-muted: color-mix(in oklab, var(--md-sys-color-on-error-container) 72%, transparent);
   --verdict-ring: var(--md-sys-color-error);
   border-radius: 16px 28px 14px 24px;
 }
@@ -1040,14 +1175,30 @@ body {
   padding: var(--md-sys-space-2) 0;
   display: flex;
   align-items: center;
+  gap: var(--md-sys-space-3);
 }
-/* All text on the tile reads the tile's own role tokens — mover line,
-   verdict word, metric and the accuracy ring follow the container's
-   on-color instead of a hardcoded surface tone. */
+.md-verdict__empty-icon {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 44% 56% 52% 48% / 50% 46% 54% 50%;
+  background: var(--md-sys-color-surface-container-high);
+}
+.md-verdict__empty-icon::after {
+  content: "\265F";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 1.25rem;
+  line-height: 1;
+  color: var(--md-sys-color-on-surface-variant);
+}
 .md-verdict__empty-text {
   font-size: 0.875rem;
   font-weight: 600;
-  color: var(--verdict-role-muted);
+  color: var(--md-sys-color-on-surface-variant);
   line-height: 1.4;
 }
 .md-verdict__copy { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -1167,6 +1318,8 @@ body {
   display: none;
   flex-direction: column;
 }
+.md-sheet[style*="display: block"],
+.md-sheet:not([hidden])[style*="block"] { display: flex; }
 .md-sheet__bar {
   display: flex;
   justify-content: space-between;
@@ -1184,9 +1337,7 @@ body {
 }
 
 .md-settings-block { display: flex; flex-direction: column; gap: var(--md-sys-space-3); }
-/* Section headings match the canvas headings (Position card): on-surface,
-   not brand-green — color is reserved for states, choices and the hero. */
-.md-settings-block h3 { color: var(--md-sys-color-on-surface); }
+.md-settings-block h3 { color: var(--md-sys-color-primary); }
 .md-field-label {
   font-size: 0.75rem;
   font-weight: 700;
@@ -1263,10 +1414,14 @@ body {
   gap: var(--md-sys-space-3);
   padding: var(--md-sys-space-2) 0;
 }
-/* Author `display: flex` would otherwise override the UA [hidden] rule,
-   keeping style-scoped rows (Early King Hunt) visible when unavailable. */
-.md-switch-row[hidden] { display: none; }
 .md-switch-row__title { font-weight: 650; }
+/* Revealing the Ultra-only Early King Hunt row when the style flips to
+   Ultra attack — a short spatial rise instead of an abrupt pop. */
+.early-king-hunt-setting:not([hidden]) { animation: mdRowIn 320ms var(--md-sys-motion-spatial); }
+@keyframes mdRowIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
 .md-switch { position: relative; display: inline-flex; cursor: pointer; flex-shrink: 0; }
 /* 52×44 hit area around the 52×32 visual track. */
 .md-switch input { position: absolute; inset: -6px 0; width: 52px; height: 44px; margin: 0; opacity: 0; cursor: pointer; z-index: 2; }
@@ -1356,6 +1511,137 @@ body {
 .md-switch input:disabled + .md-switch__track { opacity: 0.38; }
 .md-switch input:focus-visible + .md-switch__track { outline: 3px solid var(--md-sys-color-secondary); outline-offset: 2px; }
 
+/* ── M3 Expressive slider ─────────────────────────────────────────────
+   A custom-drawn range: 24px inset track, active/inactive segments, a
+   handle that morphs dot→pill and squeezes on press (same spatial spring
+   family as the switch). The native input stays on top as an invisible,
+   fully accessible hit target. */
+.md-slider-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--md-sys-space-2);
+  padding: var(--md-sys-space-2) 0;
+}
+.md-slider-row:not([hidden]) { animation: mdRowIn 320ms var(--md-sys-motion-spatial); }
+.md-slider-row__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--md-sys-space-3);
+}
+/* Value chip: primary-container pill that springs when the value changes. */
+.md-slider-row__value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 0.8rem;
+  color: var(--md-sys-color-on-secondary-container);
+  background: var(--md-sys-color-secondary-container);
+  border-radius: var(--md-sys-shape-full);
+  padding: 3px 12px;
+  transition: transform var(--md-sys-motion-fast) var(--md-sys-motion-spatial),
+    background-color var(--md-sys-motion-fast) var(--md-sys-motion-effects);
+}
+.md-slider-row__value.is-bumped { transform: scale(1.12); }
+
+.md-slider {
+  --slider-h: 24px;
+  position: relative;
+  height: calc(var(--slider-h) + 20px); /* generous touch target */
+  display: flex;
+  align-items: center;
+  touch-action: none;
+}
+.md-slider input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 3;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.md-slider__track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: var(--slider-h);
+  transform: translateY(-50%);
+  border-radius: var(--md-sys-shape-full);
+  background: var(--md-sys-color-surface-container-highest);
+  overflow: hidden;
+  pointer-events: none;
+}
+.md-slider__fill {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 100%;
+  width: 50%;
+  border-radius: inherit;
+  transform-origin: left center;
+  background: var(--md-sys-color-primary);
+  transition: none; /* driven per-frame by JS while dragging */
+  pointer-events: none;
+}
+/* Handle: a 4×16 pill inside the track that morphs to an 18px circle-dot
+   at rest — the M3E "handle in the track" look. Squeezes wide on press. */
+.md-slider__handle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--md-sys-shape-full);
+  background: var(--md-sys-color-primary);
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    width var(--md-sys-motion-med) var(--md-sys-motion-spatial),
+    height var(--md-sys-motion-med) var(--md-sys-motion-spatial),
+    background-color var(--md-sys-motion-fast) var(--md-sys-motion-effects);
+  pointer-events: none;
+}
+.md-slider__handle-dot {
+  width: 4px;
+  height: 16px;
+  border-radius: var(--md-sys-shape-full);
+  background: var(--md-sys-color-on-primary);
+  transition: width var(--md-sys-motion-med) var(--md-sys-motion-spatial),
+    height var(--md-sys-motion-med) var(--md-sys-motion-spatial);
+}
+/* Hover / focus / press states mirror the switch's state-layer behavior. */
+.md-slider:hover .md-slider__handle,
+.md-slider.is-dragging .md-slider__handle {
+  width: 22px;
+  height: 22px;
+}
+.md-slider:hover .md-slider__handle-dot,
+.md-slider.is-dragging .md-slider__handle-dot {
+  width: 6px;
+  height: 18px;
+}
+.md-slider.is-dragging .md-slider__handle { height: var(--slider-h); border-radius: var(--md-sys-shape-full); }
+.md-slider.is-dragging .md-slider__handle-dot { height: 10px; width: 5px; }
+.md-slider:has(input:focus-visible) .md-slider__track {
+  outline: 3px solid var(--md-sys-color-secondary);
+  outline-offset: 2px;
+}
+/* Scale labels under the track. */
+.md-slider__scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.66rem;
+  color: var(--md-sys-color-on-surface-variant);
+  padding: 0 2px;
+  font-variant-numeric: tabular-nums;
+}
+
 .md-health { display: flex; flex-direction: column; gap: 6px; }
 .md-health__row {
   display: flex;
@@ -1375,19 +1661,127 @@ body {
 .api-status.error { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
 .api-status.unknown, .api-status.checking { background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface-variant); }
 
+/* ── Diagnostics (Last 10 minutes) ──
+   An expressive stat card: an organic blob badge, four role-tinted metric
+   tiles with matching blob icons, and a live "provider calls" footer. */
 .md-diagnostics {
   background: var(--md-sys-color-surface-container);
-  border-radius: var(--md-sys-shape-lg);
+  border-radius: 26px 34px 22px 30px;
   padding: var(--md-sys-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--md-sys-space-3);
+}
+.md-diagnostics__head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.md-diagnostics__badge {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 42% 58% 50% 50% / 50% 44% 56% 50%;
+  background: var(--md-sys-color-primary-container);
+}
+.md-diagnostics__badge::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--md-sys-color-on-primary-container);
+  -webkit-mask: var(--md-icon-bolt) center / 14px no-repeat;
+          mask: var(--md-icon-bolt) center / 14px no-repeat;
+}
+.md-diagnostics__title {
+  color: var(--md-sys-color-on-surface-variant);
+  letter-spacing: 0.1em;
 }
 .md-diagnostics__grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: var(--md-sys-space-3);
-  margin: var(--md-sys-space-3) 0;
+  gap: var(--md-sys-space-2);
 }
-.md-diagnostics__grid span { display: block; color: var(--md-sys-color-on-surface-variant); font-size: 0.6875rem; }
-.md-diagnostics__grid strong { font-size: 1.125rem; font-variant-numeric: tabular-nums; }
+.md-diagnostics__stat {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--md-sys-shape-lg);
+  background: var(--md-sys-color-surface-container-high);
+}
+.md-diagnostics__icon {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 40% 60% 55% 45% / 55% 45% 60% 40%;
+  background: var(--diag-role-bg, var(--md-sys-color-secondary-container));
+  transition: background-color var(--md-sys-motion-med) var(--md-sys-motion-effects);
+}
+.md-diagnostics__icon::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--diag-role-fg, var(--md-sys-color-on-secondary-container));
+  -webkit-mask: var(--diag-icon, var(--md-icon-info)) center / 16px no-repeat;
+          mask: var(--diag-icon, var(--md-icon-info)) center / 16px no-repeat;
+}
+.md-diagnostics__stat--saved {
+  --diag-icon: var(--md-icon-check);
+  --diag-role-bg: var(--md-sys-color-primary-container);
+  --diag-role-fg: var(--md-sys-color-on-primary-container);
+}
+.md-diagnostics__stat--coalesced {
+  --diag-icon: var(--md-icon-reply);
+}
+.md-diagnostics__stat--stale-served {
+  --diag-icon: var(--md-icon-warning);
+  --diag-role-bg: var(--md-sys-color-tertiary-container);
+  --diag-role-fg: var(--md-sys-color-on-tertiary-container);
+}
+.md-diagnostics__stat--stale-dropped {
+  --diag-icon: var(--md-icon-error);
+  --diag-role-bg: var(--md-sys-color-error-container);
+  --diag-role-fg: var(--md-sys-color-on-error-container);
+}
+.md-diagnostics__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.md-diagnostics__text strong {
+  font-family: var(--md-ref-typeface-brand);
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.md-diagnostics__text span {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--md-sys-color-on-surface-variant);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.md-diagnostics__foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: var(--md-sys-space-2);
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+}
+.md-diagnostics__dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--md-sys-color-primary);
+}
 .api-provider-calls { font-size: 0.75rem; color: var(--md-sys-color-on-surface-variant); line-height: 1.45; }
 
 /* ── Dialog / shortcuts ── */
@@ -1402,15 +1796,35 @@ body {
   position: absolute;
   inset: 0;
   background: color-mix(in oklab, var(--md-sys-color-scrim) 40%, transparent);
+  animation: mdScrimIn var(--md-sys-motion-fast) var(--md-sys-motion-effects);
+  cursor: pointer;
 }
+.md-dialog--closing .md-dialog__scrim {
+  animation: mdScrimOut var(--md-sys-motion-fast) var(--md-sys-motion-effects) forwards;
+}
+@keyframes mdScrimIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes mdScrimOut { to { opacity: 0; } }
 .md-dialog__sheet {
   position: absolute;
   left: 12px;
   right: 12px;
   bottom: 16px;
   background: var(--md-sys-color-surface-container-high);
-  border-radius: var(--md-sys-shape-xl);
+  border-radius: var(--md-sys-shape-xxl) var(--md-sys-shape-xxl) var(--md-sys-shape-xl-inc) var(--md-sys-shape-xl-inc);
   padding: var(--md-sys-space-3) var(--md-sys-space-4) var(--md-sys-space-5);
+  transform-origin: bottom center;
+  animation: mdDialogSheetIn var(--md-sys-motion-med) var(--md-sys-motion-spatial);
+  box-shadow: 0 -8px 32px color-mix(in oklab, var(--md-sys-color-shadow) 12%, transparent);
+}
+@keyframes mdDialogSheetIn {
+  from { opacity: 0; transform: translateY(32px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.md-dialog--closing .md-dialog__sheet {
+  animation: mdDialogSheetOut 200ms var(--md-sys-motion-effects) forwards;
+}
+@keyframes mdDialogSheetOut {
+  to { opacity: 0; transform: translateY(24px) scale(0.98); }
 }
 .md-dialog__handle {
   width: 32px;
@@ -1457,50 +1871,64 @@ kbd {
   align-items: center;
   gap: 10px;
   padding: 12px 16px;
-  /* Organic family radius — 4px was the only sharp corner in the system. */
-  border-radius: 16px 12px 18px 12px;
+  border-radius: var(--md-sys-shape-xs);
   background: var(--md-sys-color-inverse-surface);
   color: var(--md-sys-color-inverse-on-surface);
   pointer-events: auto;
   box-shadow: 0 10px 24px color-mix(in oklab, var(--md-sys-color-shadow) 24%, transparent);
+  animation: mdToastIn 300ms var(--md-sys-motion-spatial);
+  will-change: transform, opacity;
 }
-.toast-exit { opacity: 0; transform: translateY(-6px); transition: opacity var(--md-sys-motion-fast) var(--md-sys-motion-effects); }
+@keyframes mdToastIn {
+  from { opacity: 0; transform: translateY(-10px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+.toast-exit {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
+  transition: opacity var(--md-sys-motion-fast) var(--md-sys-motion-effects),
+    transform var(--md-sys-motion-fast) var(--md-sys-motion-effects);
+}
+/* Icons are Material-symbol masks on a role chip — no font glyphs. */
 .toast-icon {
-  width: 22px;
-  height: 22px;
+  position: relative;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-weight: 800;
   flex-shrink: 0;
 }
+.toast-icon::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: currentColor;
+  -webkit-mask: var(--md-icon-info) center / 14px no-repeat;
+          mask: var(--md-icon-info) center / 14px no-repeat;
+}
 .toast-success .toast-icon { background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
+.toast-success .toast-icon::before { -webkit-mask-image: var(--md-icon-check); mask-image: var(--md-icon-check); }
 .toast-error .toast-icon { background: var(--md-sys-color-error); color: var(--md-sys-color-on-error); }
+.toast-error .toast-icon::before { -webkit-mask-image: var(--md-icon-error); mask-image: var(--md-icon-error); }
 .toast-warning .toast-icon { background: var(--md-sys-color-tertiary); color: var(--md-sys-color-on-tertiary); }
+.toast-warning .toast-icon::before { -webkit-mask-image: var(--md-icon-warning); mask-image: var(--md-icon-warning); }
 .toast-info .toast-icon { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.toast-info .toast-icon::before { -webkit-mask-image: var(--md-icon-info); mask-image: var(--md-icon-info); }
 
 /* ── Settings display fallback (JS toggles inline display) ── */
 #settings-panel { display: none; }
-/* Entrance and exit share one curve family: rise in on the spatial spring,
-   settle out on the effects curve — no hard cuts on either side. */
+#settings-panel[style*="display: block"] { display: flex; }
 #settings-panel[style*="display: flex"] { animation: mdSheetIn 340ms var(--md-sys-motion-spatial); }
-#settings-panel.is-closing { animation: mdSheetOut 200ms var(--md-sys-motion-effects) forwards; }
 @keyframes mdSheetIn {
   from { opacity: 0.4; transform: translateY(28px); }
   to { opacity: 1; transform: none; }
 }
+/* Exit: JS adds the class, plays the motion, then hides after the timeout. */
+#settings-panel.md-sheet--closing { animation: mdSheetOut 220ms var(--md-sys-motion-effects) forwards; }
 @keyframes mdSheetOut {
-  from { opacity: 1; transform: none; }
-  to { opacity: 0; transform: translateY(20px); }
+  to { opacity: 0; transform: translateY(24px); }
 }
 #shortcut-help { display: none; }
-/* Shortcut dialog: scrim fades, sheet rises — same recipe as the sheet. */
-#shortcut-help[style*="display: block"] .md-dialog__scrim { animation: mdFadeIn 240ms var(--md-sys-motion-effects) both; }
-#shortcut-help[style*="display: block"] .md-dialog__sheet { animation: mdSheetIn 340ms var(--md-sys-motion-spatial) both; }
-#shortcut-help.is-closing .md-dialog__scrim { animation: mdFadeOut 160ms var(--md-sys-motion-effects) both; }
-#shortcut-help.is-closing .md-dialog__sheet { animation: mdSheetOut 200ms var(--md-sys-motion-spatial) both; }
-@keyframes mdFadeIn { from { opacity: 0; } to { opacity: 1; } }
-@keyframes mdFadeOut { from { opacity: 1; } to { opacity: 0; } }
+#shortcut-help[style*="display: block"] { display: block; }
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 6px; }
@@ -1513,4 +1941,211 @@ kbd {
   .md-app-bar__eyebrow { display: none; }
   .context-turn { display: none; }
   .md-btn-group__item { padding-inline: 8px; }
+}
+
+/* ==========================================================================
+   Revision 13 — depth pass
+   New surfaces on the same tokens: no-board welcome, eval trend sparkline,
+   "Also consider" alternatives rail, verdict pop + count-up, scroll-aware
+   app bar elevation, swipe-dismiss toasts.
+   ========================================================================== */
+
+/* ── Welcome state (no board detected yet) ──
+   The hero keeps its container color and blob language; the knight sits on a
+   morphing pedestal and the copy teaches instead of apologizing. */
+.md-welcome {
+  position: relative;
+  z-index: 1;
+  min-height: 84px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+}
+.md-welcome__blob {
+  position: relative;
+  width: 64px;
+  height: 52px;
+  border-radius: 46% 54% 58% 42% / 56% 44% 56% 44%;
+  background: color-mix(in oklab, currentColor 16%, transparent);
+  animation: mdShapeIdle 7s var(--md-sys-motion-effects) infinite;
+}
+.md-welcome__knight {
+  position: absolute;
+  left: 50%;
+  top: 14px;
+  transform: translateX(-50%);
+  animation: mdWelcomeBob 3.2s ease-in-out infinite;
+}
+@keyframes mdWelcomeBob {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50% { transform: translateX(-50%) translateY(-4px); }
+}
+.md-welcome__title {
+  font-family: var(--md-ref-typeface-brand);
+  font-size: 1.125rem;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+  margin-top: var(--md-sys-space-1);
+}
+.md-welcome__sub {
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--md-sys-color-on-surface-variant);
+  max-width: 30ch;
+}
+/* Once real content lands (a move, an error, anything with a SAN or a
+   message), the controller hides the welcome block. */
+.md-welcome[hidden] { display: none; }
+/* While the welcome owns the stage, the legacy waiting string stays silent. */
+.hint-card:has(.md-welcome:not([hidden])) .hint-text { display: none; }
+
+/* ── Eval trend sparkline ──
+   A quiet 28dp strip under the ribbon: one polyline of the recent evaluation
+   swing. Drawn by JS from evalHistory; hidden until there are ≥2 points. */
+.md-balance__spark {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 28px;
+  margin-top: var(--md-sys-space-3);
+  overflow: visible;
+  opacity: 0;
+  transition: opacity var(--md-sys-motion-med) var(--md-sys-motion-effects);
+}
+.md-balance__spark.is-live { opacity: 1; }
+.md-balance__spark path,
+.md-balance__spark circle {
+  vector-effect: non-scaling-stroke;
+}
+.md-balance__spark .spark-line {
+  fill: none;
+  stroke: var(--balance-role-fg);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.75;
+}
+.md-balance__spark .spark-zero {
+  stroke: var(--md-sys-color-outline-variant);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+  opacity: 0.9;
+}
+.md-balance__spark .spark-dot {
+  fill: var(--balance-role-fg);
+  stroke: none;
+}
+
+/* ── Also consider (alternative lines) ──
+   Rows in the caption-rail dialect: piece glyph chip, SAN + score lockup, and
+   a thin share-of-best meter under each row. Not buttons — read-only. */
+.md-alts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--md-sys-space-2);
+  padding: var(--md-sys-space-4);
+  border-radius: var(--md-sys-shape-xl);
+  background: var(--md-sys-color-surface-container-lowest);
+}
+.md-alts[hidden] { display: none; }
+.md-alts__title { color: var(--md-sys-color-on-surface-variant); letter-spacing: 0.1em; }
+.md-alts__list { display: flex; flex-direction: column; }
+.md-alt-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: center;
+  column-gap: 12px;
+  padding: 10px 2px;
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  animation: mdIdeaIn var(--md-sys-motion-med) var(--md-sys-motion-spatial) both;
+  animation-delay: calc(var(--i, 0) * 55ms);
+}
+.md-alts__list .md-alt-row:last-child { border-bottom: 0; }
+.md-alt-row__piece {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  font-size: 1.35rem;
+  line-height: 1;
+  border-radius: 38% 62% 57% 43% / 44% 38% 62% 56%;
+  background: var(--alt-role-bg, var(--md-sys-color-secondary-container));
+  color: var(--alt-role-fg, var(--md-sys-color-on-secondary-container));
+}
+.md-alt-row--white .md-alt-row__piece { --alt-role-bg: var(--md-piece-light); --alt-role-fg: var(--md-piece-light-on); }
+.md-alt-row--black .md-alt-row__piece { --alt-role-bg: var(--md-piece-light-on); --alt-role-fg: var(--md-piece-light); }
+.md-alt-row__san {
+  font-family: var(--md-ref-typeface-brand);
+  font-size: 1rem;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+}
+.md-alt-row__meter {
+  height: 6px;
+  border-radius: var(--md-sys-shape-full);
+  background: color-mix(in oklab, currentColor 12%, transparent);
+  overflow: hidden;
+}
+.md-alt-row__meter-fill {
+  height: 100%;
+  width: calc(var(--share, 50) * 1%);
+  border-radius: inherit;
+  background: var(--md-sys-color-primary);
+  transform-origin: left center;
+  animation: mdMeterFill var(--md-sys-motion-slow) var(--md-sys-motion-spatial) both;
+  animation-delay: calc(var(--i, 0) * 70ms + 120ms);
+}
+@keyframes mdMeterFill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.md-alt-row__score {
+  font-family: var(--md-ref-typeface-brand);
+  font-size: 0.8125rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  color: var(--md-sys-color-on-surface-variant);
+  white-space: nowrap;
+}
+/* Mate scores get urgency: tertiary carries "this ends the game". */
+.md-alt-row__score.is-mate { color: var(--md-sys-color-tertiary); }
+
+/* ── Verdict pop + accuracy count-up ──
+   When a fresh classification lands, the stage pops once on the spatial
+   spring and the accuracy figure counts up from 0 — motion that says
+   "measured", not decoration. The pop is suppressed for re-renders that
+   carry `data-replay="true"` (settings changes re-rendering old data). */
+.md-verdict.pop .md-verdict__stage { animation: mdVerdictPop 420ms var(--md-sys-motion-spatial); }
+@keyframes mdVerdictPop {
+  0% { transform: scale(0.96); }
+  60% { transform: scale(1.02); }
+  100% { transform: none; }
+}
+.md-balance[data-state="stale"] .eval-labels { opacity: 0.7; }
+
+/* ── Scroll-aware app bar elevation ──
+   The canvas scrolls under a static bar today. One class from JS turns on a
+   soft bottom edge + tint so content doesn't collide with the identity row. */
+.md-app.is-scrolled .md-app-bar {
+  box-shadow: 0 1px 0 var(--md-sys-color-outline-variant),
+    0 6px 18px color-mix(in oklab, var(--md-sys-color-shadow) 10%, transparent);
+  background: color-mix(in oklab, var(--md-sys-color-surface-container-low) 88%, transparent);
+  transition: box-shadow var(--md-sys-motion-med) var(--md-sys-motion-effects),
+    background-color var(--md-sys-motion-med) var(--md-sys-motion-effects);
+}
+
+/* ── Swipe/flick dismiss for toasts ── */
+.toast { touch-action: pan-y; }
+.toast.dismiss-swipe {
+  transition: transform 220ms var(--md-sys-motion-spatial), opacity 220ms var(--md-sys-motion-effects);
+  pointer-events: none;
+}
+
+/* ── Version stamp (settings sheet footer) ── */
+.md-version-stamp {
+  color: var(--md-sys-color-outline);
+  letter-spacing: 0.08em;
+  text-align: center;
 }
