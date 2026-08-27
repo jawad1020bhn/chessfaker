@@ -1,0 +1,51 @@
+# GitHub Actions CI — enable in one step
+#
+# This repository's automation is delivered as an example because the
+# automation that opened this pull request cannot create workflow files.
+# To enable CI: copy this file to .github/workflows/ci.yml, commit, push.
+#   mkdir -p .github/workflows && cp docs/ci-workflow.example.yml .github/workflows/ci.yml
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  test:
+    name: Tests (bare Node)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The ten suites are self-contained (plain node:test-free assert
+      # scripts) — no install step needed.
+      - run: node scripts/run-tests.mjs
+
+  lint:
+    name: Lint & format tooling
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - run: npm run lint
+      # Prettier is available for a deliberate `npm run format` pass but is
+      # not gated yet: a whole-tree reformat belongs in its own commit.
+      - run: npx prettier --version
+
+  package:
+    name: Store zip builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/package.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chess-hint-assistant-zip
+          path: dist/*.zip

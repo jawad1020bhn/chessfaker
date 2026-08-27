@@ -299,7 +299,9 @@
   }
 
   function normalizeScoreToWhite(rawScore, scoreType, perspective) {
-    const type = scoreType === 'mate' ? 'mate' : 'cp';
+    // 'book' is a first-class lane marker (win-rate/repertoire data, not an
+    // engine evaluation) — it must survive sealing un-coerced.
+    const type = scoreType === 'mate' ? 'mate' : (scoreType === 'book' ? 'book' : 'cp');
     const score = type === 'mate' ? normalizeMateScore(rawScore) : normalizeCentipawns(rawScore);
     if (perspective === 'side-to-move') return { score, scoreType: type, scorePerspective: 'side-to-move' };
     return { score, scoreType: type, scorePerspective: 'white' };
@@ -420,7 +422,9 @@
         nodes: Number(pv.nodes) || 0,
         nps: Number(pv.nps) || 0,
         time: Number(pv.time) || 0,
-        _masterData: pv._masterData || null
+        _masterData: pv._masterData || null,
+        _bookLine: pv._bookLine || null,
+        localPool: pv.localPool === true
       });
     }
 
@@ -435,6 +439,12 @@
     }
 
     accepted.sort((left, right) => {
+      // Local-pool widening extras are candidate filler for the style
+      // ranker, never better answers: they always sort below the
+      // authoritative provider lines, whatever their shallow scores say.
+      const lp = left.localPool ? 1 : 0;
+      const rp = right.localPool ? 1 : 0;
+      if (lp !== rp) return lp - rp;
       const leftMate = left.scoreType === 'mate';
       const rightMate = right.scoreType === 'mate';
       if (leftMate && rightMate) {

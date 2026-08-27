@@ -369,6 +369,66 @@
     return '-';
   }
 
+  // ─── Opponent rating (best-effort, both sites) ────────────────────
+  // Product: the Auto aggression dial scales with the opponent's strength.
+  // Ratings are scraped conservatively — multiple selector shapes, strict
+  // numeric ranges — and a miss simply yields null (Auto falls back to
+  // Level II). Orientation semantics: the opponent sits at the TOP unless
+  // the board is flipped, exactly like the player-color inference above.
+  function parseRatingText(text) {
+    if (!text) return null;
+    const paren = /\(\s*(\d{3,4})\s*\)/.exec(text);
+    if (paren) {
+      const v = Number(paren[1]);
+      if (v >= 400 && v <= 3000) return v;
+    }
+    const plain = /(?:^|\D)(\d{3,4})(?:$|\D)/.exec(text.replace(/\(\s*\d{3,4}\s*\)/g, ''));
+    if (plain) {
+      const v = Number(plain[1]);
+      if (v >= 400 && v <= 3000) return v;
+    }
+    return null;
+  }
+
+  function readOpponentRating(site) {
+    try {
+      if (site === 'lichess') {
+        const flipped = Boolean(document.querySelector('.cg-wrap.orientation-black, cg-container.orientation-black'));
+        const pod = flipped
+          ? document.querySelector('.ruser-bottom')
+          : document.querySelector('.ruser-top');
+        const explicit = pod && pod.querySelector('.rp, i[data-dedup="rating"]');
+        if (explicit) {
+          const v = parseRatingText(explicit.textContent);
+          if (v) return v;
+        }
+        return pod ? parseRatingText(pod.textContent) : null;
+      }
+      if (site === 'chesscom') {
+        const flipped = Boolean(document.querySelector('wc-chess-board.flipped, .board.flipped'));
+        const pods = [
+          document.querySelector('.player-top'),
+          document.querySelector('.player-bottom')
+        ].filter(Boolean);
+        if (pods.length === 0) return null;
+        let pod = flipped ? document.querySelector('.player-bottom') : document.querySelector('.player-top');
+        if (!pod) return null;
+        const elo = pod.querySelector('[data-elo]');
+        if (elo) {
+          const v = Number(elo.getAttribute('data-elo'));
+          if (Number.isFinite(v) && v >= 400 && v <= 3000) return v;
+        }
+        const ratingEl = pod.querySelector('.user-tagline-rating, .user-rating');
+        if (ratingEl) {
+          const v = parseRatingText(ratingEl.textContent);
+          if (v) return v;
+        }
+        return parseRatingText(pod.textContent);
+      }
+    } catch (_) { /* best effort only */ }
+    return null;
+  }
+
   // ─── Main Read Board Function ─────────────────────────────────────
   function readBoard() {
     const site = detectSite();
@@ -383,9 +443,11 @@
 
     if (!result) return null;
 
+    const opponentRating = readOpponentRating(site);
     return {
       fen: result.fen,
       playerColor: result.playerColor,
+      opponentRating: opponentRating,
       // DOM placement cannot establish castling, en-passant, or move counters.
       // Consumers must gate state-sensitive features on this signal.
       positionReliable: result.positionReliable === true,

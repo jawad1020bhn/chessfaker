@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# Build output / store packages
+dist/
+*.zip
+
+# Logs & OS cruft
+*.log
+.DS_Store
+Thumbs.db
+
+# Editor state
+.vscode/
+.idea/

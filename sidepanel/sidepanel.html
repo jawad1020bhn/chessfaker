@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="sidepanel.css">
 </head>
 <body>
-  <div id="toast-container" class="md-snackbar-host" role="alert" aria-live="polite" aria-atomic="true"></div>
+  <div id="toast-container" class="md-snackbar-host" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <div id="shortcut-help" class="md-dialog" style="display:none" role="dialog" aria-labelledby="shortcut-help-title" aria-modal="true">
     <div class="md-dialog__scrim" data-close-shortcuts></div>
@@ -67,6 +67,7 @@
       <section id="hint-section" class="md-hero" aria-label="Recommended move">
         <div class="md-hero__meta">
           <span class="md-typescale-label-md md-hero__kicker">Your move</span>
+          <span id="persona-chip" class="md-persona-chip" data-level="2" title="Ultra Attack — level II">II · Ultra</span>
         </div>
         <div id="hint-card" class="hint-card md-hero__stage exact-move" aria-live="polite">
           <div id="hero-welcome" class="md-welcome" aria-hidden="false">
@@ -151,6 +152,7 @@
           <div class="info-row md-fact"><dt class="info-label">Quality</dt><dd id="analysis-quality" class="info-value">–</dd></div>
           <div class="info-row md-fact"><dt class="info-label">Material</dt><dd id="material-balance" class="info-value">Equal</dd></div>
           <div class="info-row md-fact"><dt class="info-label">Natural play</dt><dd id="correlation-stat" class="info-value" title="Share of your moves that looked human rather than copying the engine top pick.">0 / 0 (0%)</dd></div>
+          <div class="info-row md-fact"><dt class="info-label">Aggression cost</dt><dd id="aggression-stat" class="info-value" title="Eval the style paid vs the objective best move this game, and the principles it fired.">—</dd></div>
         </dl>
       </section>
     </main>
@@ -177,35 +179,30 @@
         <section class="md-settings-block" aria-labelledby="set-play">
           <h3 id="set-play" class="md-typescale-title-sm">How you want to play</h3>
 
-          <label class="visually-hidden" for="setting-style">Style</label>
-          <select id="setting-style" class="visually-hidden">
-            <option value="normal" selected>Normal</option>
-            <option value="aggressive">Aggressive</option>
-            <option value="super_ultra_aggressive">Ultra Super Aggressive</option>
+          <label class="visually-hidden" for="setting-aggression">Aggression level</label>
+          <select id="setting-aggression" class="visually-hidden" tabindex="-1">
+            <option value="auto" selected>Auto — match the opponent</option>
+            <option value="1">I — Sound Storm</option>
+            <option value="2">II — Ultra Attack</option>
+            <option value="3">III — Max Chaos</option>
           </select>
-          <div class="md-choice-stack" role="radiogroup" aria-label="Playing style">
-            <button type="button" class="md-choice" data-expressive-setting="setting-style" data-value="normal" role="radio" aria-checked="true">
-              <span class="md-choice__title">Normal</span>
-              <span class="md-choice__sub">Objective best move</span>
-            </button>
-            <button type="button" class="md-choice" data-expressive-setting="setting-style" data-value="aggressive" role="radio" aria-checked="false">
-              <span class="md-choice__title">Aggressive</span>
-              <span class="md-choice__sub">Fastest sound win</span>
-            </button>
-            <button type="button" class="md-choice" data-expressive-setting="setting-style" data-value="super_ultra_aggressive" role="radio" aria-checked="false">
-              <span class="md-choice__title">Ultra attack</span>
-              <span class="md-choice__sub">Maximum pressure vs ≤1100</span>
-            </button>
+          <p class="md-field-label">Aggression</p>
+          <div class="md-segmented md-btn-group md-btn-group--wrap" role="radiogroup" aria-label="Aggression level">
+            <span class="md-segmented__indicator" aria-hidden="true"></span>
+            <button type="button" class="md-btn-group__item" data-expressive-setting="setting-aggression" data-value="auto" role="radio">Auto</button>
+            <button type="button" class="md-btn-group__item" data-expressive-setting="setting-aggression" data-value="1" role="radio">I · Sound</button>
+            <button type="button" class="md-btn-group__item" data-expressive-setting="setting-aggression" data-value="2" role="radio">II · Ultra</button>
+            <button type="button" class="md-btn-group__item" data-expressive-setting="setting-aggression" data-value="3" role="radio">III · Chaos</button>
           </div>
-          <p id="style-description" class="md-help">Objective best play, reliable conversion, and solid defense.</p>
+          <p id="style-description" class="md-help" aria-live="polite">Auto — matches the opponent's rating; falls back to Level II.</p>
 
-          <div id="early-king-hunt-setting" class="md-switch-row early-king-hunt-setting" hidden>
+          <div id="early-king-hunt-setting" class="md-switch-row early-king-hunt-setting">
             <div>
               <p class="md-switch-row__title">Early King Hunt</p>
-              <p class="md-help">Force an early direct attack while Ultra attack is on.</p>
+              <p class="md-help">Hunt the king from move one — open lines and strike before the opponent can castle.</p>
             </div>
             <label class="md-switch">
-              <input type="checkbox" id="setting-early-king-hunt" disabled>
+              <input type="checkbox" id="setting-early-king-hunt">
               <span class="md-switch__track" aria-hidden="true"><span class="md-switch__thumb"></span></span>
               <span class="visually-hidden">Early King Hunt</span>
             </label>
@@ -217,7 +214,7 @@
               <p class="human-mode-sub md-help">Prefer natural plans over engine-echo moves.</p>
               <span class="human-mode-status visually-hidden">Off</span>
             </div>
-            <input type="checkbox" id="setting-human-like-mode" class="human-mode-checkbox visually-hidden">
+            <input type="checkbox" id="setting-human-like-mode" class="human-mode-checkbox visually-hidden" tabindex="-1">
             <div class="md-segmented md-btn-group md-btn-group--connected human-mode-segmented" role="radiogroup" aria-label="Move voice">
               <span class="md-segmented__indicator" aria-hidden="true"></span>
               <button type="button" class="human-mode-opt md-btn-group__item is-selected" data-mode="off" role="radio" aria-checked="true">Engine</button>
@@ -248,7 +245,7 @@
           <h3 id="set-think" class="md-typescale-title-sm">How hard to think</h3>
           <p id="human-thinking-note" class="md-help" hidden>Managed by Human mode: steady club-strength calculation and a wide candidate pool for realistic play.</p>
           <label class="visually-hidden" for="setting-analysis-quality">Analysis quality</label>
-          <select id="setting-analysis-quality" class="visually-hidden">
+          <select id="setting-analysis-quality" class="visually-hidden" tabindex="-1">
             <option value="auto" selected>Auto</option>
             <option value="fast">Fast</option>
             <option value="balanced">Balanced</option>
@@ -265,7 +262,7 @@
           <p class="md-help">Auto never hides a useful result just because a depth number is low.</p>
 
           <label class="visually-hidden" for="setting-candidate-lines">Candidate lines</label>
-          <select id="setting-candidate-lines" class="visually-hidden">
+          <select id="setting-candidate-lines" class="visually-hidden" tabindex="-1">
             <option value="auto" selected>Auto</option>
             <option value="3">3</option>
             <option value="5">5</option>
@@ -341,6 +338,24 @@
           </div>
         </section>
 
+        <section class="md-settings-block" aria-labelledby="set-appearance">
+          <h3 id="set-appearance" class="md-typescale-title-sm">Appearance</h3>
+          <label class="visually-hidden" for="setting-theme">Theme</label>
+          <select id="setting-theme" class="visually-hidden" tabindex="-1">
+            <option value="system" selected>System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+          <p class="md-field-label">Theme</p>
+          <div class="md-segmented md-btn-group" role="radiogroup" aria-label="Theme">
+            <span class="md-segmented__indicator" aria-hidden="true"></span>
+            <button type="button" class="md-btn-group__item" data-expressive-setting="setting-theme" data-value="system" role="radio">System</button>
+            <button type="button" class="md-btn-group__item" data-expressive-setting="setting-theme" data-value="light" role="radio">Light</button>
+            <button type="button" class="md-btn-group__item" data-expressive-setting="setting-theme" data-value="dark" role="radio">Dark</button>
+          </div>
+          <p class="md-help">Both color schemes ship with the panel; System follows your OS.</p>
+        </section>
+
         <section class="md-settings-block" aria-labelledby="set-health">
           <h3 id="set-health" class="md-typescale-title-sm">Provider pulse</h3>
           <div id="api-health-status" class="md-health">
@@ -404,12 +419,10 @@
   </div>
 
   <script src="../engine/core-utils.js"></script>
-  <script src="../engine/analysis-contract.js"></script>
   <script src="../engine/analysis-policy.js"></script>
   <script src="../engine/human-form.js"></script>
   <script src="../engine/chaos-attack.js"></script>
   <script src="../engine/early-king-hunt.js"></script>
-  <script src="../engine/cloud-engine.js"></script>
   <script src="../engine/hint-engine.js"></script>
   <script src="sidepanel.js"></script>
 </body>
