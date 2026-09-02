@@ -110,3 +110,40 @@ npm run harness -- --mode selfplay --games 6 --bands 1500 --max-plies 100
 
 Budget roughly 0.7s per persona ply on a warm laptop: a 80-ply game is about a
 minute, so a 6-game band is ~6 minutes.
+
+
+---
+
+## 5. After Phases 2 + 4 (the reported A00 loss)
+
+`node scripts/strength-harness.mjs --mode replay --pgn tests/fixtures/game-a00-1380.pgn --rating 1380`
+
+| | before Phase 2/4 | after |
+| --- | --- | --- |
+| divergence from own objective move | **53.1%** | **9.4%** |
+| mean donation | 3.5cp | 1.7cp |
+| picks taken from the generated lane | 14 of 32 | **0** |
+| opening moves 2–8 | c6, e6, f6, g6 (lane pawn moves) | Nc6, Nf6, Nd7 (development) |
+
+Self-play, same command as §2, with the gate live:
+
+| style | band | W | D | L | mean donation | divergence |
+| --- | --- | --- | --- | --- | --- | --- |
+| normal | 1200 | 0 | 2 | 0 | 0.0cp | 0.0% |
+| normal | 1500 | 2 | 0 | 0 | 0.0cp | 0.0% |
+| normal | 1800 | 0 | 2 | 0 | 0.0cp | 0.0% |
+| aggressive | 1200 | 2 | 0 | 0 | 2.9cp | 41.2% |
+| aggressive | 1500 | 0 | 2 | 0 | 1.0cp | 23.9% |
+| aggressive | 1800 | 1 | 1 | 0 | **0.0cp** | **0.0%** |
+
+The divergence profile is now the shape the plan asks for: a real persona at
+club level, a narrow window at 1500, and literally the engine's move at 1800
+(0.0% divergence, 0.0cp donated). The residual 23.9% at 1500 is *free*
+divergence — mean donation 1.0cp — i.e. choosing among moves the pool scores
+as equal, not buying a different move with eval.
+
+Still open, and visible in the same replay: the objective column itself
+contains weak moves (`Ke7`, `Kf7`) because the harness's reference is the
+on-device depth-5 search. In production that column comes from the cloud
+engine at depth 12–18. Opening quality (Phase 5) is a separate lane and is
+not fixed by Phases 2/4.

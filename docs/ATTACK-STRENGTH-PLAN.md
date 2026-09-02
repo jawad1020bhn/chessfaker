@@ -1,7 +1,7 @@
 # Attack strength plan — "no real attack, and it can't win at 1500+"
 
-Status: **Phase 0 and Phase 1 are IMPLEMENTED.** Phases 2–6 are still planning
-only. Scope: the Aggressive persona plays useless or absent attacks and loses
+Status: **Phases 0, 1, 2 and 4 are IMPLEMENTED.** Phases 3, 5 and 6 are still
+planning only. Scope: the Aggressive persona plays useless or absent attacks and loses
 to 1500+ opposition. This plan is grounded in the actual losing game posted
 (C41 Philidor, White 1524 vs Black 1490) and in the current code, not in
 theory.
@@ -10,9 +10,9 @@ theory.
 | --- | --- | --- |
 | 0 | Self-play harness + replay + baseline | **done** — `scripts/strength-harness.mjs` |
 | 1 | Kill the false-positive attack vocabulary | **done** — `tests/attack-vocabulary.test.js` |
-| 2 | Attack lane must earn its slot | planned |
+| 2 | Attack lane must earn its slot | **done** — `tests/attack-lane-gate.test.js` |
 | 3 | Re-wire plan continuity | planned |
-| 4 | Strength-gate the divergence | planned |
+| 4 | Strength-gate the divergence | **done** — `AnalysisPolicy.divergencePolicyFor` |
 | 5 | Opening quality | planned |
 | 6 | Per-game eval ledger | planned |
 
@@ -155,19 +155,34 @@ positive controls so the fix cannot degenerate into switching the vocabulary
 off). One pre-existing assertion in `tests/hint-engine.test.js` was updated to
 the new semantics (`g4-g5` on an empty board is not a storm; `g5-g6` is).
 
-### Phase 2 — Make the attack lane earn its slot (next)
+### Phase 2 — Make the attack lane earn its slot ✅ implemented
 
-In `attack-candidates.js` / `local-engine.js`:
+`engine/attack-candidates.js`:
 
-- a generated candidate enters the pool only with a concrete point — mate
-  threat, winning capture, forcing check, or tempo threat against a major
-  piece;
-- drop the `storm` bucket unless the pawn hits the shelter (reuse the Phase 1
-  `pawnStormsKing` rule — the fixture output shows the lane still generates
-  `h6, h5, f5, g5` as "storm", which Phase 1 alone does not stop);
-- verify the survivors with a deeper search and admit only the top 1–2;
-- replace the flat `ATTACK_CANDIDATE_PENALTY_CP = 40` with a function of the
-  depth gap between the cloud line (18) and the local extra (5).
+- a pawn push enters **only** when it hits the king's shelter (a king-zone
+  square or a shield pawn within two of the king). In the `13. f4` fixture the
+  lane went from `exf4, h6, h5, f5, g5` to just `exf4`;
+- a quiet king-zone move may not hang the piece (landing square attacked and
+  undefended);
+- a losing capture only counts as a `sac` when it lands next to the king; a
+  check that simply hangs the checking piece is dropped;
+- storm sacrifices are still allowed to be capturable — that is the point of a
+  storm — because the verification below prices them.
+
+`background.js buildAttackLane` (mirrored in `scripts/lib/persona.mjs`):
+
+- extras are searched **deeper** than the pool search (`localDepth + 1`, double
+  the time budget), then measured against the **local engine's own best move**
+  — the same yardstick — and dropped if they fall outside the band window;
+- at most **2** extras are admitted (it was 6);
+- the lane is not built at all when the band says so (Phase 4).
+
+`engine/hint-engine.js`:
+
+- `ATTACK_CANDIDATE_PENALTY_CP` is now `attackCandidatePenaltyCp(objectiveDepth,
+  candidateDepth) = min(180, 40 + 8 × depthGap)`. Against a depth-18 cloud line
+  a depth-5 extra carries ~144cp of uncertainty, so it can no longer take the
+  primary slot by accident.
 
 ### Phase 3 — Organize the attack (plan continuity without human mode)
 
@@ -177,13 +192,25 @@ active plan get the bonus; abandoning it mid-attack is penalized. (The harness
 already threads `activePlan` between plies, so the effect will be measurable
 the moment the panel does.)
 
-### Phase 4 — Strength-gate the divergence
+### Phase 4 — Strength-gate the divergence ✅ implemented
 
-Re-map the auto dial in `analysis-policy.js` so the persona collapses toward
-objective as strength rises: `<1100` full chaos, `1100–1400` sound aggression,
-`1400–1700` a ~10–15cp window with the attack lane off, `>1700` objective.
-Scale `DIVERGENCE_PREMIUM`, the risk budgets and the attack-lane flag with
-opponent rating; gate with a hard test on probe positions.
+`AnalysisPolicy.divergencePolicyFor(rating)` is the single source of truth
+(mirrored inside hint-engine for contexts where the policy module is absent):
+
+| rating | band | divergence premium | max cost of a non-objective pick | attack lane |
+| --- | --- | --- | --- | --- |
+| <1000 | novice | ×1.0 | 120cp | on |
+| 1000–1300 | club | ×0.7 | 60cp | on |
+| 1300–1400 | sound | ×0.35 | 30cp | off |
+| 1400–1700 | strong | ×0.15 | 15cp | off |
+| >1700 | expert | ×0 | 0cp | off (objective only) |
+| unknown | sound | ×0.35 | 30cp | off |
+
+`maxDivergenceCp` is a **hard gate applied before scoring** — no style bonus
+can buy past it — and the expert band short-circuits to the engine's own order
+with an honest reason string. An unknown rating resolves to the sound band:
+a missing scrape must make the hint safer, not wilder. The rating is threaded
+panel → background (lane) and panel → ranker.
 
 ### Phase 5 — Opening quality
 
