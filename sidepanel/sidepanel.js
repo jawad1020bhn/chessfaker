@@ -928,6 +928,30 @@
       });
     }
 
+    // One-click step-down offered by the aggression telemetry row.
+    const applySuggestion = (patch) => {
+      Object.assign(settings, patch);
+      saveSettings();
+      applySettingsToUI();
+      humanPlanState = null;
+      if (lastAnalysis) renderAnalysis(lastAnalysis);
+      if (currentFen) requestAnalysis(true);
+    };
+    const btnSofter = document.getElementById('btn-suggest-level-1');
+    if (btnSofter) {
+      btnSofter.addEventListener('click', () => {
+        applySuggestion({ aggressionLevel: 1 });
+        showToast('Aggression set to Level I — Sound Storm', 'success', 2500);
+      });
+    }
+    const btnObjective = document.getElementById('btn-suggest-normal');
+    if (btnObjective) {
+      btnObjective.addEventListener('click', () => {
+        applySuggestion({ style: 'normal', aggressionLevel: 'auto' });
+        showToast('Style set to Normal — objective best play', 'success', 2500);
+      });
+    }
+
     // Theme preference is handled by applyThemePreference() (see loadSettings).
 
     // Settings and CSP-safe shortcut-help close button + scrim dismissal
@@ -1480,6 +1504,34 @@
     ].filter(Boolean).slice(0, 3).join(', ');
     dom.aggressionStat.textContent = `−${pawns}p over ${s.picks} picks${fired ? ' · ' + fired : ''}`;
     dom.aggressionStat.style.color = s.costCp > 600 ? 'var(--md-sys-color-error)' : '';
+    updateAggressionSuggestion(s);
+  }
+
+  // Actionable telemetry: once the per-game tax passes the budget for the
+  // active persona, offer a one-click step down. The thresholds are per level
+  // so a deliberate Max Chaos choice is not nagged at Level II's numbers.
+  // Normal and Aggressive never reach theirs in practice (Normal pays ~0).
+  const AGGRESSION_COST_BUDGET_PAWNS = { 1: 1.0, 2: 1.5, 3: 2.5 };
+  function updateAggressionSuggestion(s) {
+    const box = document.getElementById('aggression-suggestion');
+    if (!box) return;
+    const isUltra = settings.style === 'super_ultra_aggressive';
+    const level = effectiveAggressionLevel();
+    const budget = isUltra
+      ? AGGRESSION_COST_BUDGET_PAWNS[level] ?? 1.5
+      : (settings.style === 'aggressive' ? 1.0 : Infinity);
+    const pawns = s.costCp / 100;
+    const over = Number.isFinite(budget) && s.picks >= 3 && pawns > budget;
+    box.hidden = !over;
+    if (!over) return;
+    const text = document.getElementById('aggression-suggestion-text');
+    if (text) {
+      text.textContent = isUltra
+        ? `The persona has paid −${pawns.toFixed(1)}p over ${s.picks} picks at Level ${ROMAN[level]} (budget ~${budget.toFixed(1)}p). Softer settings convert wins more reliably.`
+        : `Aggressive has paid −${pawns.toFixed(1)}p over ${s.picks} picks. Normal gives you the engine's own best move.`;
+    }
+    const softer = document.getElementById('btn-suggest-level-1');
+    if (softer) softer.hidden = !isUltra;
   }
 
   // ─── Request Analysis ──────────────────────────────────────────────

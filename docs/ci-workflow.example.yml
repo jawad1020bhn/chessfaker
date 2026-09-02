@@ -1,9 +1,11 @@
-# GitHub Actions CI — enable in one step
+# GitHub Actions CI — reference copy.
 #
-# This repository's automation is delivered as an example because the
-# automation that opened this pull request cannot create workflow files.
-# To enable CI: copy this file to .github/workflows/ci.yml, commit, push.
-#   mkdir -p .github/workflows && cp docs/ci-workflow.example.yml .github/workflows/ci.yml
+# CI is ACTIVE at .github/workflows/ci.yml (it runs the regression suites,
+# the hint-quality acceptance gates from scripts/rescue-gates.mjs, the
+# persona-efficacy probe, lint and the store package). This file is kept as
+# the readable reference and as the template to restore from; edit both, or
+# edit this one and copy it over:
+#   cp docs/ci-workflow.example.yml .github/workflows/ci.yml
 
 name: CI
 

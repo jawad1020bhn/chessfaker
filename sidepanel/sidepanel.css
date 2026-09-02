@@ -700,6 +700,16 @@ body {
   .md-persona-chip.is-resolving { animation: none; }
   .md-persona-chip { transition: none; }
 }
+/* Actionable aggression telemetry: the cost row becomes a one-click offer
+   to calm the persona down once the per-game tax is past the level's budget. */
+.aggression-suggestion {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+.aggression-suggestion__actions { gap: 8px; flex-wrap: wrap; }
 .md-hero__stage { position: relative; z-index: 1; min-height: 84px; text-align: center; }
 .hint-text {
   font-family: var(--md-ref-typeface-brand);

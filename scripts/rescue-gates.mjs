@@ -13,9 +13,12 @@ import vm from 'node:vm';
 import { join } from 'node:path';
 
 const ROOT = new URL('..', import.meta.url).pathname;
+// Exactly the <script> list of sidepanel/sidepanel.html — the ranking path
+// the user actually runs. (engine/attack-book.js is a background-only module
+// and is deliberately not loaded here.)
 const PRODUCTION_MODULES = [
   'core-utils.js', 'analysis-policy.js', 'human-form.js',
-  'chaos-attack.js', 'early-king-hunt.js', 'attack-book.js', 'hint-engine.js'
+  'chaos-attack.js', 'early-king-hunt.js', 'hint-engine.js'
 ];
 
 const sandbox = {

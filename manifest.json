@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Chess Hint Assistant",
   "short_name": "Chess Coach",
-  "version": "13.6.1",
+  "version": "14.0.0",
   "version_name": "13.6.1 (M3E polish: persona chip, caption kinds, settings refinement)",
   "author": "jawad1020bhn",
   "minimum_chrome_version": "114",
