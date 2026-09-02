@@ -1790,6 +1790,8 @@
   function promoteBookWithinTolerance(ranked, playerColor, tolerance = BOOK_FIRST_TOLERANCE_CP) {
     if (!Array.isArray(ranked) || ranked.length < 2) return ranked;
     const top = ranked[0];
+    // A single-PV engine lane is passed through untouched, so its entries
+    // carry no _styleAnalysis at all — treat that as "not the book lane".
     if (!top || top._styleAnalysis?.bookLane) return ranked;
     const bestScore = playerScore(top, playerColor);
     if (top.scoreType === 'mate' && bestScore > 0) return ranked;
@@ -1805,12 +1807,12 @@
     return reordered.map((pv, rank) => ({
       ...pv,
       _styleAnalysis: {
-        ...pv._styleAnalysis,
+        ...(pv._styleAnalysis || {}),
         styleRank: rank + 1,
-        eligible: rank === 0 ? true : pv._styleAnalysis.eligible,
+        eligible: rank === 0 ? true : Boolean(pv._styleAnalysis?.eligible),
         reasons: rank === 0
-          ? [`book preference — within ${tolerance}cp of the engine's best`, ...(pv._styleAnalysis.reasons || [])]
-          : pv._styleAnalysis.reasons
+          ? [`book preference — within ${tolerance}cp of the engine's best`, ...(pv._styleAnalysis?.reasons || [])]
+          : pv._styleAnalysis?.reasons
       }
     }));
   }
@@ -1859,7 +1861,28 @@
     }
     const objective = pvs.map((pv, index) => ({ pv, index, utility: objectiveUtility(pv, playerColor), score: playerScore(pv, playerColor) }))
       .sort((a, b) => b.utility - a.utility);
-    const objectiveBest = objective[0];
+    // ── F4 pool integrity ────────────────────────────────────────────────
+    // A pool widened from a single-line source carries `localPool` extras
+    // produced by the on-device alpha-beta (depth <= 6, heuristic evals).
+    // They may inform the style contest and fill the display list, but they
+    // may never take the primary slot while an authoritative cloud PV is
+    // present: their scores are noise next to a real engine evaluation, and
+    // `styleScore` happily adds attack bonuses to them. The single exception
+    // is a shallow cloud line (depth < 12) where the local search is at least
+    // as deep (>= 5) and AGREES with the cloud evaluation within 30cp — i.e.
+    // it is corroborating, not outvoting.
+    const cloudEntries = objective.filter(entry => entry.pv.localPool !== true);
+    const cloudBest = cloudEntries[0];
+    const shallowCloud = Boolean(cloudBest) && (Number(cloudBest.pv.depth) || 0) < 12;
+    const localMayCompete = (entry) =>
+      entry.pv.localPool === true && shallowCloud &&
+      (Number(entry.pv.depth) || 0) >= 5 &&
+      Math.abs(entry.score - cloudBest.score) <= 30;
+    const isBenched = (entry) =>
+      entry.pv.localPool === true && cloudEntries.length > 0 && !localMayCompete(entry);
+    // Budgets, the mate lock and the win-preservation gate are all measured
+    // against the authoritative cloud line, never against local noise.
+    const objectiveBest = cloudBest || objective[0];
 
     // Normal is the objective baseline (F1 / spec 2.2): the engine's own
     // order, no persona machinery, no diversity, no dial. Mate discipline
@@ -1933,7 +1956,13 @@
       analysis.evalLoss = evalLoss;
       analysis.objectiveRank = rank + 1;
       analysis.mode = profile.id;
-      const eligible = styleSafetyAllows(analysis, evalLoss, profile, objectiveBest, conversion);
+      const benched = isBenched(entry);
+      if (benched) {
+        analysis.poolBenched = true;
+        analysis.humanRisks = analysis.humanRisks || [];
+        analysis.humanRisks.push('on-device search — cannot outrank the cloud analysis');
+      }
+      const eligible = !benched && styleSafetyAllows(analysis, evalLoss, profile, objectiveBest, conversion);
       const bonus = eligible ? candidateStyleBonus(analysis, profile, { conversion }) : -Infinity;
       // Per-style eval cost. Normal is the strictest (1.5); Aggressive pays
       // 1.25 so checks and sustained forcing play can still overcome it;
@@ -2058,6 +2087,8 @@
         styleBonus: Number.isFinite(candidate.bonus) ? Math.round(candidate.bonus) : 0,
         riskBudget: budget,
         eligible: candidate.eligible,
+        localPool: candidate.pv.localPool === true,
+        poolBenched: candidate.analysis.poolBenched === true,
         humanLikeMode,
         humanScore: Number.isFinite(candidate.humanScore) ? Math.round(candidate.humanScore) : null
       }

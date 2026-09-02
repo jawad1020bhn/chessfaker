@@ -335,6 +335,23 @@ function send(message, sender = { id: 'test-extension-id' }) {
   assert.equal(context.stylePoolNeeded({ style: 'super_ultra_aggressive' }), true, 'the persona needs a pool');
   assert.equal(context.stylePoolNeeded({ style: 'aggressive' }), true, 'Aggressive needs a pool');
 
+  // F4: widening keeps the cloud line first and tags every extra.
+  const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+  const singleLine = {
+    source: 'chess-api',
+    scorePerspective: 'white',
+    pvs: [{ scoreType: 'cp', score: 40, depth: 14, pv: ['e2e4'] }]
+  };
+  const widenedPool = context.widenSingleLinePool(singleLine, startFen, 4, { localDepth: 4, localTimeMs: 150 });
+  assert.ok(widenedPool, 'a single chess-api line can be widened by the on-device engine');
+  assert.equal(widenedPool.poolExpanded, true, 'the widened result is flagged for the UI');
+  assert.equal(widenedPool.pvs[0].pv[0], 'e2e4', 'the authoritative cloud line stays first');
+  assert.equal(widenedPool.pvs[0].localPool, undefined, 'the cloud line is not tagged as a local extra');
+  assert.ok(widenedPool.pvs.length >= 2, 'at least one local extra was appended');
+  assert.ok(widenedPool.pvs.slice(1).every(p => p.localPool === true),
+    'every appended extra is tagged localPool so the ranker can bench it');
+  assert.ok(widenedPool.pvs.slice(1).every(p => p.pv[0] !== 'e2e4'), 'extras never duplicate the cloud move');
+
   console.log('background smoke tests passed');
 })().catch(error => {
   console.error(error);

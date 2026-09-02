@@ -57,15 +57,38 @@ assert.equal(migrated.analysisQuality, 'deep');
 assert.equal(migrated.candidateLines, 5);
 assert.equal(migrated.whiteRepertoire, undefined);
 assert.equal(policy.resolveMultiPv({ candidateLines: 'auto', style: 'normal' }), 2,
-  'the internal objective profile keeps a narrow auto width');
+  'the objective default keeps a narrow auto width');
 assert.equal(policy.resolveMultiPv({ candidateLines: 'auto', style: 'super_ultra_aggressive' }), 5,
-  'the single persona always requests the wide ranking pool');
-assert.equal(policy.resolveMultiPv({ candidateLines: 'auto', style: 'super_ultra_aggressive' }), 5);
+  'the persona requests the wide ranking pool');
+assert.equal(policy.resolveMultiPv({ candidateLines: 'auto', style: 'aggressive' }), 5,
+  'Aggressive ranks a candidate pool too');
 assert.equal(policy.describeQuality('opening-statistics').label, 'Opening statistics');
 assert.equal(policy.shouldReplaceHumanWithEngine({ source: 'masters-explorer' }, start), false);
 
 const localLabel = policy.qualityClassFor({ source: 'local-engine', depth: 3 });
 assert.equal(localLabel, 'shallow-engine');
+
+// F4 — pool-widening tags must survive sealing, and the authoritative cloud
+// line must keep the primary slot even when a local extra carries a higher
+// (heuristic, meaningless) score.
+const widenedSeal = contract.finalizeAnalysis({
+  source: 'chess-api',
+  scorePerspective: 'white',
+  pvs: [
+    { score: 40, scoreType: 'cp', depth: 14, pv: ['e2e4', 'e7e5'] },
+    { score: 120, scoreType: 'cp', depth: 5, pv: ['g1f3', 'b8c6'], localPool: true },
+    { score: 90, scoreType: 'cp', depth: 4, pv: ['b1c3', 'g8f6'], localPool: true }
+  ]
+}, start);
+assert.equal(widenedSeal.pvs.length, 3, 'the widened pool survives sealing');
+assert.equal(widenedSeal.pvs[0].pv[0], 'e2e4', 'the cloud line keeps the primary slot despite lower local scores');
+assert.equal(widenedSeal.pvs[0].localPool, false, 'the cloud line is not tagged as a local extra');
+// (compared as a joined string: the sealed arrays come from the vm realm, so
+// deepStrictEqual would reject them on prototype identity alone)
+assert.equal(widenedSeal.pvs.slice(1).map(p => p.pv[0]).join(','), 'g1f3,b1c3',
+  'local extras sort below the cloud line, in their own utility order');
+assert.ok(widenedSeal.pvs.slice(1).every(p => p.localPool === true),
+  'the localPool tag survives sealing so the ranker can bench the extras');
 
 // Opponent-aware Auto aggression (the dial's mapping).
 // F2 — the Auto mapping is inverted: chaos pays only when the DEFENDER's

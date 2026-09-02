@@ -131,6 +131,49 @@ assert.equal(normalMateMeta[0]._styleAnalysis.evalLoss, 0);
 assert.equal(normalMateMeta.find(pv => pv.pv[0] === 'd1d3')._styleAnalysis.evalLoss, Infinity,
   'a +900cp line next to a forced mate must not report evalLoss 0');
 
+// ── F4 pool integrity: local-pool extras inform but never outvote ──────
+// `attackFen` above is a position where the persona genuinely prefers the
+// forcing check, so a benched local candidate is observably demoted.
+const ULTRA = 'super_ultra_aggressive';
+const cloudQuietDeep = { score: 50, scoreType: 'cp', depth: 14, pv: ['d1d2'] };
+const cloudQuietShallow = { ...cloudQuietDeep, depth: 10 };
+const localCheck = (over = {}) => ({ score: 30, scoreType: 'cp', depth: 6, pv: ['d1h5'], localPool: true, ...over });
+
+assert.equal(engine.selectPVForStyle([localCheck(), cloudQuietDeep], attackFen, ULTRA, 'w')[0].pv[0], 'd1d2',
+  'F4: a depth-14 cloud line cannot be outvoted by a depth-6 local search');
+assert.equal(engine.selectPVForStyle([localCheck(), cloudQuietShallow], attackFen, ULTRA, 'w')[0].pv[0], 'd1h5',
+  'F4 exception: a shallow cloud line (<12) may be contested by a deeper local search that agrees within 30cp');
+assert.equal(engine.selectPVForStyle([localCheck({ depth: 4 }), cloudQuietShallow], attackFen, ULTRA, 'w')[0].pv[0], 'd1d2',
+  'F4 exception needs BOTH conditions — local depth below 5 stays benched');
+assert.equal(engine.selectPVForStyle([localCheck({ score: 10 }), cloudQuietShallow], attackFen, ULTRA, 'w')[0].pv[0], 'd1d2',
+  'F4 exception needs BOTH conditions — disagreeing beyond 30cp stays benched (40cp is inside the budget, so only the agreement rule can bench it)');
+assert.equal(engine.selectPVForStyle([localCheck(), { ...cloudQuietDeep, localPool: true }], attackFen, ULTRA, 'w')[0].pv[0], 'd1h5',
+  'F4: a pure local pool has no cloud line to protect, so it contests normally');
+const benchedMeta = engine.selectPVForStyle([localCheck(), cloudQuietDeep], attackFen, ULTRA, 'w')
+  .find(p => p.pv[0] === 'd1h5');
+assert.equal(benchedMeta._styleAnalysis.localPool, true, 'local-pool extras stay tagged for the UI');
+assert.equal(benchedMeta._styleAnalysis.poolBenched, true, 'a benched local candidate says so in its metadata');
+assert.equal(benchedMeta._styleAnalysis.eligible, false, 'a benched local candidate is never eligible for the primary slot');
+
+// ── Book-first preference: bounded at 50cp, never over a winning mate ──
+const engineBest = { score: 100, scoreType: 'cp', depth: 25, pv: ['d1d2'] };
+const bookClose = { score: 80, scoreType: 'book', depth: 0, pv: ['d1d3'], _masterData: { totalGames: 1200, whiteWinPct: 55 } };
+const bookFar = { score: 20, scoreType: 'book', depth: 0, pv: ['d1d4'], _masterData: { totalGames: 900, whiteWinPct: 40 } };
+assert.equal(engine.selectPVForStyle([engineBest, bookClose], attackFen, 'normal', 'w')[0].pv[0], 'd1d3',
+  'Normal promotes a book move inside 50cp of the engine best');
+assert.equal(engine.selectPVForStyle([engineBest, bookFar], attackFen, 'normal', 'w')[0].pv[0], 'd1d2',
+  'a book move 80cp behind the engine best does not get promoted');
+assert.equal(engine.selectPVForStyle([engineBest, bookClose], attackFen, ULTRA, 'w')[0].pv[0], 'd1d2',
+  'the persona ignores the book lane unless the user opts in');
+assert.equal(engine.selectPVForStyle([engineBest, bookClose], attackFen, ULTRA, 'w', false, { bookFirstOpenings: true })[0].pv[0], 'd1d3',
+  'book-first openings opts the persona in');
+assert.equal(engine.BOOK_FIRST_TOLERANCE_CP, 50, 'the book preference tolerance is 50cp');
+const mateBest = { score: 2, scoreType: 'mate', depth: 30, pv: ['d1h5'] };
+assert.equal(engine.selectPVForStyle([mateBest, bookClose], attackFen, 'normal', 'w')[0].pv[0], 'd1h5',
+  'the book preference never displaces a winning mate');
+assert.equal(engine.selectPVForStyle([engineBest, bookClose], attackFen, 'normal', 'w', true)[0].pv[0], 'd1d2',
+  'sparring mode is immune to the book preference');
+
 const sacrificeFen = '6k1/7p/8/8/8/3Q4/8/6K1 w - - 0 1';
 const realSac = engine.analyzeCandidate(sacrificeFen, ['d3h7', 'g8h7'], 'w', -40, 'cp', 24);
 const fakeSac = engine.analyzeCandidate(sacrificeFen, ['d3h7', 'g8f8'], 'w', -40, 'cp', 24);
