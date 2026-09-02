@@ -214,42 +214,48 @@ record('G1 opening sanity at Level I ≥ 80%', openOk / OPEN_N >= 0.8,
 
 // Sparring: differentiation in EQUAL positions (≥4×) and zero slips while
 // clearly winning (bestScore > 250) at any strength.
-function sparringSweep(probe, style, rating, positions, bestMove) {
-  let slips = 0;
+// A "slip" is the sparring model deviating from the pick the SAME style and
+// dial make with sparring OFF — not merely deviating from the engine's top
+// line. The persona's own budgeted style choice (≤ the winning-tier budget)
+// is by design, and counting it as a slip would make the metric measure the
+// persona rather than the form model.
+const SESSIONS = ['game-1', 'game-2', 'game-3'];
+function sparringSweep(probe, style, rating, positions, ctx = {}) {
+  let slips = 0, total = 0;
   for (let n = 1; n <= positions; n++) {
     const fen = probe.fen.replace(/ \d+ \d+$/, ` ${n} ${n}`);
-    for (const seed of ['g1', 'g2', 'g3']) {
+    const enginePick = pick(E.selectPVForStyle(structuredClone(probe.pool), fen, style, 'w', false, ctx));
+    for (const seed of SESSIONS) {
       const session = HF.createSession({ rating, seed });
-      const out = E.selectPVForStyle(structuredClone(probe.pool), fen, style, 'w', true, { formSession: session });
-      if (pick(out) !== bestMove) slips++;
+      const out = E.selectPVForStyle(structuredClone(probe.pool), fen, style, 'w', true, { ...ctx, formSession: session });
+      total++;
+      if (pick(out) !== enginePick) slips++;
     }
   }
-  return slips;
+  return { slips, total };
 }
-const equalTotal = OPEN_N * 3;
-const s600 = sparringSweep(PROBES.italianOpening, 'super_ultra_aggressive', 600, OPEN_N, 'e1g1');
-const s1600 = sparringSweep(PROBES.italianOpening, 'super_ultra_aggressive', 1600, OPEN_N, 'e1g1');
+const equalTotal = OPEN_N * SESSIONS.length;
+const s600 = sparringSweep(PROBES.italianOpening, 'super_ultra_aggressive', 600, OPEN_N).slips;
+const s1600 = sparringSweep(PROBES.italianOpening, 'super_ultra_aggressive', 1600, OPEN_N).slips;
 const ratio = s1600 === 0 ? (s600 > 0 ? Infinity : 1) : s600 / s1600;
 record('G1 sparring differentiation ≥ 4× in equal positions', ratio >= 4,
-  `600 → ${s600}/${equalTotal} non-best, 1600 → ${s1600}/${equalTotal} (${s1600 === 0 ? '∞' : ratio.toFixed(1)}×)`);
+  `600 → ${s600}/${equalTotal} slips, 1600 → ${s1600}/${equalTotal} (${s1600 === 0 ? '∞' : ratio.toFixed(1)}×)`);
 
 let winSlips = 0, winSlipTotal = 0;
 for (const rating of [600, 900, 1100, 1300, 1600]) {
   for (const style of STYLES) {
-    for (const name of winningProbes) {
-      const probe = PROBES[name];
-      for (let n = 1; n <= 4; n++) {
-        const fen = probe.fen.replace(/ \d+ \d+$/, ` ${n} ${n}`);
-        const session = HF.createSession({ rating, seed: `win-${n}` });
-        const out = E.selectPVForStyle(structuredClone(probe.pool), fen, style, 'w', true, { formSession: session });
-        winSlipTotal++;
-        if (pick(out) !== probe.expect.topCloud) winSlips++;
+    for (const level of [1, 2, 3]) {
+      for (const name of winningProbes) {
+        const probe = PROBES[name];
+        const sweep = sparringSweep(probe, style, rating, 4, { aggressionLevel: level });
+        winSlips += sweep.slips;
+        winSlipTotal += sweep.total;
       }
     }
   }
 }
 record('G1 zero slips while winning (bestScore > 250)', winSlips === 0,
-  `${winSlips}/${winSlipTotal} picks left the objective best in clearly won positions`);
+  `${winSlips}/${winSlipTotal} sparring picks deviated from the non-sparring pick in clearly won positions`);
 
 // ═══ G2 — pool integrity ═════════════════════════════════════════════
 console.log('\n═══ G2 · pool integrity (widened single-PV pools) ═══');

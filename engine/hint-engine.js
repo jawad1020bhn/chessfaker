@@ -128,8 +128,11 @@
       desc: 'Fastest sound win — relentless pressure and clean conversion, no gambling.'
     },
     2: {
+      // conversionFrom 120 (was 200): the counterplay-trades-as-bonus and
+      // finish-urgency vocabulary engages as soon as the position is clearly
+      // won, instead of waiting for a near-decisive material edge.
       id: 2, name: 'Ultra Attack', budgetScale: 1, diversity: 0.18,
-      openingCostCap: 40, conversionFrom: 200,
+      openingCostCap: 40, conversionFrom: 120,
       desc: 'The signature persona — fearless, organized attack with verified compensation.'
     },
     3: {
@@ -1590,6 +1593,17 @@
       evalLoss <= 120 && (bestScore - evalLoss) > 200;
     const budget = riskBudgetFor(profile, bestScore);
     if (evalLoss > budget && !compensated && !conversionTrade) return false;
+    // Win-preservation gate (F3 / G1). Once the position is clearly won the
+    // persona converts instead of creating chaos: the win-probability class
+    // must not move AT ALL (not merely "by less than two classes"), and the
+    // winning-tier budget caps the spend even when verifiedCompensation
+    // would otherwise excuse it. Compensation may justify spending in
+    // equality — never in conversion. The conversion-trade exemption is
+    // allowed through because it is defined to keep the position above +200.
+    if (profile.id !== 'normal' && bestScore > 200 && objectiveBest?.pv?.scoreType !== 'mate') {
+      if (evalLoss > budget && !conversionTrade) return false;
+      if (winClass(bestScore - evalLoss) !== winClass(bestScore)) return false;
+    }
     // Class-collapse guard: a style pick may never throw away two or more
     // win-probability classes (winning→equal-or-worse, equal→losing) without
     // verified compensation. Single-class dips stay governed by the budget,
@@ -1977,6 +1991,16 @@
         const humanWeight = humanWeightBase * (formParams ? formParams.naturalnessScale : 1);
         candidate.humanScore = candidate.styleScore + naturalness * humanWeight;
       }
+      // Winning lock (F3 / G1). In a clearly won position the sparring model
+      // gets no say at all: no naturalness reorder, no slip roll — technique
+      // decides, not variety. `sparringStrictness` extends the same lock down
+      // to a mere advantage for users who want sparring realism without ever
+      // leaking a win. A forced mate never reaches this block at all
+      // (`!bestIsWinningMate` above), which subsumes the "no slips inside
+      // mate in six" rule.
+      const winningLock = objectiveBest.score > 250 ||
+        (context.sparringStrictness === true && objectiveBest.score > 100);
+      if (!winningLock) {
       shortlist.sort((a, b) => b.humanScore - a.humanScore || b.styleScore - a.styleScore || b.utility - a.utility);
       // C2 — Human "in-character" selection, driven by the deterministic form
       // model. Instead of always playing the top-ranked candidate, weaker
@@ -2006,6 +2030,7 @@
           }
         }
       }
+      }
       const shortlisted = new Set(shortlist);
       eligible = [...shortlist, ...eligible.filter(candidate => !shortlisted.has(candidate))];
     }
@@ -2013,7 +2038,11 @@
 
     // Stable, tightly controlled variety for Chaos Attack only. It never applies
     // to mate lines and only considers a near-tied second attacking candidate.
+    // Variety is an equal-position luxury (G1): the swap is additionally
+    // gated on the objective evaluation, so a winning position never trades
+    // its top pick for a near-tie. Level I's diversity rate is already 0.
     if (!humanLikeMode && profile.diversity > 0 && !bestIsWinningMate && eligible.length > 1 &&
+        objectiveBest.score <= 100 &&
         eligible[0].styleScore - eligible[1].styleScore <= Math.max(2, Math.round(18 * ULTRA_BONUS_SCALE)) &&
         stableFenFraction(fen, profile.id) < profile.diversity) {
       [eligible[0], eligible[1]] = [eligible[1], eligible[0]];

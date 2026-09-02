@@ -68,9 +68,18 @@ const localLabel = policy.qualityClassFor({ source: 'local-engine', depth: 3 });
 assert.equal(localLabel, 'shallow-engine');
 
 // Opponent-aware Auto aggression (the dial's mapping).
-assert.equal(policy.suggestAggressionLevel(650), 3, 'below ~800 the persona runs Max Chaos');
-assert.equal(policy.suggestAggressionLevel(1100), 2, 'the club band keeps the signature level');
+// F2 — the Auto mapping is inverted: chaos pays only when the DEFENDER's
+// mistakes convert the attack, so the wildest level must never be aimed at
+// the weakest opposition. Auto must not return Level III for ANY input.
+assert.equal(policy.suggestAggressionLevel(650), 1, 'below 1000 gets the sound "fastest win" discipline');
+assert.equal(policy.suggestAggressionLevel(1200), 2, 'the club band keeps the signature level');
+assert.equal(policy.suggestAggressionLevel(1400), 2, '1000–1400 is at most Level II');
 assert.equal(policy.suggestAggressionLevel(1750), 1, 'strong opposition gets the sound discipline');
 assert.equal(policy.suggestAggressionLevel(null), null, 'unknown ratings fall back outside the mapping');
+assert.equal(policy.suggestAggressionLevel(undefined), null, 'a missing rating is unknown, not weak');
+for (let rating = 100; rating <= 4000; rating += 50) {
+  assert.notEqual(policy.suggestAggressionLevel(rating), 3,
+    `Auto must never select Max Chaos (rating ${rating}) — Level III is an explicit user choice only`);
+}
 
 console.log('analysis-contract tests passed');

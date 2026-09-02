@@ -54,16 +54,26 @@ assert.equal(p1.rating, 1000);
 assert.equal(form.paramsFor(null, fen, 0), null);
 form.paramsFor(session, fen, Number.NaN);
 
-// ── Winning relaxation is score-based only ─────────────────────────────
+// ── F3: winning FOCUS is score-based only. The clause used to run the
+// other way — a winning position widened the pool by 60% and raised the slip
+// rate by 50%, so the sparring model played its loosest chess exactly where
+// the game is decided. A modestly wider pool is still allowed; a higher slip
+// rate is not.
 const equalParams = form.paramsFor(session, fen, 0);
 const winningParams = form.paramsFor(session, fen, 800);
 const losingParams = form.paramsFor(session, fen, -400);
 assert.ok(winningParams.marginScale > equalParams.marginScale,
-  'clearly winning positions relax the choice pool');
-assert.ok(winningParams.slipChance > equalParams.slipChance,
-  'clearly winning positions slip more (humans stop calculating precisely)');
+  'clearly winning positions still consider a modestly wider in-character pool');
+assert.ok(winningParams.slipChance < equalParams.slipChance,
+  'clearly winning positions slip LESS — the model focuses to convert');
+assert.ok(winningParams.marginScale <= equalParams.marginScale * 1.25,
+  'the widened pool stays modest (<= +25%), it is not a free-for-all');
 assert.ok(losingParams.marginScale < equalParams.marginScale,
   'losing positions tighten up slightly');
+// The relaxation curve must saturate: at WIN_FULL and beyond nothing grows.
+const atFull = form.paramsFor(session, fen, 1050);
+const beyond = form.paramsFor(session, fen, 4000);
+assert.ok(beyond.slipChance <= atFull.slipChance, 'slip chance never rises past the winning threshold');
 
 // ── Integration: human-like selection stays safe under the form model ──
 const attackFen = '4k3/8/8/8/8/8/8/3Q2K1 w - - 0 1';

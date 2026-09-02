@@ -81,6 +81,9 @@
     bookFirstOpenings: false,
     humanLikeMode: false,
     sparringStrength: 1100,
+    // Strict sparring: no human variety once the position is ahead at all.
+    // (Above a clear win the engine locks the pick regardless — G1.)
+    sparringStrictness: false,
     autoAnalyze: true,
     showThreats: true,
     showCriticalMoments: true,
@@ -673,6 +676,7 @@
           aggressionLevel: normalizeAggression(normalizeStyle(migrated.style), migrated.aggressionLevel),
           earlyKingHuntEnabled: migrated.earlyKingHuntEnabled === true,
           bookFirstOpenings: migrated.bookFirstOpenings === true,
+          sparringStrictness: migrated.sparringStrictness === true,
           analysisQuality: window.AnalysisPolicy
             ? window.AnalysisPolicy.normalizeQuality(migrated.analysisQuality)
             : (migrated.analysisQuality || 'auto'),
@@ -753,6 +757,7 @@
       'setting-book-first': settings.bookFirstOpenings,
       'setting-human-like-mode': settings.humanLikeMode,
       'setting-sparring-strength': settings.sparringStrength,
+      'setting-sparring-strictness': settings.sparringStrictness,
       'setting-auto-analyze': settings.autoAnalyze,
       'setting-show-threats': settings.showThreats,
       'setting-show-critical-moments': settings.showCriticalMoments,
@@ -770,6 +775,8 @@
     if (humanStatus) humanStatus.textContent = settings.humanLikeMode ? 'On' : 'Off';
     const strengthRow = document.getElementById('sparring-strength-row');
     if (strengthRow) strengthRow.hidden = !settings.humanLikeMode;
+    const strictnessRow = document.getElementById('sparring-strictness-row');
+    if (strictnessRow) strictnessRow.hidden = !settings.humanLikeMode;
     const strengthOutput = document.getElementById('sparring-strength-value');
     if (strengthOutput) strengthOutput.textContent = String(settings.sparringStrength);
     const thinkingNote = document.getElementById('human-thinking-note');
@@ -956,6 +963,7 @@
         const out = document.getElementById('sparring-strength-value');
         if (out) out.textContent = String(settings.sparringStrength);
       },
+      'setting-sparring-strictness': (v) => { settings.sparringStrictness = v === true; },
       'setting-auto-analyze': (v) => { settings.autoAnalyze = v; },
       'setting-show-threats': (v) => { settings.showThreats = v; },
       'setting-show-critical-moments': (v) => { settings.showCriticalMoments = v; },
@@ -972,7 +980,7 @@
         handler(val);
         const savePromise = saveSettings();
         applySettingsToUI();
-        if ((id === 'setting-style' || id === 'setting-book-first' || id === 'setting-aggression' || id === 'setting-human-like-mode' || id === 'setting-early-king-hunt' || id === 'setting-show-threats') && lastAnalysis) {
+        if ((id === 'setting-style' || id === 'setting-book-first' || id === 'setting-aggression' || id === 'setting-human-like-mode' || id === 'setting-sparring-strictness' || id === 'setting-early-king-hunt' || id === 'setting-show-threats') && lastAnalysis) {
           humanPlanState = null;
           renderAnalysis(lastAnalysis);
           // Human mode changes routing policy too (steady depth, max MultiPV),
