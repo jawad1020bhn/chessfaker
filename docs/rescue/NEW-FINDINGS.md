@@ -32,7 +32,11 @@ a deleted directory.
 
 ## New findings
 
-### N1 (P1, Phase 0) — `background.js` migration would erase a restored Normal preference
+Statuses: **fixed** = landed on this branch with a test; **guard** = pinned by
+an assertion instead of a code change.
+
+
+### N1 (P1, Phase 0) — **fixed** — `background.js` migration would erase a restored Normal preference
 `background.js:68` sets `normalized.style = DEFAULT_SETTINGS.style`
 unconditionally, and `background.js:2026–2032` already contains a *correct*
 three-way style migration that `normalizeSettings()` then overwrites. Once
@@ -42,7 +46,7 @@ normalization. **Fix:** honour a valid stored `normal` / `aggressive` /
 `super_ultra_aggressive`, map the four retired style ids to Ultra, and fall
 back to `normal` for anything else.
 
-### N2 (P1, Phase 0) — Normal's `evalLoss` metadata was mate-blind
+### N2 (P1, Phase 0) — **fixed** — Normal's `evalLoss` metadata was mate-blind
 The `profile.id === 'normal'` branch in `selectEngineLane` computed
 `evalLoss = max(0, objectiveBest.score - entry.score)` for *all* score types.
 With a mate-in-2 best (`score = 2`) and a +800cp candidate, that yields
@@ -50,7 +54,7 @@ With a mate-in-2 best (`score = 2`) and a +800cp candidate, that yields
 mate. The brief's §2.2.4 mate discipline (non-mating candidates get
 `evalLoss = Infinity`) is now applied on the Normal path too.
 
-### N3 (P2, Phase 1) — `conversionFrom` is read only through `profile.aggression`
+### N3 (P2, Phase 1) — **fixed** — `conversionFrom` is read only through `profile.aggression`
 `selectEngineLane` reads `profile.aggression?.conversionFrom ?? 200`, and
 `applyAggressionLevel` is the only thing that sets `profile.aggression` — and
 it early-returns for non-ultra profiles. So the Normal and Aggressive profiles
@@ -59,3 +63,23 @@ regression (neither profile existed as a product before Phase 0), but it
 matters now that they are selectable: **Fix:** `riskBudgetFor` / conversion
 resolution now falls back to a profile-level `conversionFrom`, with the
 profiles carrying 200 explicitly.
+
+### N4 (P1, Phase 0) — **fixed** — `promoteBookWithinTolerance` crashed on a single-PV engine lane
+Found by the new book-first test, not by reading. `selectEngineLane` returns
+a one-PV pool **untouched** (spec 2.2.1 pass-through), so those PVs carry no
+`_styleAnalysis` at all. `promoteBookWithinTolerance` read
+`pv._styleAnalysis.eligible` unguarded, so a mixed pool of one chess-api line
+plus Masters data — an ordinary position under Normal — would have thrown
+inside `selectPVForStyle`.
+**Fix:** optional chaining plus a `{}` spread default; regression test in
+`tests/hint-engine.test.js` (book promotion with a single engine PV).
+
+### N5 (P2, Phase 1) — **guard** — the first rescue harness measured the wrong thing
+The initial `scripts/rescue-gates.mjs` counted "pick != engine top line" as a
+sparring slip and reported 20/240 "slips while winning". Every one of the 20
+was the persona's own budgeted style choice (≤ the winning-tier budget, class
+preserved) — the metric was measuring the persona, not the form model.
+**Fix:** a slip is now defined as deviation from the *non-sparring* pick for
+the same style and dial. Cross-checked against the project's independent
+probe: 8/24 at 600 and 2/24 at 1600, the same numbers
+`scripts/style-efficacy-probe.mjs` reports. Logged as assumption A4.
