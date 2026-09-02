@@ -119,6 +119,40 @@
     return 1;
   }
 
+  // ── Phase 4: strength-gated divergence ────────────────────────────────
+  // "Genuinely different from the engine" and "beats a strong opponent" are in
+  // direct conflict: a different move is, by definition, usually a worse move,
+  // and above club level the opponent punishes it. So the persona is a real
+  // attacker where that pays and converges to the objective move where it does
+  // not. This is the single policy every divergence knob reads.
+  //
+  //   divergenceScale  scales the divergence premium (0 = never reward being
+  //                    different for its own sake)
+  //   maxDivergenceCp  hard ceiling on the eval a non-objective pick may cost
+  //   attackLane       whether generated (non-engine) candidates are produced
+  //   objectiveOnly    the persona plays the engine's move; style is
+  //                    presentation only
+  //
+  // An UNKNOWN rating is treated as the sound band, never as full chaos: a
+  // missing scrape must make the hint safer, not wilder.
+  const DIVERGENCE_BANDS = Object.freeze({
+    novice: { band: 'novice', level: 1, divergenceScale: 1, maxDivergenceCp: 120, attackLane: true, objectiveOnly: false },
+    club: { band: 'club', level: 2, divergenceScale: 0.7, maxDivergenceCp: 60, attackLane: true, objectiveOnly: false },
+    sound: { band: 'sound', level: 1, divergenceScale: 0.35, maxDivergenceCp: 30, attackLane: false, objectiveOnly: false },
+    strong: { band: 'strong', level: 1, divergenceScale: 0.15, maxDivergenceCp: 15, attackLane: false, objectiveOnly: false },
+    expert: { band: 'expert', level: 1, divergenceScale: 0, maxDivergenceCp: 0, attackLane: false, objectiveOnly: true }
+  });
+
+  function divergencePolicyFor(rating) {
+    const n = Number(rating);
+    if (!Number.isFinite(n) || n < 100 || n > 4000) return DIVERGENCE_BANDS.sound;
+    if (n < 1000) return DIVERGENCE_BANDS.novice;
+    if (n <= 1300) return DIVERGENCE_BANDS.club;
+    if (n <= 1400) return DIVERGENCE_BANDS.sound;
+    if (n <= 1700) return DIVERGENCE_BANDS.strong;
+    return DIVERGENCE_BANDS.expert;
+  }
+
   function clampProviderLines(multiPv) {
     return Math.max(1, Math.min(MAX_PROVIDER_LINES, Number(multiPv) || 2));
   }
@@ -197,6 +231,8 @@
 
   const exported = {
     suggestAggressionLevel,
+    divergencePolicyFor,
+    DIVERGENCE_BANDS,
     QUALITY_IDS,
     QUALITY_PROFILES,
     QUALITY_LABELS,

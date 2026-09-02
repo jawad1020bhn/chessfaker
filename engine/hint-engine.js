@@ -48,6 +48,45 @@
   // divergence premium must genuinely overcome this uncertainty before a
   // generated move can take the primary slot.
   const ATTACK_CANDIDATE_PENALTY_CP = 40;
+  // Phase 2: the flat 40cp was a fiction — it let a depth-5 pawn move out-bid
+  // a depth-18 cloud line by accident. Price the uncertainty by the DEPTH GAP
+  // between the authoritative line and the generated extra.
+  function attackCandidatePenaltyCp(objectiveDepth, candidateDepth) {
+    const gap = Math.max(0, (Number(objectiveDepth) || 0) - (Number(candidateDepth) || 0));
+    return Math.min(180, ATTACK_CANDIDATE_PENALTY_CP + gap * 8);
+  }
+
+  // Phase 4: every divergence knob reads one policy, resolved from the
+  // opponent rating (AnalysisPolicy.divergencePolicyFor). Unknown rating =>
+  // the sound band, never full chaos.
+  // Mirrors AnalysisPolicy.DIVERGENCE_BANDS so the ranker still gates itself
+  // correctly in contexts where the policy module is not loaded (tests, older
+  // panels). AnalysisPolicy stays authoritative when present.
+  const FALLBACK_DIVERGENCE_BANDS = Object.freeze({
+    novice: { band: 'novice', level: 1, divergenceScale: 1, maxDivergenceCp: 120, attackLane: true, objectiveOnly: false },
+    club: { band: 'club', level: 2, divergenceScale: 0.7, maxDivergenceCp: 60, attackLane: true, objectiveOnly: false },
+    sound: { band: 'sound', level: 1, divergenceScale: 0.35, maxDivergenceCp: 30, attackLane: false, objectiveOnly: false },
+    strong: { band: 'strong', level: 1, divergenceScale: 0.15, maxDivergenceCp: 15, attackLane: false, objectiveOnly: false },
+    expert: { band: 'expert', level: 1, divergenceScale: 0, maxDivergenceCp: 0, attackLane: false, objectiveOnly: true }
+  });
+  const DEFAULT_DIVERGENCE_POLICY = FALLBACK_DIVERGENCE_BANDS.sound;
+  function fallbackDivergencePolicy(rating) {
+    const n = Number(rating);
+    if (!Number.isFinite(n) || n < 100 || n > 4000) return FALLBACK_DIVERGENCE_BANDS.sound;
+    if (n < 1000) return FALLBACK_DIVERGENCE_BANDS.novice;
+    if (n <= 1300) return FALLBACK_DIVERGENCE_BANDS.club;
+    if (n <= 1400) return FALLBACK_DIVERGENCE_BANDS.sound;
+    if (n <= 1700) return FALLBACK_DIVERGENCE_BANDS.strong;
+    return FALLBACK_DIVERGENCE_BANDS.expert;
+  }
+  function resolveDivergencePolicy(context = {}) {
+    if (context.divergencePolicy && typeof context.divergencePolicy === 'object') return context.divergencePolicy;
+    const policy = (typeof globalThis !== 'undefined' && globalThis.AnalysisPolicy) || null;
+    if (policy && typeof policy.divergencePolicyFor === 'function') {
+      return policy.divergencePolicyFor(context.opponentRating);
+    }
+    return fallbackDivergencePolicy(context.opponentRating);
+  }
 
   // ─── Playing Styles ────────────────────────────────────────────────
   // Three user-selectable styles. `normal` is the factory default and the
@@ -1047,6 +1086,70 @@
     if (type === 'q' && (dr === 0 || dc === 0 || Math.abs(dr) === Math.abs(dc))) return isPathClear(board, row, col, targetRow, targetCol);
     return false;
   }
+  // ── Phase 1 vocabulary: threat-grounded primitives ────────────────────
+  // These three helpers exist so "storm", "penetration" and "pressure" can
+  // only be claimed when something is actually threatened. Before Phase 1 the
+  // counters were proximity-based, so a bishop on the far side of the board
+  // earned "king pressure" and a center recapture earned "pawn storm".
+  const KING_ZONE_STRIKE_RANGE = 3;
+
+  function chebyshev(aRow, aCol, bRow, bCol) {
+    return Math.max(Math.abs(aRow - bRow), Math.abs(aCol - bCol));
+  }
+
+  function kingZoneSquares(kingPos) {
+    const zone = [];
+    if (!kingPos) return zone;
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      const tr = kingPos.row + dr, tc = kingPos.col + dc;
+      if (tr >= 0 && tr < 8 && tc >= 0 && tc < 8) zone.push([tr, tc]);
+    }
+    return zone;
+  }
+
+  // A zone attack is CONCRETE when it hits the king itself, hits a piece that
+  // is standing in the zone (a defender or shield pawn the defender must
+  // answer for), or comes from genuine striking range. A long-range sweep of
+  // an empty zone square from the other end of the board is not pressure.
+  function concreteZoneAttack(board, row, col, targetRow, targetCol, kingPos) {
+    if (!pieceAttacksSquare(board, row, col, targetRow, targetCol)) return false;
+    if (targetRow === kingPos.row && targetCol === kingPos.col) return true;
+    if (board[targetRow][targetCol]) return true;
+    return chebyshev(row, col, kingPos.row, kingPos.col) <= KING_ZONE_STRIKE_RANGE;
+  }
+
+  // Does this piece threaten anything at all — an enemy piece, or a square in
+  // the enemy king's zone? Used to qualify "penetration".
+  function pieceHasConcreteThreat(board, row, col, attackerIsWhite, enemyKing) {
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+      const target = board[r][c];
+      if (!target || (target === target.toUpperCase()) === attackerIsWhite) continue;
+      if (pieceAttacksSquare(board, row, col, r, c)) return true;
+    }
+    if (!enemyKing) return false;
+    for (const [tr, tc] of kingZoneSquares(enemyKing)) {
+      if (concreteZoneAttack(board, row, col, tr, tc, enemyKing)) return true;
+    }
+    return false;
+  }
+
+  // A storming pawn must hit the king's shelter: a square inside the king zone,
+  // or a shield pawn within two squares of the king. A pawn that merely stands
+  // on a wing file, or that captures toward the center, is not a storm.
+  function pawnStormsKing(board, row, col, attackerIsWhite, enemyKing) {
+    if (!enemyKing) return false;
+    for (const [tr, tc] of kingZoneSquares(enemyKing)) {
+      if (pieceAttacksSquare(board, row, col, tr, tc)) return true;
+    }
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+      const target = board[r][c];
+      if (!target || target.toLowerCase() !== 'p') continue;
+      if ((target === target.toUpperCase()) === attackerIsWhite) continue;
+      if (chebyshev(r, c, enemyKing.row, enemyKing.col) > 2) continue;
+      if (pieceAttacksSquare(board, row, col, r, c)) return true;
+    }
+    return false;
+  }
 
   function kingZonePressure(board, attackerIsWhite, kingPos) {
     if (!kingPos) return { attackers: 0, pressure: 0, attackedSquares: 0 };
@@ -1055,10 +1158,8 @@
     for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
       const piece = board[row][col];
       if (!piece || (piece === piece.toUpperCase()) !== attackerIsWhite) continue;
-      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
-        const tr = kingPos.row + dr, tc = kingPos.col + dc;
-        if (tr < 0 || tr > 7 || tc < 0 || tc > 7) continue;
-        if (pieceAttacksSquare(board, row, col, tr, tc)) {
+      for (const [tr, tc] of kingZoneSquares(kingPos)) {
+        if (concreteZoneAttack(board, row, col, tr, tc, kingPos)) {
           attackingPieces.add(`${row},${col}`);
           attackedZone.add(`${tr},${tc}`);
         }
@@ -1105,18 +1206,23 @@
     return false;
   }
 
+  // Terrain counters, Phase 1 semantics. A piece is only counted as having
+  // "penetrated" when it threatens something from the enemy half, and a pawn
+  // is only counted as "storming" when it hits the king's shelter. Proximity
+  // alone buys nothing.
   function attackTerrain(board, playerIsWhite, opponentKing) {
     const isEnemyHalf = row => playerIsWhite ? row <= 3 : row >= 4;
     const isDeepEnemyHalf = row => playerIsWhite ? row <= 1 : row >= 6;
-    const attackFiles = opponentKing?.col >= 4 ? [5, 6, 7] : [0, 1, 2];
     let penetration = 0, deepPenetration = 0, pawnStorm = 0, advancedPawns = 0;
     for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
       const piece = board[row][col];
       if (!piece || (piece === piece.toUpperCase()) !== playerIsWhite || piece.toLowerCase() === 'k') continue;
-      if (isEnemyHalf(row)) penetration++;
-      if (isDeepEnemyHalf(row)) deepPenetration++;
+      if (isEnemyHalf(row) && pieceHasConcreteThreat(board, row, col, playerIsWhite, opponentKing)) {
+        penetration++;
+        if (isDeepEnemyHalf(row)) deepPenetration++;
+      }
       if (piece.toLowerCase() === 'p') {
-        if (attackFiles.includes(col) && isEnemyHalf(row)) pawnStorm++;
+        if (pawnStormsKing(board, row, col, playerIsWhite, opponentKing)) pawnStorm++;
         if (playerIsWhite ? row <= 2 : row >= 5) advancedPawns++;
       }
     }
@@ -1128,20 +1234,18 @@
   // its "hypothetical candidates never mutate game history" invariant.
 
   // A1 — Attack Unit System: king-zone attacker quality weighted by piece type
-  // (N/B = 2, R = 3, Q = 5) rather than raw attacker count.
+  // (N/B = 2, R = 3, Q = 5) rather than raw attacker count. Phase 1: only
+  // CONCRETE zone attacks count (see concreteZoneAttack), so a distant sweep
+  // of an empty zone square no longer adds units.
   function countAttackUnits(board, attackerIsWhite, kingPos) {
     if (!kingPos) return 0;
     let units = 0;
-    const zone = [];
-    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
-      const tr = kingPos.row + dr, tc = kingPos.col + dc;
-      if (tr >= 0 && tr < 8 && tc >= 0 && tc < 8) zone.push([tr, tc]);
-    }
+    const zone = kingZoneSquares(kingPos);
     for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
       const piece = board[row][col];
       if (!piece || (piece === piece.toUpperCase()) !== attackerIsWhite) continue;
       for (const [tr, tc] of zone) {
-        if (pieceAttacksSquare(board, row, col, tr, tc)) {
+        if (concreteZoneAttack(board, row, col, tr, tc, kingPos)) {
           units += ({ p: 1, n: 2, b: 2, r: 3, q: 5, k: 0 })[piece.toLowerCase()] || 0;
           break;
         }
@@ -1173,12 +1277,14 @@
     return count;
   }
 
-  // A3 — Structural complexity: sacs and central pawn advances raise it, equal
-  // minor/rook trades (simplification) lower it. Signed value.
+  // A3 — Structural complexity: sacs and FORCING central pawn advances raise
+  // it, equal minor/rook trades (simplification) lower it. Signed value.
+  // Phase 1: a bare central push (nothing attacked, nothing forced) is not
+  // complexity — it is just a pawn move, and it used to earn credit.
   function structuralComplexityOf(candidate) {
     let value = 0;
     if (candidate.sacrifice) value += 2;
-    if (candidate.centralPawnAdvance) value += 1;
+    if (candidate.centralPawnAdvance && candidate.forcingContinuation) value += 1;
     if (candidate.equalMinorRookTrade) value -= 1.5;
     return value;
   }
@@ -1202,11 +1308,16 @@
 
   // A6 — Overload exploitation: capturing a defender near the king, or landing
   // where many enemy pieces are clustered in the king zone.
+  // Phase 1: a cluster of defenders around their OWN king is the normal state
+  // of a castled position — it is only an overload when we are actually
+  // pressing that zone. Without attack units bearing on the king, the cluster
+  // clause is silent (it used to fire for literally every legal move).
   function overloadScoreOf(candidate, after, playerIsWhite, enemyKing) {
     let score = 0;
     if (candidate.defenderRemoval) score += 1;
     const clustered = enemyKing ? countPiecesInZone(after, !playerIsWhite, enemyKing) : 0;
-    if (clustered >= 3) score += 1;
+    const pressing = Number(candidate.attackUnitsAfter) || 0;
+    if (clustered >= 3 && pressing >= 3 && (Number(candidate.attackUnitDelta) || 0) > 0) score += 1;
     return score;
   }
 
@@ -1311,12 +1422,40 @@
       PIECE_VALUES[piece.toLowerCase()] === PIECE_VALUES[captured.toLowerCase()];
     const greekGift = detectGreekGift(piece, from, to, captured, playerIsWhite, opponentKingBefore);
     const drawContemptScore = Math.abs(rawScore) < 50 ? -1 - (50 - Math.abs(rawScore)) / 50 : 0;
-    const overloadScore = overloadScoreOf({ defenderRemoval }, after, playerIsWhite, opponentKingAfter);
+    const overloadScore = overloadScoreOf(
+      { defenderRemoval, attackUnitsAfter, attackUnitDelta },
+      after, playerIsWhite, opponentKingAfter);
     const tempoThreatCount = multiThreatCount(after, to, playerIsWhite);
     const pressureDeltaForDevelopment = (pressureAfter.pressure - pressureBefore.pressure) +
       (pressureAfter.attackedSquares - pressureBefore.attackedSquares) * 0.5;
     const developmentWithAttack = isDevelopingMove(piece, from) &&
       (pressureDeltaForDevelopment > 0 || terrainAfter.penetration > terrainBefore.penetration || givesCheck);
+
+    // ── Phase 1: concreteness gates ──────────────────────────────────────
+    // "Increases king pressure" and "raises complexity" are claims about a
+    // THREAT this move creates. Compute the evidence explicitly instead of
+    // inferring it from a counter that moved.
+    const rawKingPressureDelta = (pressureAfter.pressure - pressureBefore.pressure) +
+      (pressureAfter.attackedSquares - pressureBefore.attackedSquares) * 0.5;
+    const moverBearsOnKingZone = Boolean(opponentKingAfter) &&
+      kingZoneSquares(opponentKingAfter).some(([tr, tc]) =>
+        concreteZoneAttack(after, destination.row, destination.col, tr, tc, opponentKingAfter));
+    const concreteKingThreat = Boolean(
+      givesCheck || defenderRemoval || opensKingFile || moverBearsOnKingZone || attackUnitDelta > 0
+    );
+    let centralAdvanceAttacksPiece = false;
+    if (centralPawnAdvance) {
+      for (let row = 0; row < 8 && !centralAdvanceAttacksPiece; row++) {
+        for (let col = 0; col < 8; col++) {
+          const target = after[row][col];
+          if (!target || (target === target.toUpperCase()) === playerIsWhite) continue;
+          if (pieceAttacksSquare(after, destination.row, destination.col, row, col)) {
+            centralAdvanceAttacksPiece = true;
+            break;
+          }
+        }
+      }
+    }
 
 // ── Chaos Attack feature deltas are computed by engine/chaos-attack.js
     // (the style lives there now). computeFeatures(ctx) returns the whole
@@ -1338,7 +1477,10 @@
       attackUnitDelta,
       practicalChancesScore,
       structuralComplexity: structuralComplexityOf({
-        sacrifice, centralPawnAdvance, equalMinorRookTrade
+        sacrifice, centralPawnAdvance, equalMinorRookTrade,
+        // Phase 1: a central push only raises complexity inside a forcing
+        // line (or when it attacks something) — never on its own.
+        forcingContinuation: forcingPly >= 2 || centralAdvanceAttacksPiece
       }),
       isGreekGift: greekGift.detected,
       drawContemptScore,
@@ -1349,8 +1491,13 @@
       losingMate: scoreType === 'mate' && rawScore < 0,
       forcingPly,
       playerForcingMoves,
-      kingPressureDelta: (pressureAfter.pressure - pressureBefore.pressure) +
-        (pressureAfter.attackedSquares - pressureBefore.attackedSquares) * 0.5,
+      // Phase 1: the raw delta is kept for diagnostics, but the scored
+      // `kingPressureDelta` is zero unless this move created a NEW concrete
+      // threat against the king (check, defender removed, opened line, the
+      // mover itself bearing on the zone, or a new attacker joining it).
+      kingPressureDeltaRaw: rawKingPressureDelta,
+      concreteKingThreat,
+      kingPressureDelta: concreteKingThreat ? rawKingPressureDelta : 0,
       attackersAfter: pressureAfter.attackers,
       ownKingDangerDelta: (ownDangerAfter.pressure - ownDangerBefore.pressure) +
         (ownDangerAfter.attackedSquares - ownDangerBefore.attackedSquares) * 0.5,
@@ -1566,7 +1713,8 @@
     // the same magnitude as the (already-scaled) attack vocabulary; it can
     // tip a near-tie toward the attacking alternative but can never out-vote
     // the hard gates, which run before scoring (styleSafetyAllows).
-    const divergenceWeight = Number(DIVERGENCE_PREMIUM[style.id]) || 0;
+    const divergenceScale = Number.isFinite(context.divergenceScale) ? context.divergenceScale : 1;
+    const divergenceWeight = (Number(DIVERGENCE_PREMIUM[style.id]) || 0) * divergenceScale;
     if (divergenceWeight && context.objectiveBestMove &&
         candidate.first && candidate.first !== context.objectiveBestMove) {
       const attackingEvidence = candidate.givesCheck ||
@@ -1814,7 +1962,11 @@
   }
 
   function selectEngineLane(pvs, fen, style, playerColor, context = {}) {
-    const profile = applyAggressionLevel(resolveStyleProfile(style), context.aggressionLevel);
+    const divergence = resolveDivergencePolicy(context);
+    // Phase 4: above the club bands the persona IS the engine. The style layer
+    // keeps annotating, but it no longer buys a different move with eval.
+    const aggressionLevel = context.aggressionLevel != null ? context.aggressionLevel : divergence.level;
+    const profile = applyAggressionLevel(resolveStyleProfile(style), aggressionLevel);
     const earlyKingHuntEnabled = earlyKingHuntRequested(profile.id, context.earlyKingHuntEnabled);
     if (pvs.length === 1) {
       // A single-PV source cannot be re-ranked, but the opt-in still annotates
@@ -1866,7 +2018,7 @@
     // line does not cost "nothing". The old subtraction reported evalLoss 0
     // for a +800cp candidate next to a mate-in-2 (score 2), which made the
     // losing alternative look free.
-    if (profile.id === 'normal') {
+    if (profile.id === 'normal' || divergence.objectiveOnly === true) {
       const bestIsWinningMateForNormal = objectiveBest.pv.scoreType === 'mate' && objectiveBest.score > 0;
       return objective.map((entry, rank) => {
         let evalLoss;
@@ -1887,8 +2039,12 @@
             objectiveRank: rank + 1,
             styleRank: rank + 1,
             evalLoss,
-            reasons: ['objective best play'],
-            risks: [], mode: profile.id
+            reasons: [profile.id === 'normal'
+              ? 'objective best play'
+              : 'objective best play — the opponent is strong enough that divergence costs more than it wins'],
+            risks: [], mode: profile.id,
+            divergenceBand: divergence.band,
+            objectiveOnly: divergence.objectiveOnly === true && profile.id !== 'normal'
           }
         };
       });
@@ -1934,7 +2090,7 @@
       // Price that uncertainty into evalLoss before the safety gates and the
       // style contest see it — divergence may be sought, never assumed cheap.
       if (entry.pv.attackCandidate === true && Number.isFinite(evalLoss)) {
-        evalLoss += ATTACK_CANDIDATE_PENALTY_CP;
+        evalLoss += attackCandidatePenaltyCp(objectiveBest.pv.depth, entry.pv.depth);
         analysis.attackCandidate = true;
         analysis.candidateKind = entry.pv.candidateKind || 'candidate';
         analysis.candidateTag = entry.pv.candidateTag || 'attack line';
@@ -1946,9 +2102,22 @@
       if (benched) {
         analysis.poolBenched = true;
       }
-      const eligible = !benched && styleSafetyAllows(analysis, evalLoss, profile, objectiveBest, conversion);
+      // Phase 4 hard ceiling: a candidate that is not the objective best may
+      // never cost more than the band allows, whatever the style scorer says.
+      const objectiveFirst = objectiveBest.pv.pv?.[0];
+      const divergesFromObjective = Boolean(firstMove && objectiveFirst && firstMove !== objectiveFirst);
+      const withinDivergenceBand = !divergesFromObjective ||
+        (Number.isFinite(evalLoss) && evalLoss <= divergence.maxDivergenceCp);
+      if (!withinDivergenceBand) analysis.divergenceBlocked = divergence.band;
+      analysis.divergenceBand = divergence.band;
+      const eligible = !benched && withinDivergenceBand &&
+        styleSafetyAllows(analysis, evalLoss, profile, objectiveBest, conversion);
       const bonus = eligible
-        ? candidateStyleBonus(analysis, profile, { conversion, objectiveBestMove: objectiveBest.pv.pv?.[0] })
+        ? candidateStyleBonus(analysis, profile, {
+            conversion,
+            objectiveBestMove: objectiveFirst,
+            divergenceScale: divergence.divergenceScale
+          })
         : -Infinity;
       // Per-style eval cost. Normal is the strictest (1.5); Aggressive pays
       // 1.25 so checks and sustained forcing play can still overcome it;
@@ -1998,6 +2167,7 @@
         riskBudget: budget,
         eligible: candidate.eligible,
         localPool: candidate.pv.localPool === true,
+        divergenceBand: divergence.band,
         poolBenched: candidate.analysis.poolBenched === true,
         attackCandidate: candidate.analysis.attackCandidate === true
       }
@@ -2706,6 +2876,9 @@
     selectPVForStyle,
     selectEngineLane,
     analyzeCandidate,
+    // Exposed so the Phase 0 harness and the vocabulary regression suite can
+    // assert on the exact reasons a candidate is credited with.
+    candidateStyleBonus,
     PLAYING_STYLES,
     AGGRESSION_LEVELS,
     resolveAggressionLevel,

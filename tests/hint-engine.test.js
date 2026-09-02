@@ -239,10 +239,15 @@ const stormFen = '6k1/6pp/6P1/5P2/8/8/6PP/6K1 w - - 0 1';
 const stormAnalysis = engine.analyzeCandidate(stormFen, ['f5f6'], 'w', 10, 'cp', 20);
 assert.ok(stormAnalysis.penetration >= 2, 'advanced attacking pieces count as enemy-half penetration');
 assert.ok(stormAnalysis.pawnStorm >= 2, 'pawns advancing on the enemy king wing count as a pawn storm');
-const pawnStormAdvance = engine.analyzeCandidate('6k1/8/8/8/6P1/8/8/6K1 w - - 0 1', ['g4g5'], 'w', 10, 'cp', 20);
-assert.equal(pawnStormAdvance.pawnStormDelta, 1, 'only a new pawn-storm advance receives the style bonus');
+// Phase 1 vocabulary: a "storm" pawn must actually hit the king's shelter.
+// g4-g5 attacks f6/h6 — nothing the defender must answer — so it earns no
+// storm credit; g5-g6 attacks f7/h7 inside the king zone and does.
+const emptyBoardPush = engine.analyzeCandidate('6k1/8/8/8/6P1/8/8/6K1 w - - 0 1', ['g4g5'], 'w', 10, 'cp', 20);
+assert.equal(emptyBoardPush.pawnStormDelta, 0, 'a pawn push that threatens nothing is not a storm');
+const pawnStormAdvance = engine.analyzeCandidate('6k1/8/8/6P1/8/8/8/6K1 w - - 0 1', ['g5g6'], 'w', 10, 'cp', 20);
+assert.equal(pawnStormAdvance.pawnStormDelta, 1, 'only a new pawn-storm advance onto the king zone receives the style bonus');
 const invade = engine.analyzeCandidate('6k1/8/8/8/8/5N2/8/6K1 w - - 0 1', ['f3g5'], 'w', 10, 'cp', 20);
-assert.equal(invade.penetrationDelta, 1, 'only a move entering enemy territory receives penetration credit');
+assert.equal(invade.penetrationDelta, 1, 'only a move entering enemy territory with a threat receives penetration credit');
 
 // Chaos prefers strong attacks over merely quiet moves.
 const chaosRefFen = '6k1/7p/8/8/8/3Q4/8/6K1 w - - 0 1';
