@@ -13,6 +13,11 @@
 //   --mode fixtures   dump the attack vocabulary the persona reads in the
 //                     regression positions (13. f4 especially)
 //
+// Caveat: the on-device search is TIME-bounded, so self-play results depend on
+// machine load and are not bit-exact reproducible even with a fixed seed. Treat
+// the self-play tables as a smoke baseline (see docs/rescue/PHASE0-BASELINE.md);
+// the fixture mode is the deterministic evidence.
+//
 // Usage
 //   node scripts/strength-harness.mjs --mode fixtures
 //   node scripts/strength-harness.mjs --mode replay
