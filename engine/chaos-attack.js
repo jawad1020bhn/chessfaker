@@ -410,9 +410,16 @@
         return !isSquareAttacked(b, { row: r, col: c }, playerIsWhite ? 'b' : 'w');
       };
       if (captured && undefended(board, destination.row, destination.col, captured)) return true;
+      // Phase 1: the hit is only real if the target cannot simply answer by
+      // taking our attacker for free. A pawn recapture that "attacks" an
+      // undefended bishop which can just take it back is not a pounce.
+      const attackerSafe = isSquareAttacked(after, destination, playerIsWhite ? 'w' : 'b');
       for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
         if (!undefended(after, r, c, after[r][c])) continue;
-        if (pieceAttacksSquare(after, destination.row, destination.col, r, c)) return true;
+        if (!pieceAttacksSquare(after, destination.row, destination.col, r, c)) continue;
+        const targetCanTakeBack = pieceAttacksSquare(after, r, c, destination.row, destination.col);
+        if (targetCanTakeBack && !attackerSafe) continue;
+        return true;
       }
       return false;
     }
@@ -446,16 +453,43 @@
     }
 
     // ── Position-level exploitation ────────────────────────────────────
+    // ── Phase 1: what makes a pawn move a STORM ──────────────────────────
+    // A storming pawn hits the king's shelter: a square inside the king zone,
+    // or a shield pawn within two squares of the king. A pawn that captures
+    // toward the centre, or that merely stands on a wing file, is not a storm
+    // — that proximity-only reading is what labelled ...exf4 a "pawn storm".
+    function pawnHitsKingShelter(after, destination, playerIsWhite, enemyKing) {
+      if (!destination || !enemyKing) return false;
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+        const tr = enemyKing.row + dr, tc = enemyKing.col + dc;
+        if (tr < 0 || tr > 7 || tc < 0 || tc > 7) continue;
+        if (pieceAttacksSquare(after, destination.row, destination.col, tr, tc)) return true;
+      }
+      for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+        const target = after[r][c];
+        if (!target || target.toLowerCase() !== 'p') continue;
+        if ((target === target.toUpperCase()) === playerIsWhite) continue;
+        if (Math.max(Math.abs(r - enemyKing.row), Math.abs(c - enemyKing.col)) > 2) continue;
+        if (pieceAttacksSquare(after, destination.row, destination.col, r, c)) return true;
+      }
+      return false;
+    }
+
     function positionalHangingHit(after, destination, captured, playerIsWhite) {
       if (captured && captured.toLowerCase() !== 'k') {
         const capturedIsWhite = captured === captured.toUpperCase();
         if (capturedIsWhite !== playerIsWhite && !isSquareAttacked(after, destination, playerIsWhite ? 'b' : 'w')) return true;
       }
+      // Phase 1: attacking an undefended piece that can simply capture our
+      // attacker back is not "snapping up" anything.
+      const attackerSafe = isSquareAttacked(after, destination, playerIsWhite ? 'w' : 'b');
       for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
         const p = after[r][c];
         if (!p || (p === p.toUpperCase()) === playerIsWhite || p.toLowerCase() === 'k') continue;
         if (isSquareAttacked(after, { row: r, col: c }, playerIsWhite ? 'b' : 'w')) continue;
-        if (pieceAttacksSquare(after, destination.row, destination.col, r, c)) return true;
+        if (!pieceAttacksSquare(after, destination.row, destination.col, r, c)) continue;
+        if (pieceAttacksSquare(after, r, c, destination.row, destination.col) && !attackerSafe) continue;
+        return true;
       }
       return false;
     }
@@ -739,7 +773,9 @@
       if (type === 'p' && opponentKingAfter) {
         const manhattan = Math.abs(destination.row - opponentKingAfter.row) +
           Math.abs(destination.col - opponentKingAfter.col);
-        if (manhattan <= 4 && pressureDelta >= 0) return 'pawnWedge';
+        // Phase 1: a wedge has to bite on the shelter, not just stand near it.
+        if (manhattan <= 4 && pressureDelta >= 0 &&
+            pawnHitsKingShelter(after, destination, playerIsWhite, opponentKingAfter)) return 'pawnWedge';
       }
       return null;
     }
@@ -901,8 +937,13 @@
       // from its new square, so the opponent must react while the storm
       // rolls), and a storm launched while the enemy king is still sitting
       // uncastled in the centre (it can never pause to castle out).
+      // Phase 1: BOTH halves must hold — the pawn has to be storming the
+      // king's shelter AND to gain time doing it. Attacking any enemy piece
+      // from any square used to be enough, so every pawn recapture read as a
+      // storm "with tempo".
       let stormWithTempo = false;
-      if (pawnType === 'p' && destination) {
+      if (pawnType === 'p' && destination &&
+          pawnHitsKingShelter(after, destination, playerIsWhite, opponentKingAfter)) {
         for (let row = 0; row < 8 && !stormWithTempo; row++) {
           for (let col = 0; col < 8; col++) {
             const target = after[row][col];

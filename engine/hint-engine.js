@@ -1047,6 +1047,70 @@
     if (type === 'q' && (dr === 0 || dc === 0 || Math.abs(dr) === Math.abs(dc))) return isPathClear(board, row, col, targetRow, targetCol);
     return false;
   }
+  // ── Phase 1 vocabulary: threat-grounded primitives ────────────────────
+  // These three helpers exist so "storm", "penetration" and "pressure" can
+  // only be claimed when something is actually threatened. Before Phase 1 the
+  // counters were proximity-based, so a bishop on the far side of the board
+  // earned "king pressure" and a center recapture earned "pawn storm".
+  const KING_ZONE_STRIKE_RANGE = 3;
+
+  function chebyshev(aRow, aCol, bRow, bCol) {
+    return Math.max(Math.abs(aRow - bRow), Math.abs(aCol - bCol));
+  }
+
+  function kingZoneSquares(kingPos) {
+    const zone = [];
+    if (!kingPos) return zone;
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      const tr = kingPos.row + dr, tc = kingPos.col + dc;
+      if (tr >= 0 && tr < 8 && tc >= 0 && tc < 8) zone.push([tr, tc]);
+    }
+    return zone;
+  }
+
+  // A zone attack is CONCRETE when it hits the king itself, hits a piece that
+  // is standing in the zone (a defender or shield pawn the defender must
+  // answer for), or comes from genuine striking range. A long-range sweep of
+  // an empty zone square from the other end of the board is not pressure.
+  function concreteZoneAttack(board, row, col, targetRow, targetCol, kingPos) {
+    if (!pieceAttacksSquare(board, row, col, targetRow, targetCol)) return false;
+    if (targetRow === kingPos.row && targetCol === kingPos.col) return true;
+    if (board[targetRow][targetCol]) return true;
+    return chebyshev(row, col, kingPos.row, kingPos.col) <= KING_ZONE_STRIKE_RANGE;
+  }
+
+  // Does this piece threaten anything at all — an enemy piece, or a square in
+  // the enemy king's zone? Used to qualify "penetration".
+  function pieceHasConcreteThreat(board, row, col, attackerIsWhite, enemyKing) {
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+      const target = board[r][c];
+      if (!target || (target === target.toUpperCase()) === attackerIsWhite) continue;
+      if (pieceAttacksSquare(board, row, col, r, c)) return true;
+    }
+    if (!enemyKing) return false;
+    for (const [tr, tc] of kingZoneSquares(enemyKing)) {
+      if (concreteZoneAttack(board, row, col, tr, tc, enemyKing)) return true;
+    }
+    return false;
+  }
+
+  // A storming pawn must hit the king's shelter: a square inside the king zone,
+  // or a shield pawn within two squares of the king. A pawn that merely stands
+  // on a wing file, or that captures toward the center, is not a storm.
+  function pawnStormsKing(board, row, col, attackerIsWhite, enemyKing) {
+    if (!enemyKing) return false;
+    for (const [tr, tc] of kingZoneSquares(enemyKing)) {
+      if (pieceAttacksSquare(board, row, col, tr, tc)) return true;
+    }
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+      const target = board[r][c];
+      if (!target || target.toLowerCase() !== 'p') continue;
+      if ((target === target.toUpperCase()) === attackerIsWhite) continue;
+      if (chebyshev(r, c, enemyKing.row, enemyKing.col) > 2) continue;
+      if (pieceAttacksSquare(board, row, col, r, c)) return true;
+    }
+    return false;
+  }
 
   function kingZonePressure(board, attackerIsWhite, kingPos) {
     if (!kingPos) return { attackers: 0, pressure: 0, attackedSquares: 0 };
@@ -1055,10 +1119,8 @@
     for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
       const piece = board[row][col];
       if (!piece || (piece === piece.toUpperCase()) !== attackerIsWhite) continue;
-      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
-        const tr = kingPos.row + dr, tc = kingPos.col + dc;
-        if (tr < 0 || tr > 7 || tc < 0 || tc > 7) continue;
-        if (pieceAttacksSquare(board, row, col, tr, tc)) {
+      for (const [tr, tc] of kingZoneSquares(kingPos)) {
+        if (concreteZoneAttack(board, row, col, tr, tc, kingPos)) {
           attackingPieces.add(`${row},${col}`);
           attackedZone.add(`${tr},${tc}`);
         }
@@ -1105,18 +1167,23 @@
     return false;
   }
 
+  // Terrain counters, Phase 1 semantics. A piece is only counted as having
+  // "penetrated" when it threatens something from the enemy half, and a pawn
+  // is only counted as "storming" when it hits the king's shelter. Proximity
+  // alone buys nothing.
   function attackTerrain(board, playerIsWhite, opponentKing) {
     const isEnemyHalf = row => playerIsWhite ? row <= 3 : row >= 4;
     const isDeepEnemyHalf = row => playerIsWhite ? row <= 1 : row >= 6;
-    const attackFiles = opponentKing?.col >= 4 ? [5, 6, 7] : [0, 1, 2];
     let penetration = 0, deepPenetration = 0, pawnStorm = 0, advancedPawns = 0;
     for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
       const piece = board[row][col];
       if (!piece || (piece === piece.toUpperCase()) !== playerIsWhite || piece.toLowerCase() === 'k') continue;
-      if (isEnemyHalf(row)) penetration++;
-      if (isDeepEnemyHalf(row)) deepPenetration++;
+      if (isEnemyHalf(row) && pieceHasConcreteThreat(board, row, col, playerIsWhite, opponentKing)) {
+        penetration++;
+        if (isDeepEnemyHalf(row)) deepPenetration++;
+      }
       if (piece.toLowerCase() === 'p') {
-        if (attackFiles.includes(col) && isEnemyHalf(row)) pawnStorm++;
+        if (pawnStormsKing(board, row, col, playerIsWhite, opponentKing)) pawnStorm++;
         if (playerIsWhite ? row <= 2 : row >= 5) advancedPawns++;
       }
     }
@@ -1128,20 +1195,18 @@
   // its "hypothetical candidates never mutate game history" invariant.
 
   // A1 — Attack Unit System: king-zone attacker quality weighted by piece type
-  // (N/B = 2, R = 3, Q = 5) rather than raw attacker count.
+  // (N/B = 2, R = 3, Q = 5) rather than raw attacker count. Phase 1: only
+  // CONCRETE zone attacks count (see concreteZoneAttack), so a distant sweep
+  // of an empty zone square no longer adds units.
   function countAttackUnits(board, attackerIsWhite, kingPos) {
     if (!kingPos) return 0;
     let units = 0;
-    const zone = [];
-    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
-      const tr = kingPos.row + dr, tc = kingPos.col + dc;
-      if (tr >= 0 && tr < 8 && tc >= 0 && tc < 8) zone.push([tr, tc]);
-    }
+    const zone = kingZoneSquares(kingPos);
     for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
       const piece = board[row][col];
       if (!piece || (piece === piece.toUpperCase()) !== attackerIsWhite) continue;
       for (const [tr, tc] of zone) {
-        if (pieceAttacksSquare(board, row, col, tr, tc)) {
+        if (concreteZoneAttack(board, row, col, tr, tc, kingPos)) {
           units += ({ p: 1, n: 2, b: 2, r: 3, q: 5, k: 0 })[piece.toLowerCase()] || 0;
           break;
         }
@@ -1173,12 +1238,14 @@
     return count;
   }
 
-  // A3 — Structural complexity: sacs and central pawn advances raise it, equal
-  // minor/rook trades (simplification) lower it. Signed value.
+  // A3 — Structural complexity: sacs and FORCING central pawn advances raise
+  // it, equal minor/rook trades (simplification) lower it. Signed value.
+  // Phase 1: a bare central push (nothing attacked, nothing forced) is not
+  // complexity — it is just a pawn move, and it used to earn credit.
   function structuralComplexityOf(candidate) {
     let value = 0;
     if (candidate.sacrifice) value += 2;
-    if (candidate.centralPawnAdvance) value += 1;
+    if (candidate.centralPawnAdvance && candidate.forcingContinuation) value += 1;
     if (candidate.equalMinorRookTrade) value -= 1.5;
     return value;
   }
@@ -1202,11 +1269,16 @@
 
   // A6 — Overload exploitation: capturing a defender near the king, or landing
   // where many enemy pieces are clustered in the king zone.
+  // Phase 1: a cluster of defenders around their OWN king is the normal state
+  // of a castled position — it is only an overload when we are actually
+  // pressing that zone. Without attack units bearing on the king, the cluster
+  // clause is silent (it used to fire for literally every legal move).
   function overloadScoreOf(candidate, after, playerIsWhite, enemyKing) {
     let score = 0;
     if (candidate.defenderRemoval) score += 1;
     const clustered = enemyKing ? countPiecesInZone(after, !playerIsWhite, enemyKing) : 0;
-    if (clustered >= 3) score += 1;
+    const pressing = Number(candidate.attackUnitsAfter) || 0;
+    if (clustered >= 3 && pressing >= 3 && (Number(candidate.attackUnitDelta) || 0) > 0) score += 1;
     return score;
   }
 
@@ -1311,12 +1383,40 @@
       PIECE_VALUES[piece.toLowerCase()] === PIECE_VALUES[captured.toLowerCase()];
     const greekGift = detectGreekGift(piece, from, to, captured, playerIsWhite, opponentKingBefore);
     const drawContemptScore = Math.abs(rawScore) < 50 ? -1 - (50 - Math.abs(rawScore)) / 50 : 0;
-    const overloadScore = overloadScoreOf({ defenderRemoval }, after, playerIsWhite, opponentKingAfter);
+    const overloadScore = overloadScoreOf(
+      { defenderRemoval, attackUnitsAfter, attackUnitDelta },
+      after, playerIsWhite, opponentKingAfter);
     const tempoThreatCount = multiThreatCount(after, to, playerIsWhite);
     const pressureDeltaForDevelopment = (pressureAfter.pressure - pressureBefore.pressure) +
       (pressureAfter.attackedSquares - pressureBefore.attackedSquares) * 0.5;
     const developmentWithAttack = isDevelopingMove(piece, from) &&
       (pressureDeltaForDevelopment > 0 || terrainAfter.penetration > terrainBefore.penetration || givesCheck);
+
+    // ── Phase 1: concreteness gates ──────────────────────────────────────
+    // "Increases king pressure" and "raises complexity" are claims about a
+    // THREAT this move creates. Compute the evidence explicitly instead of
+    // inferring it from a counter that moved.
+    const rawKingPressureDelta = (pressureAfter.pressure - pressureBefore.pressure) +
+      (pressureAfter.attackedSquares - pressureBefore.attackedSquares) * 0.5;
+    const moverBearsOnKingZone = Boolean(opponentKingAfter) &&
+      kingZoneSquares(opponentKingAfter).some(([tr, tc]) =>
+        concreteZoneAttack(after, destination.row, destination.col, tr, tc, opponentKingAfter));
+    const concreteKingThreat = Boolean(
+      givesCheck || defenderRemoval || opensKingFile || moverBearsOnKingZone || attackUnitDelta > 0
+    );
+    let centralAdvanceAttacksPiece = false;
+    if (centralPawnAdvance) {
+      for (let row = 0; row < 8 && !centralAdvanceAttacksPiece; row++) {
+        for (let col = 0; col < 8; col++) {
+          const target = after[row][col];
+          if (!target || (target === target.toUpperCase()) === playerIsWhite) continue;
+          if (pieceAttacksSquare(after, destination.row, destination.col, row, col)) {
+            centralAdvanceAttacksPiece = true;
+            break;
+          }
+        }
+      }
+    }
 
 // ── Chaos Attack feature deltas are computed by engine/chaos-attack.js
     // (the style lives there now). computeFeatures(ctx) returns the whole
@@ -1338,7 +1438,10 @@
       attackUnitDelta,
       practicalChancesScore,
       structuralComplexity: structuralComplexityOf({
-        sacrifice, centralPawnAdvance, equalMinorRookTrade
+        sacrifice, centralPawnAdvance, equalMinorRookTrade,
+        // Phase 1: a central push only raises complexity inside a forcing
+        // line (or when it attacks something) — never on its own.
+        forcingContinuation: forcingPly >= 2 || centralAdvanceAttacksPiece
       }),
       isGreekGift: greekGift.detected,
       drawContemptScore,
@@ -1349,8 +1452,13 @@
       losingMate: scoreType === 'mate' && rawScore < 0,
       forcingPly,
       playerForcingMoves,
-      kingPressureDelta: (pressureAfter.pressure - pressureBefore.pressure) +
-        (pressureAfter.attackedSquares - pressureBefore.attackedSquares) * 0.5,
+      // Phase 1: the raw delta is kept for diagnostics, but the scored
+      // `kingPressureDelta` is zero unless this move created a NEW concrete
+      // threat against the king (check, defender removed, opened line, the
+      // mover itself bearing on the zone, or a new attacker joining it).
+      kingPressureDeltaRaw: rawKingPressureDelta,
+      concreteKingThreat,
+      kingPressureDelta: concreteKingThreat ? rawKingPressureDelta : 0,
       attackersAfter: pressureAfter.attackers,
       ownKingDangerDelta: (ownDangerAfter.pressure - ownDangerBefore.pressure) +
         (ownDangerAfter.attackedSquares - ownDangerBefore.attackedSquares) * 0.5,
@@ -2706,6 +2814,9 @@
     selectPVForStyle,
     selectEngineLane,
     analyzeCandidate,
+    // Exposed so the Phase 0 harness and the vocabulary regression suite can
+    // assert on the exact reasons a candidate is credited with.
+    candidateStyleBonus,
     PLAYING_STYLES,
     AGGRESSION_LEVELS,
     resolveAggressionLevel,

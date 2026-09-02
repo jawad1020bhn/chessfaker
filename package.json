@@ -13,6 +13,7 @@
     "test": "node scripts/run-tests.mjs",
     "gates": "node scripts/rescue-gates.mjs",
     "probe": "node scripts/style-efficacy-probe.mjs",
+    "harness": "node scripts/strength-harness.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
