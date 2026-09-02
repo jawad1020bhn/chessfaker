@@ -154,6 +154,13 @@
           <div class="info-row md-fact"><dt class="info-label">Natural play</dt><dd id="correlation-stat" class="info-value" title="Share of your moves that looked human rather than copying the engine top pick.">0 / 0 (0%)</dd></div>
           <div class="info-row md-fact"><dt class="info-label">Aggression cost</dt><dd id="aggression-stat" class="info-value" title="Eval the style paid vs the objective best move this game, and the principles it fired.">—</dd></div>
         </dl>
+        <div id="aggression-suggestion" class="md-banner md-banner--primary aggression-suggestion" hidden>
+          <p id="aggression-suggestion-text" class="md-help"></p>
+          <div class="md-btn-row aggression-suggestion__actions">
+            <button type="button" id="btn-suggest-level-1" class="md-btn md-btn--tonal">Softer attack (I)</button>
+            <button type="button" id="btn-suggest-normal" class="md-btn md-btn--outlined">Objective (Normal)</button>
+          </div>
+        </div>
       </section>
     </main>
 
@@ -178,6 +185,21 @@
       <div class="md-sheet__body settings-body">
         <section class="md-settings-block" aria-labelledby="set-play">
           <h3 id="set-play" class="md-typescale-title-sm">How you want to play</h3>
+
+          <label class="visually-hidden" for="setting-style">Playing style</label>
+          <select id="setting-style" class="visually-hidden" tabindex="-1">
+            <option value="normal" selected>Normal — objective best move</option>
+            <option value="aggressive">Aggressive — fastest sound win</option>
+            <option value="super_ultra_aggressive">Ultra Attack — the persona</option>
+          </select>
+          <p class="md-field-label">Style</p>
+          <div class="md-segmented md-btn-group md-btn-group--wrap" role="radiogroup" aria-label="Playing style">
+            <span class="md-segmented__indicator" aria-hidden="true"></span>
+            <button type="button" class="md-btn-group__item" data-expressive-setting="setting-style" data-value="normal" role="radio">Normal</button>
+            <button type="button" class="md-btn-group__item" data-expressive-setting="setting-style" data-value="aggressive" role="radio">Aggressive</button>
+            <button type="button" class="md-btn-group__item" data-expressive-setting="setting-style" data-value="super_ultra_aggressive" role="radio">Ultra</button>
+          </div>
+          <p class="md-help">Normal gives you the engine's own best move. The Ultra persona trades evaluation for attack — opt in deliberately.</p>
 
           <label class="visually-hidden" for="setting-aggression">Aggression level</label>
           <select id="setting-aggression" class="visually-hidden" tabindex="-1">
@@ -210,8 +232,20 @@
 
           <div class="md-switch-row">
             <div>
+              <p class="md-switch-row__title">Book-first openings</p>
+              <p class="md-help">Let master opening theory take the primary slot when it is within 50cp of the engine's choice. Always on for Normal; opt-in for the attack styles.</p>
+            </div>
+            <label class="md-switch">
+              <input type="checkbox" id="setting-book-first">
+              <span class="md-switch__track" aria-hidden="true"><span class="md-switch__thumb"></span></span>
+              <span class="visually-hidden">Book-first openings</span>
+            </label>
+          </div>
+
+          <div class="md-switch-row">
+            <div>
               <p class="md-switch-row__title">Play human</p>
-              <p class="human-mode-sub md-help">Prefer natural plans over engine-echo moves.</p>
+              <p class="human-mode-sub md-help">Sparring mode plays <strong>deliberately weaker</strong> than the engine to feel human — turn it off for maximum strength.</p>
               <span class="human-mode-status visually-hidden">Off</span>
             </div>
             <input type="checkbox" id="setting-human-like-mode" class="human-mode-checkbox visually-hidden" tabindex="-1">
@@ -238,6 +272,18 @@
               <span>600</span><span>800</span><span>1000</span><span>1200</span><span>1400</span><span>1600</span>
             </div>
             <p class="md-help">How strong the sparring partner plays in human mode.</p>
+          </div>
+
+          <div id="sparring-strictness-row" class="md-switch-row" hidden>
+            <div>
+              <p class="md-switch-row__title">Never loosen a winning position</p>
+              <p class="md-help">Strict sparring: keep human variety only while the game is unclear, and play the objective best move as soon as you are ahead. On by default above a clear win; this extends it to any advantage.</p>
+            </div>
+            <label class="md-switch">
+              <input type="checkbox" id="setting-sparring-strictness">
+              <span class="md-switch__track" aria-hidden="true"><span class="md-switch__thumb"></span></span>
+              <span class="visually-hidden">Never loosen a winning position</span>
+            </label>
           </div>
         </section>
 

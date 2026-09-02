@@ -55,15 +55,39 @@ exact-hint delivery end to end. This invariant is deliberate and load-bearing.
 4. Open a game on chess.com or lichess.org, then click the toolbar icon to
    open the side panel
 
+## Playing styles
+
+Three styles are selectable in the panel, and the factory default is the
+objective one:
+
+| Style | Behaviour |
+| --- | --- |
+| **Normal** (default) | Objective best play. The engine's own move order; a single-line source is passed through untouched. Immune to the persona machinery — no diversity swaps, no sparring shortlist, no aggression dial. |
+| **Aggressive** | "Fastest sound win": rewards checks, tempo, open king files and sound sacrifices; penalizes speculation, unsupported attacks and own-king danger. Budget 35/85/140 cp. |
+| **Ultra Super Aggressive Attack** | The opt-in persona, scaled by a three-level aggression dial (I Sound Storm / II Ultra Attack / III Max Chaos). Auto scales with the detected opponent rating and never picks Max Chaos. |
+
+Above +200 cp every style is locked to conversion: the win-probability class
+must not move and the winning-tier budget caps the spend, so an attack can
+never be bought with a win that is already on the board.
+
 ## Running the tests
 
-The ten suites are self-contained plain-Node assert scripts — no framework,
-no install:
+The twelve suites are self-contained plain-Node assert scripts — no
+framework, no install:
 
 ```bash
 npm test          # or: node scripts/run-tests.mjs
 node tests/hint-engine.test.js   # any single suite directly
 ```
+
+`npm run gates` runs the hint-quality acceptance gates
+(`scripts/rescue-gates.mjs`): default-hint fidelity, win preservation, the
+Auto ceiling, opening sanity, sparring differentiation, pool integrity and
+the HumanEvaluator quarantine guard. `npm run probe` runs the older
+persona-efficacy probe.
+
+CI is defined in `docs/ci-workflow.example.yml` and enabled by copying it to
+`.github/workflows/ci.yml` (the command is at the top of that file).
 
 ## Lint & formatting
 

@@ -48,9 +48,52 @@ const rookCapture = 'r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1';
 assert.equal(engine.applyMoveToFen(rookCapture, 'a1a8').split(' ')[2], 'Kk', 'moving and captured rooks remove both queen-side rights');
 
 
-// Rebuilt three-mode style engine.
-assert.deepEqual(Object.keys(engine.PLAYING_STYLES), ['normal', 'super_ultra_aggressive']);
-assert.equal(engine.PLAYING_STYLES.normal.internal, true, 'normal survives only as the internal objective anchor');
+// ── F1: the three selectable styles are back, with the objective baseline
+// as the factory default. Normal is no longer an internal-only anchor.
+assert.deepEqual(Object.keys(engine.PLAYING_STYLES), ['normal', 'aggressive', 'super_ultra_aggressive']);
+assert.equal(engine.PLAYING_STYLES.normal.internal, undefined,
+  'normal is a user-selectable style again, not an internal anchor');
+// 8.5 spec values, implemented literally (brief 2.3 / Table 1).
+const asJson = (value) => JSON.parse(JSON.stringify(value));
+assert.deepEqual(asJson(engine.PLAYING_STYLES.normal.riskBudget), { winning: 15, equal: 20, worse: 30 });
+assert.equal(engine.PLAYING_STYLES.normal.sacrificeTolerance, 0);
+assert.equal(engine.PLAYING_STYLES.normal.kingHuntBonus, 0);
+assert.equal(engine.PLAYING_STYLES.normal.diversity, 0);
+assert.deepEqual(asJson(engine.PLAYING_STYLES.normal.weights), {});
+assert.equal(engine.PLAYING_STYLES.normal.lossWeight, 1.5);
+assert.deepEqual(asJson(engine.PLAYING_STYLES.aggressive.riskBudget), { winning: 35, equal: 85, worse: 140 });
+assert.equal(engine.PLAYING_STYLES.aggressive.sacrificeTolerance, 90);
+assert.equal(engine.PLAYING_STYLES.aggressive.kingHuntBonus, 55);
+assert.equal(engine.PLAYING_STYLES.aggressive.diversity, 0);
+assert.equal(engine.PLAYING_STYLES.aggressive.lossWeight, 1.25);
+assert.deepEqual(asJson(engine.PLAYING_STYLES.aggressive.weights), {
+  check: 75, forcingPly: 24, kingPressure: 22, defenderRemoval: 28,
+  tempo: 26, development: 16, openKingFile: 30, sustainedAttack: 38,
+  soundSacrifice: 45, speculativeSacrifice: -55, simplification: -12,
+  ownKingDanger: -32, unsupportedAttack: -30
+});
+// Preserve List: the Ultra rebalancing must not be reverted to 8.5's 0.62.
+assert.equal(engine.PLAYING_STYLES.super_ultra_aggressive.lossWeight, 1.0,
+  'Ultra keeps lossWeight 1.0 (Preserve List item 2)');
+assert.deepEqual(asJson(engine.PLAYING_STYLES.super_ultra_aggressive.riskBudget),
+  { winning: 40, advantage: 120, equal: 200, worse: 300, desperate: 450 },
+  'Ultra keeps the tight chess-sized budgets (Preserve List item 1)');
+
+// G0 fallback safety: an unknown, stale or retired style id resolves to the
+// OBJECTIVE profile at every call site, never to the most aggressive one.
+assert.equal(engine.resolveStyleProfile('normal').id, 'normal');
+assert.equal(engine.resolveStyleProfile('aggressive').id, 'aggressive');
+assert.equal(engine.resolveStyleProfile('super_ultra_aggressive').id, 'super_ultra_aggressive');
+for (const stale of [undefined, null, '', 'berserker', 'kamikaze', 'super_aggressive', 'NORMAL', 42]) {
+  assert.equal(engine.resolveStyleProfile(stale).id, 'normal',
+    `unknown style ${JSON.stringify(stale)} must fall back to normal`);
+}
+assert.equal(
+  fs.readFileSync(require.resolve('../engine/hint-engine.js'), 'utf8')
+    .includes('PLAYING_STYLES[style] || PLAYING_STYLES.super_ultra_aggressive'),
+  false,
+  'no call site may still default an unknown style to the Ultra persona');
+
 assert.equal(engine.resolveAggressionLevel(1), 1);
 assert.equal(engine.resolveAggressionLevel(4), 2);
 assert.equal(engine.applyAggressionLevel(engine.PLAYING_STYLES.super_ultra_aggressive, 1).riskBudget.equal, 120,
@@ -79,6 +122,57 @@ const hugeCp = { score: 900, scoreType: 'cp', depth: 30, pv: ['d1d3'] };
 for (const style of Object.keys(engine.PLAYING_STYLES)) {
   assert.equal(engine.selectPVForStyle([hugeCp, slowerMate, fastestMate], attackFen, style, 'w')[0].score, 2, `${style} must preserve the fastest forced mate`);
 }
+
+// N2 — Normal's metadata is mate-disciplined: next to a winning mate a
+// non-mating line costs infinitely more, it does not report "costs nothing".
+const normalMateMeta = engine.selectPVForStyle([hugeCp, slowerMate, fastestMate], attackFen, 'normal', 'w');
+assert.equal(normalMateMeta[0].pv[0], 'd1h5', 'Normal ranks the fastest forced mate first');
+assert.equal(normalMateMeta[0]._styleAnalysis.evalLoss, 0);
+assert.equal(normalMateMeta.find(pv => pv.pv[0] === 'd1d3')._styleAnalysis.evalLoss, Infinity,
+  'a +900cp line next to a forced mate must not report evalLoss 0');
+
+// ── F4 pool integrity: local-pool extras inform but never outvote ──────
+// `attackFen` above is a position where the persona genuinely prefers the
+// forcing check, so a benched local candidate is observably demoted.
+const ULTRA = 'super_ultra_aggressive';
+const cloudQuietDeep = { score: 50, scoreType: 'cp', depth: 14, pv: ['d1d2'] };
+const cloudQuietShallow = { ...cloudQuietDeep, depth: 10 };
+const localCheck = (over = {}) => ({ score: 30, scoreType: 'cp', depth: 6, pv: ['d1h5'], localPool: true, ...over });
+
+assert.equal(engine.selectPVForStyle([localCheck(), cloudQuietDeep], attackFen, ULTRA, 'w')[0].pv[0], 'd1d2',
+  'F4: a depth-14 cloud line cannot be outvoted by a depth-6 local search');
+assert.equal(engine.selectPVForStyle([localCheck(), cloudQuietShallow], attackFen, ULTRA, 'w')[0].pv[0], 'd1h5',
+  'F4 exception: a shallow cloud line (<12) may be contested by a deeper local search that agrees within 30cp');
+assert.equal(engine.selectPVForStyle([localCheck({ depth: 4 }), cloudQuietShallow], attackFen, ULTRA, 'w')[0].pv[0], 'd1d2',
+  'F4 exception needs BOTH conditions — local depth below 5 stays benched');
+assert.equal(engine.selectPVForStyle([localCheck({ score: 10 }), cloudQuietShallow], attackFen, ULTRA, 'w')[0].pv[0], 'd1d2',
+  'F4 exception needs BOTH conditions — disagreeing beyond 30cp stays benched (40cp is inside the budget, so only the agreement rule can bench it)');
+assert.equal(engine.selectPVForStyle([localCheck(), { ...cloudQuietDeep, localPool: true }], attackFen, ULTRA, 'w')[0].pv[0], 'd1h5',
+  'F4: a pure local pool has no cloud line to protect, so it contests normally');
+const benchedMeta = engine.selectPVForStyle([localCheck(), cloudQuietDeep], attackFen, ULTRA, 'w')
+  .find(p => p.pv[0] === 'd1h5');
+assert.equal(benchedMeta._styleAnalysis.localPool, true, 'local-pool extras stay tagged for the UI');
+assert.equal(benchedMeta._styleAnalysis.poolBenched, true, 'a benched local candidate says so in its metadata');
+assert.equal(benchedMeta._styleAnalysis.eligible, false, 'a benched local candidate is never eligible for the primary slot');
+
+// ── Book-first preference: bounded at 50cp, never over a winning mate ──
+const engineBest = { score: 100, scoreType: 'cp', depth: 25, pv: ['d1d2'] };
+const bookClose = { score: 80, scoreType: 'book', depth: 0, pv: ['d1d3'], _masterData: { totalGames: 1200, whiteWinPct: 55 } };
+const bookFar = { score: 20, scoreType: 'book', depth: 0, pv: ['d1d4'], _masterData: { totalGames: 900, whiteWinPct: 40 } };
+assert.equal(engine.selectPVForStyle([engineBest, bookClose], attackFen, 'normal', 'w')[0].pv[0], 'd1d3',
+  'Normal promotes a book move inside 50cp of the engine best');
+assert.equal(engine.selectPVForStyle([engineBest, bookFar], attackFen, 'normal', 'w')[0].pv[0], 'd1d2',
+  'a book move 80cp behind the engine best does not get promoted');
+assert.equal(engine.selectPVForStyle([engineBest, bookClose], attackFen, ULTRA, 'w')[0].pv[0], 'd1d2',
+  'the persona ignores the book lane unless the user opts in');
+assert.equal(engine.selectPVForStyle([engineBest, bookClose], attackFen, ULTRA, 'w', false, { bookFirstOpenings: true })[0].pv[0], 'd1d3',
+  'book-first openings opts the persona in');
+assert.equal(engine.BOOK_FIRST_TOLERANCE_CP, 50, 'the book preference tolerance is 50cp');
+const mateBest = { score: 2, scoreType: 'mate', depth: 30, pv: ['d1h5'] };
+assert.equal(engine.selectPVForStyle([mateBest, bookClose], attackFen, 'normal', 'w')[0].pv[0], 'd1h5',
+  'the book preference never displaces a winning mate');
+assert.equal(engine.selectPVForStyle([engineBest, bookClose], attackFen, 'normal', 'w', true)[0].pv[0], 'd1d2',
+  'sparring mode is immune to the book preference');
 
 const sacrificeFen = '6k1/7p/8/8/8/3Q4/8/6K1 w - - 0 1';
 const realSac = engine.analyzeCandidate(sacrificeFen, ['d3h7', 'g8h7'], 'w', -40, 'cp', 24);

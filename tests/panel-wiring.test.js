@@ -86,4 +86,28 @@ for (const label of labels) {
   assert.ok(new RegExp(`data-verdict="${label}"`).test(css), `CSS styles data-verdict="${label}"`);
 }
 
+// ── 6. Restored style controls are wired end to end (F1 / Phase 4) ──
+// The style selector was removed when the product became single-persona; if
+// it is ever disconnected again the panel would silently force one style.
+for (const id of ['setting-style', 'setting-book-first', 'setting-sparring-strictness',
+  'sparring-strictness-row', 'aggression-suggestion', 'aggression-suggestion-text',
+  'btn-suggest-level-1', 'btn-suggest-normal']) {
+  assert.ok(htmlIds.has(id), `#${id} exists in sidepanel.html`);
+}
+for (const value of ['normal', 'aggressive', 'super_ultra_aggressive']) {
+  assert.ok(new RegExp(`data-expressive-setting="setting-style" data-value="${value}"`).test(html),
+    `the style segmented control offers ${value}`);
+  assert.ok(js.includes(`'${value}'`), `sidepanel.js recognises the ${value} style id`);
+}
+assert.match(js, /function normalizeStyle\(value\)/, 'normalizeStyle is a real normalizer, not a constant');
+assert.ok(!/const STYLE = 'super_ultra_aggressive'/.test(js), 'the hard-coded single-persona style constant is gone');
+assert.match(js, /style: 'normal'/, 'the factory default style is the objective baseline');
+assert.match(js, /updateStyleScopedUI/, 'persona-only controls are marked inert outside Ultra');
+assert.match(js, /updateAggressionSuggestion/, 'the aggression cost row can offer a one-click step down');
+assert.match(html, /deliberately weaker/, 'the sparring caption states the mode plays weaker on purpose');
+assert.ok(/\.aggression-suggestion\b/.test(css), '.aggression-suggestion has a CSS rule');
+assert.ok(/\.md-persona-chip\[data-level='normal'\]/.test(css), 'the persona chip has a Normal tone');
+assert.ok(/\.md-persona-chip\[data-level='aggressive'\]/.test(css), 'the persona chip has an Aggressive tone');
+assert.ok(/\.md-segmented\.is-inert/.test(css), 'inert persona controls have a CSS rule');
+
 console.log('panel wiring OK — Balance + Last move sections are fully wired (HTML ⇄ CSS ⇄ JS)');

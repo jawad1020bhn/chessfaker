@@ -1,5 +1,24 @@
 # Style Efficacy — Analysis & Plan (v13.1.0)
 
+> **STATUS UPDATE (v14.0.0): the hint-quality rescue landed on top of this
+> plan.** A separate review (`docs/rescue/`) compared this build against the
+> 8.5 baseline and found that everything this document claims was true *for
+> the persona* — and that the product had lost its objective baseline
+> entirely. What changed here:
+>
+> | Change | Detail |
+> |---|---|
+> | **Single-persona product is over** | Normal and Aggressive are selectable again; **Normal is the factory default**. `normalizeStyle` is a real normalizer and every unknown/retired style degrades to Normal, not to Ultra. |
+> | **Auto aggression inverted (F2)** | `<1000 → I`, `1000–1400 → II`, `>1400 → I`. Auto never returns Level III; Max Chaos is an explicit user choice. |
+> | **Win preservation (F3)** | Above +200cp the win-probability class must not move at all and the winning-tier budget caps the spend even with verified compensation. Above +250cp the sparring model gets no reorder and no slip roll. |
+> | **Pool integrity (F4)** | `localPool` extras from single-line widening may inform and fill the display list but can never take the primary slot while a cloud PV is present (exception: cloud depth <12, local depth ≥5, agreement within 30cp). |
+> | **F5/F6 — no code in this tree** | `engine/human-evaluator.js` does not exist here and no shipped file references `HumanEvaluator`. The pool-replacement hazard is real if it is ever re-added, so it is pinned by a guard assertion (`npm run gates`) rather than a fix. |
+> | **F7 — premise false here** | `tests/` was not deleted: 12 suites, `node scripts/run-tests.mjs` exits 0. What *was* missing was coverage of style resolution, Normal semantics, win preservation, the Auto ceiling and pool order — all added. |
+> | **CI is ready, not yet switched on** | `docs/ci-workflow.example.yml` holds the complete workflow (suites, `scripts/rescue-gates.mjs` G0–G2, the probe below, lint, store package). The GitHub App token used to edit this repo has no `workflows` permission, so enabling it is a one-line copy-and-push by a human — the command is at the top of that file. |
+>
+> Reproduce the rescue gates with `npm run gates`; the persona gates below
+> with `npm run probe`. Assumption ledger: `docs/rescue/ASSUMPTIONS.md`.
+
 > **STATUS UPDATE (v13.2.0): Phase 1 and Phase 2 are IMPLEMENTED.**
 > Measured with the same harness (`node scripts/style-efficacy-probe.mjs`):
 >

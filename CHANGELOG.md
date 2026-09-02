@@ -1,5 +1,86 @@
 # Changelog
 
+## 14.0.0 — 2026-09 (hint-quality rescue: the objective baseline is back)
+
+Executed from the hint-quality rescue brief (`docs/rescue/`). The persona
+work through 13.6.1 was sound; what the product had lost was its objective
+default. Findings F1–F4 are fixed, F5–F7 are recorded with their
+dispositions, and the acceptance gates are in CI.
+
+### Restored the objective baseline (F1)
+- **Normal and Aggressive are selectable again, and Normal is the factory
+  default.** The hard-coded `STYLE = 'super_ultra_aggressive'` /
+  `normalizeStyle = () => STYLE` pair is replaced by a real normalizer; a
+  three-way segmented control returns to the settings sheet.
+- **Unknown and stale styles degrade to Normal**, at a single
+  `resolveStyleProfile()` call site instead of three scattered fallbacks to
+  Ultra. Retired persona ids (Kamikaze, Berserker, …) still land on Ultra so
+  a stored preference is not deleted.
+- **The Aggressive profile is back verbatim**: budget 35/85/140,
+  sacrificeTolerance 90, kingHuntBonus 55, lossWeight 1.25, and the full
+  sound-attack weight table (speculative sacrifices −55, unsupported attacks
+  −30, own-king danger −32).
+- Normal's `evalLoss` metadata is mate-disciplined: a +900 cp line next to a
+  forced mate no longer reports "costs nothing".
+- The Early King Hunt add-on is persona-scoped again, so the objective styles
+  stay immune to persona machinery.
+- `background.js` no longer overwrites a stored style with the default.
+
+### Made the persona winnable (F2, F3)
+- **Auto aggression inverted**: below 1000 → Level I, 1000–1400 → Level II,
+  above 1400 → Level I. Auto never returns Max Chaos — chaos pays only when
+  the defender's mistakes convert the attack, so the hint must not donate the
+  compensation first.
+- **Win-preservation gate**: above +200 cp the win-probability class must not
+  move at all, and the winning-tier budget caps the spend even when verified
+  compensation fires. Level II now converts from +120.
+- **No variety while winning**: the diversity swap is gated on
+  `objectiveBest.score <= 100`.
+- **Sparring fixed where it hurt most**: the winning clause now makes slips
+  *rarer* as a position gets more won (was ×1.5), and above +250 cp the form
+  model gets no reorder and no slip roll at all. A new "Never loosen a
+  winning position" switch extends that lock to any advantage.
+- The sparring caption now says plainly that the mode plays deliberately
+  weaker.
+
+### Pool integrity (F4)
+- `localPool` extras appended to a single-line chess-api result may inform
+  the contest and fill the display list, but can never take the primary slot
+  while a cloud PV is present. Budgets, the mate lock and the win gate are
+  all measured against the cloud line. Sole exception: cloud depth < 12,
+  local depth ≥ 5, agreement within 30 cp.
+
+### Safety net (F7) and CI
+- New coverage: style resolution and the fallback rule, Normal semantics,
+  mate discipline in all styles, win preservation, the Auto ceiling, pool
+  order including the depth-exception, the book-first preference,
+  `localPool` survival through sealing, and the restored panel controls.
+- `npm run gates` (`scripts/rescue-gates.mjs`) asserts G0–G2 on the fixed
+  probe set, loading exactly the sidepanel's module set.
+- **CI still needs one human command to switch on.** The GitHub App token
+  that edits this repo has no `workflows` permission, so a push adding
+  `.github/workflows/ci.yml` is rejected. `docs/ci-workflow.example.yml`
+  carries the complete, tested workflow (suites, gates, probe, lint,
+  package) and the copy-and-push command to enable it.
+- `docs/rescue/` carries the anchor table, the new-findings register and the
+  assumption ledger.
+
+### Product polish
+- "Book-first openings" toggle: master theory may take the primary slot
+  within 50 cp of the engine's choice — always on for Normal, opt-in for the
+  attack styles.
+- The "Aggression cost" row becomes actionable: past the level's budget it
+  offers a one-click step down to Level I or Normal.
+
+### Not applicable in this tree
+- **F5/F6** (`engine/human-evaluator.js` pool replacement; `planAttack`
+  hard-coding the move number): the module does not exist here and nothing
+  references it. Both are pinned by a guard assertion so re-introducing a
+  pool-replacing path fails CI.
+- **F7's premise** ("`tests/` deleted, runner broken") is false here — 12
+  suites were live and green. The real gap was missing coverage, now added.
+
+
 ## 13.6.1 — 2026-08 (M3 Expressive polish of the changed UI)
 
 - **Persona chip on the hero**: the live aggression level now rides the

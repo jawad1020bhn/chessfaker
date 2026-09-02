@@ -113,16 +113,19 @@
     return 2;
   }
 
-  // Opponent-aware aggression: the persona's doctrine is calibrated for
-  // weaker opponents. Max chaos pays best below ~800, the signature level
-  // covers the club band through ~1200, and stronger opposition gets the
-  // sound "fastest win" discipline. Unknown ratings return null (Auto
-  // falls back to Level II).
+  // Opponent-aware aggression (F2, inverted). Chaos only pays when the
+  // DEFENDER's mistakes convert the attack — so the hint must never donate
+  // the compensation first. Weaker opposition therefore gets the sound
+  // "fastest win" discipline (they will hand the game over anyway), the club
+  // band gets the signature persona, and stronger opposition goes back to
+  // sound. Max Chaos (Level III) is an explicit user choice only: Auto must
+  // never return it on any rating input. Unknown ratings return null and the
+  // panel falls back to Level II.
   function suggestAggressionLevel(rating) {
     const n = Number(rating);
     if (!Number.isFinite(n) || n < 100 || n > 4000) return null;
-    if (n < 800) return 3;
-    if (n <= 1200) return 2;
+    if (n < 1000) return 1;
+    if (n <= 1400) return 2;
     return 1;
   }
 

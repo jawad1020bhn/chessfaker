@@ -125,14 +125,22 @@
     let marginScale = base.marginScale * (1 + session.form * 0.12);
     let slipChance = base.slipChance * Math.max(0.5, Math.min(1.5, 1 - session.form * 0.3));
 
-    // 2) Winning relaxation: humans stop calculating precisely when the game
-    //    is clearly theirs. Score-based only — no external signals.
+    // 2) Winning focus: the clearer the win, the more precisely the model
+    //    plays. Score-based only — no external signals.
     const WIN_THRESHOLD = 250;
     const WIN_FULL = 1050;
     if (evalValue > WIN_THRESHOLD) {
       const relax = Math.min(1, (evalValue - WIN_THRESHOLD) / (WIN_FULL - WIN_THRESHOLD));
-      marginScale *= 1 + 0.6 * relax;
-      slipChance *= 1 + 0.5 * relax;
+      // F3, inverted. This clause used to do the opposite: a winning
+      // position WIDENED the shortlist by up to 60% and raised the slip rate
+      // by up to 50%, so the sparring model played its loosest chess in
+      // exactly the positions that decide the game. A modestly wider
+      // shortlist is still acceptable (more in-character choices to pick
+      // from); a higher slip rate is not. Note the hint engine additionally
+      // locks the pick to the objective best above the winning threshold, so
+      // this curve governs the approach to a win, not the conversion of it.
+      marginScale *= 1 + 0.2 * relax;
+      slipChance *= 1 - 0.5 * relax;
     } else if (evalValue < -150) {
       // Slightly tighter when worse — weaker players tighten up when losing.
       marginScale *= 0.92;

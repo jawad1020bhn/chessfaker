@@ -302,6 +302,56 @@ function send(message, sender = { id: 'test-extension-id' }) {
   assert.equal(guardStats.total, 3, 'correlation guard records all three player moves');
   assert.equal(guardStats.matches, 2, 'two of three moves are human-like/sensible');
 
+  // ── F1 / N1: the worker's settings normalization honours the restored
+  // objective styles instead of collapsing everything onto the persona.
+  assert.equal(typeof context.normalizeSettings, 'function', 'normalizeSettings is reachable from the worker context');
+  // (DEFAULT_SETTINGS is a top-level `const`, so it is not a property of the
+  // vm global object — assert the factory default through the function.)
+  assert.equal(context.normalizeSettings({}).style, 'normal', 'the factory default is the objective baseline');
+  assert.equal(context.normalizeSettings({ style: 'normal' }).style, 'normal', 'a stored Normal preference survives');
+  assert.equal(context.normalizeSettings({ style: 'aggressive' }).style, 'aggressive', 'a stored Aggressive preference survives');
+  assert.equal(context.normalizeSettings({ style: 'super_ultra_aggressive' }).style, 'super_ultra_aggressive');
+  for (const retired of ['super_aggressive', 'ultra_aggressive_stealth', 'kamikaze', 'berserker']) {
+    assert.equal(context.normalizeSettings({ style: retired }).style, 'super_ultra_aggressive',
+      `${retired} was a persona flavour and consolidates onto Ultra`);
+  }
+  for (const junk of [undefined, null, '', 'Nonsense', 42]) {
+    assert.equal(context.normalizeSettings({ style: junk }).style, 'normal',
+      `unrecognised style ${JSON.stringify(junk)} degrades to the objective baseline`);
+  }
+  assert.equal(context.normalizeSettings({ style: 'normal' }).aggressionLevel, 'auto',
+    'a stored Normal preference is no longer collapsed onto the dial');
+  assert.equal(context.normalizeSettings({ style: 'super_ultra_aggressive', aggressionLevel: 3 }).aggressionLevel, 3,
+    'an explicit dial level is still honoured');
+  assert.equal(context.normalizeSettings({}).bookFirstOpenings, false, 'book-first openings is opt-in for the personas');
+  assert.equal(context.normalizeSettings({ bookFirstOpenings: 'yes' }).bookFirstOpenings, false,
+    'book-first openings is coerced to a boolean');
+
+  // F4 support: the objective default does not need a widened pool at all.
+  assert.equal(context.stylePoolNeeded({ style: 'normal' }), false,
+    'Normal with everything else off keeps the single-PV pass-through rule');
+  assert.equal(context.stylePoolNeeded({ style: 'normal', humanLikeMode: true }), true, 'sparring still needs a pool');
+  assert.equal(context.stylePoolNeeded({ style: 'normal', bookFirstOpenings: true }), true, 'book-first needs a pool');
+  assert.equal(context.stylePoolNeeded({ style: 'super_ultra_aggressive' }), true, 'the persona needs a pool');
+  assert.equal(context.stylePoolNeeded({ style: 'aggressive' }), true, 'Aggressive needs a pool');
+
+  // F4: widening keeps the cloud line first and tags every extra.
+  const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+  const singleLine = {
+    source: 'chess-api',
+    scorePerspective: 'white',
+    pvs: [{ scoreType: 'cp', score: 40, depth: 14, pv: ['e2e4'] }]
+  };
+  const widenedPool = context.widenSingleLinePool(singleLine, startFen, 4, { localDepth: 4, localTimeMs: 150 });
+  assert.ok(widenedPool, 'a single chess-api line can be widened by the on-device engine');
+  assert.equal(widenedPool.poolExpanded, true, 'the widened result is flagged for the UI');
+  assert.equal(widenedPool.pvs[0].pv[0], 'e2e4', 'the authoritative cloud line stays first');
+  assert.equal(widenedPool.pvs[0].localPool, undefined, 'the cloud line is not tagged as a local extra');
+  assert.ok(widenedPool.pvs.length >= 2, 'at least one local extra was appended');
+  assert.ok(widenedPool.pvs.slice(1).every(p => p.localPool === true),
+    'every appended extra is tagged localPool so the ranker can bench it');
+  assert.ok(widenedPool.pvs.slice(1).every(p => p.pv[0] !== 'e2e4'), 'extras never duplicate the cloud move');
+
   console.log('background smoke tests passed');
 })().catch(error => {
   console.error(error);
