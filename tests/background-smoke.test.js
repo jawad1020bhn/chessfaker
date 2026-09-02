@@ -275,32 +275,19 @@ function send(message, sender = { id: 'test-extension-id' }) {
   assert.equal(chessApiUpdate.data.pvs[0].score, -3,
     'chess-api mate must stay White-relative (negative = White is mated) for a black-to-move position');
 
-  // ── Human-likeness correlation guard ────────────────────────────────
-  // Standard mode: playing the engine's suggested move is "sensible".
-  // Human-like mode: a blind copy of the engine's exact top pick (while a
-  // different human recommendation was offered) is bot-like, so it must NOT
-  // count as sensible. Everything else (following the human move or any own
-  // natural move) is human-like and fair-play safe.
+  // ── Sensible-move correlation guard ─────────────────────────────────
+  // Playing the engine's suggested move is "sensible"; ignoring it is not.
+  // (Human mode is gone — there is no separate human recommendation to track.)
   const guardFen = '4k3/8/8/8/8/8/8/3Q2K1 w - - 0 1';
   context.recordEngineRecommendation(guardFen, 'd1d2');
   const stdMatch = context.recordPlayerMove(guardFen, { playerUci: 'd1d2' });
-  assert.equal(stdMatch.sensible, true, 'standard mode: playing the suggested move is sensible');
-  assert.equal(stdMatch.matched, true, 'standard mode: matched flag mirrors sensible');
+  assert.equal(stdMatch.sensible, true, 'playing the suggested move is sensible');
+  assert.equal(stdMatch.matched, true, 'matched flag mirrors sensible');
   const stdOther = context.recordPlayerMove(guardFen, { playerUci: 'd1h5' });
-  assert.equal(stdOther.sensible, false, 'standard mode: ignoring the suggestion is not sensible');
-
-  context.resetCorrelationTracker();
-  context.recordEngineRecommendation(guardFen, 'd1d2');
-  context.recordHumanRecommendation(guardFen, 'd1h5');
-  const humanRec = context.recordPlayerMove(guardFen, { playerUci: 'd1h5' });
-  assert.equal(humanRec.sensible, true, 'human-like mode: following the human recommendation is sensible');
-  const humanBotCopy = context.recordPlayerMove(guardFen, { playerUci: 'd1d2' });
-  assert.equal(humanBotCopy.sensible, false, 'human-like mode: copying the engine top pick is bot-like and not sensible');
-  const humanOwn = context.recordPlayerMove(guardFen, { playerUci: 'd1d3' });
-  assert.equal(humanOwn.sensible, true, 'human-like mode: playing an own natural move stays human-like');
+  assert.equal(stdOther.sensible, false, 'ignoring the suggestion is not sensible');
   const guardStats = context.getCorrelationStats();
-  assert.equal(guardStats.total, 3, 'correlation guard records all three player moves');
-  assert.equal(guardStats.matches, 2, 'two of three moves are human-like/sensible');
+  assert.equal(guardStats.total, 2, 'correlation guard records both player moves');
+  assert.equal(guardStats.matches, 1, 'one of two moves is sensible');
 
   // ── F1 / N1: the worker's settings normalization honours the restored
   // objective styles instead of collapsing everything onto the persona.
@@ -309,7 +296,7 @@ function send(message, sender = { id: 'test-extension-id' }) {
   // vm global object — assert the factory default through the function.)
   assert.equal(context.normalizeSettings({}).style, 'normal', 'the factory default is the objective baseline');
   assert.equal(context.normalizeSettings({ style: 'normal' }).style, 'normal', 'a stored Normal preference survives');
-  assert.equal(context.normalizeSettings({ style: 'aggressive' }).style, 'aggressive', 'a stored Aggressive preference survives');
+  assert.equal(context.normalizeSettings({ style: 'aggressive' }).style, 'super_ultra_aggressive', 'a stored Aggressive preference consolidates onto the persona');
   assert.equal(context.normalizeSettings({ style: 'super_ultra_aggressive' }).style, 'super_ultra_aggressive');
   for (const retired of ['super_aggressive', 'ultra_aggressive_stealth', 'kamikaze', 'berserker']) {
     assert.equal(context.normalizeSettings({ style: retired }).style, 'super_ultra_aggressive',
@@ -323,14 +310,13 @@ function send(message, sender = { id: 'test-extension-id' }) {
     'a stored Normal preference is no longer collapsed onto the dial');
   assert.equal(context.normalizeSettings({ style: 'super_ultra_aggressive', aggressionLevel: 3 }).aggressionLevel, 3,
     'an explicit dial level is still honoured');
-  assert.equal(context.normalizeSettings({}).bookFirstOpenings, false, 'book-first openings is opt-in for the personas');
-  assert.equal(context.normalizeSettings({ bookFirstOpenings: 'yes' }).bookFirstOpenings, false,
+  assert.equal(context.normalizeSettings({}).bookFirstOpenings, true, 'book-first openings is always-on internally');
+  assert.equal(context.normalizeSettings({ bookFirstOpenings: 'yes' }).bookFirstOpenings, true,
     'book-first openings is coerced to a boolean');
 
   // F4 support: the objective default does not need a widened pool at all.
-  assert.equal(context.stylePoolNeeded({ style: 'normal' }), false,
+  assert.equal(context.stylePoolNeeded({ style: 'normal', bookFirstOpenings: false }), false,
     'Normal with everything else off keeps the single-PV pass-through rule');
-  assert.equal(context.stylePoolNeeded({ style: 'normal', humanLikeMode: true }), true, 'sparring still needs a pool');
   assert.equal(context.stylePoolNeeded({ style: 'normal', bookFirstOpenings: true }), true, 'book-first needs a pool');
   assert.equal(context.stylePoolNeeded({ style: 'super_ultra_aggressive' }), true, 'the persona needs a pool');
   assert.equal(context.stylePoolNeeded({ style: 'aggressive' }), true, 'Aggressive needs a pool');

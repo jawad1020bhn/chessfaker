@@ -52,9 +52,9 @@ const extensionGlobals = {
   ApiReliability: 'readonly',
   ChaosAttack: 'readonly',
   EarlyKingHunt: 'readonly',
-  HumanForm: 'readonly',
   LocalEngine: 'readonly',
   AttackBook: 'readonly',
+  AttackCandidates: 'readonly',
   Event: 'readonly',
   // Page-world global accessed by content.js when running in MAIN world.
   lichess: 'readonly'

@@ -17,7 +17,7 @@ const sandbox = {
   Math, Promise, setTimeout, clearTimeout
 };
 vm.createContext(sandbox);
-for (const file of ['human-form.js', 'chaos-attack.js', 'early-king-hunt.js', 'hint-engine.js']) {
+for (const file of ['chaos-attack.js', 'early-king-hunt.js', 'hint-engine.js']) {
   vm.runInContext(fs.readFileSync(require.resolve(`../engine/${file}`), 'utf8'), sandbox);
 }
 const engine = sandbox.window.ChessHintEngine;
@@ -54,9 +54,8 @@ assert.equal(kingTuck.quietPrepKind, 'kingSafety',
 // ── Siege continuity reaches the style scorer ─────────────────────────
 const quiet = { score: 50, scoreType: 'cp', depth: 25, pv: ['d1d2'] };
 const checkLine = { score: 40, scoreType: 'cp', depth: 25, pv: ['d1h5'] };
-const planCtx = { activePlan: 'kingside attack' };
-const ranked = engine.selectPVForStyle([quiet, checkLine], attackFen, 'super_ultra_aggressive', 'w', false, planCtx);
-const withPlan = ranked.find(pv => pv.pv[0] === 'h5');
+const ranked = engine.selectPVForStyle([quiet, checkLine], attackFen, 'super_ultra_aggressive', 'w', { activePlan: 'kingside attack' });
+const withPlan = ranked.find(pv => pv.pv[0] === 'd1h5');
 if (withPlan && withPlan._styleAnalysis.plan === 'kingside attack') {
   assert.equal(withPlan._styleAnalysis.siegeContinuity, true,
     'candidates advancing the active plan carry the continuity flag');
@@ -96,8 +95,7 @@ const hugeCp = { score: 900, scoreType: 'cp', depth: 30, pv: ['d1d3'] };
 const slowerMate = { score: 5, scoreType: 'mate', depth: 30, pv: ['d1d2'] };
 const fastestMate = { score: 2, scoreType: 'mate', depth: 30, pv: ['d1h5'] };
 const picked = engine.selectPVForStyle(
-  [hugeCp, slowerMate, fastestMate], attackFen, 'super_ultra_aggressive', 'w', true,
-  { formSession: { rating: 700, seed: 'v2-safety', form: 0.9 } })[0];
+  [hugeCp, slowerMate, fastestMate], attackFen, 'super_ultra_aggressive', 'w')[0];
 assert.equal(picked.score, 2, 'V2 layers never trade away the fastest forced mate');
 
 console.log('attack-v2 tests passed');

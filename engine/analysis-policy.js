@@ -90,14 +90,8 @@
   function resolveQuality(settings = {}, extras = {}) {
     const requested = normalizeQuality(settings.analysisQuality);
     if (requested !== 'auto') return QUALITY_PROFILES[requested];
-    // Offline sparring realism: a club-strength human calculates at one steady
-    // depth regardless of how aggressive they feel, so in "play human" Auto
-    // mode we hold the balanced profile and cancel the ultra-style escalation.
-    // Consistent (not occasionally superhuman) calculation is what reads as
-    // human. Explicit Fast/Deep choices are still honored above.
-    if (settings.humanLikeMode === true) return QUALITY_PROFILES.balanced;
-    // Single-persona product: the (internal) objective profile keeps the
-    // conservative default; the Ultra persona always escalates depth.
+    // The objective profile keeps the conservative default; the Aggressive
+    // persona always escalates depth.
     if (settings.style === 'normal') return QUALITY_PROFILES.auto;
     return { ...QUALITY_PROFILES.auto, chessApiDepth: 14, localDepth: 5, localTimeMs: 240 };
   }
@@ -105,10 +99,6 @@
   function resolveMultiPv(settings = {}, extras = {}) {
     const requested = normalizeCandidateLines(settings.candidateLines);
     if (requested === 3 || requested === 5) return requested;
-    // Offline sparring realism: in "play human" mode the form model's
-    // shortlist/slip selection needs a wide candidate pool, so auto width is
-    // always maximum MultiPV. An explicit user choice still wins.
-    if (settings.humanLikeMode === true) return MAX_PROVIDER_LINES;
     if (extras.earlyKingHunt || settings.style !== 'normal') return 5;
     return 2;
   }
@@ -178,34 +168,12 @@
 
   function shouldReplaceHumanWithEngine(result, fen, settings = {}) {
     if (!result || !isHumanSource(result.source)) return false;
-    // Offline sparring realism: in "play human" mode, human-game statistics
-    // remain a legitimate selection signal well past the opening, so the
-    // engine-override that normally discards human data after move ~10 is
-    // deferred to the extended sparring range instead.
-    if (settings.humanLikeMode === true) {
-      const fullmove = Number(String(fen || '').split(' ')[5]) || 1;
-      return fullmove > 18 || countPiecesForRange(fen) < 20;
-    }
     const reliability = root.ApiReliability;
     if (reliability && typeof reliability.isPlausibleOpeningFen === 'function') {
       return !reliability.isPlausibleOpeningFen(fen);
     }
     const fullmove = Number(String(fen || '').split(' ')[5]) || 1;
     return fullmove > 10 || settings.style === 'super_ultra_aggressive';
-  }
-
-  function countPiecesForRange(fen) {
-    const placement = String(fen || '').trim().split(/\s+/)[0] || '';
-    let count = 0;
-    for (const character of placement) if (/[prnbqkPRNBQK]/.test(character)) count++;
-    return count;
-  }
-
-  // Extended sparring range check used by background routing.
-  function isSparringRangeFen(fen) {
-    const parts = String(fen || '').trim().split(/\s+/);
-    const fullmove = Number(parts[5]) || 1;
-    return fullmove <= 18 && countPiecesForRange(fen) >= 20;
   }
 
   function attachQuality(result, extras = {}) {
@@ -244,7 +212,6 @@
     isHumanSource,
     isEngineSource,
     shouldReplaceHumanWithEngine,
-    isSparringRangeFen,
     attachQuality,
     chessApiRequestParams
   };
