@@ -669,6 +669,25 @@ body {
   color: var(--md-sys-color-on-tertiary-container);
   border-color: transparent;
 }
+/* The objective styles read as system context, not as a persona intensity. */
+.md-persona-chip[data-level='normal'] {
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface-variant);
+  border-color: transparent;
+}
+.md-persona-chip[data-level='aggressive'] {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  border-color: transparent;
+}
+/* Persona-only controls (the aggression dial, the Early King Hunt add-on)
+   are inert outside Ultra Super Aggressive. They stay visible so the
+   preference is not lost, but they read as unavailable. */
+.md-segmented.is-inert,
+.early-king-hunt-setting.is-inert {
+  opacity: 0.45;
+  filter: saturate(0.6);
+}
 .md-persona-chip.is-resolving {
   animation: mdPersonaChipPop 340ms var(--md-sys-motion-spatial, cubic-bezier(0.2, 0, 0, 1));
 }

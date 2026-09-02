@@ -48,9 +48,52 @@ const rookCapture = 'r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1';
 assert.equal(engine.applyMoveToFen(rookCapture, 'a1a8').split(' ')[2], 'Kk', 'moving and captured rooks remove both queen-side rights');
 
 
-// Rebuilt three-mode style engine.
-assert.deepEqual(Object.keys(engine.PLAYING_STYLES), ['normal', 'super_ultra_aggressive']);
-assert.equal(engine.PLAYING_STYLES.normal.internal, true, 'normal survives only as the internal objective anchor');
+// ── F1: the three selectable styles are back, with the objective baseline
+// as the factory default. Normal is no longer an internal-only anchor.
+assert.deepEqual(Object.keys(engine.PLAYING_STYLES), ['normal', 'aggressive', 'super_ultra_aggressive']);
+assert.equal(engine.PLAYING_STYLES.normal.internal, undefined,
+  'normal is a user-selectable style again, not an internal anchor');
+// 8.5 spec values, implemented literally (brief 2.3 / Table 1).
+const asJson = (value) => JSON.parse(JSON.stringify(value));
+assert.deepEqual(asJson(engine.PLAYING_STYLES.normal.riskBudget), { winning: 15, equal: 20, worse: 30 });
+assert.equal(engine.PLAYING_STYLES.normal.sacrificeTolerance, 0);
+assert.equal(engine.PLAYING_STYLES.normal.kingHuntBonus, 0);
+assert.equal(engine.PLAYING_STYLES.normal.diversity, 0);
+assert.deepEqual(asJson(engine.PLAYING_STYLES.normal.weights), {});
+assert.equal(engine.PLAYING_STYLES.normal.lossWeight, 1.5);
+assert.deepEqual(asJson(engine.PLAYING_STYLES.aggressive.riskBudget), { winning: 35, equal: 85, worse: 140 });
+assert.equal(engine.PLAYING_STYLES.aggressive.sacrificeTolerance, 90);
+assert.equal(engine.PLAYING_STYLES.aggressive.kingHuntBonus, 55);
+assert.equal(engine.PLAYING_STYLES.aggressive.diversity, 0);
+assert.equal(engine.PLAYING_STYLES.aggressive.lossWeight, 1.25);
+assert.deepEqual(asJson(engine.PLAYING_STYLES.aggressive.weights), {
+  check: 75, forcingPly: 24, kingPressure: 22, defenderRemoval: 28,
+  tempo: 26, development: 16, openKingFile: 30, sustainedAttack: 38,
+  soundSacrifice: 45, speculativeSacrifice: -55, simplification: -12,
+  ownKingDanger: -32, unsupportedAttack: -30
+});
+// Preserve List: the Ultra rebalancing must not be reverted to 8.5's 0.62.
+assert.equal(engine.PLAYING_STYLES.super_ultra_aggressive.lossWeight, 1.0,
+  'Ultra keeps lossWeight 1.0 (Preserve List item 2)');
+assert.deepEqual(asJson(engine.PLAYING_STYLES.super_ultra_aggressive.riskBudget),
+  { winning: 40, advantage: 120, equal: 200, worse: 300, desperate: 450 },
+  'Ultra keeps the tight chess-sized budgets (Preserve List item 1)');
+
+// G0 fallback safety: an unknown, stale or retired style id resolves to the
+// OBJECTIVE profile at every call site, never to the most aggressive one.
+assert.equal(engine.resolveStyleProfile('normal').id, 'normal');
+assert.equal(engine.resolveStyleProfile('aggressive').id, 'aggressive');
+assert.equal(engine.resolveStyleProfile('super_ultra_aggressive').id, 'super_ultra_aggressive');
+for (const stale of [undefined, null, '', 'berserker', 'kamikaze', 'super_aggressive', 'NORMAL', 42]) {
+  assert.equal(engine.resolveStyleProfile(stale).id, 'normal',
+    `unknown style ${JSON.stringify(stale)} must fall back to normal`);
+}
+assert.equal(
+  fs.readFileSync(require.resolve('../engine/hint-engine.js'), 'utf8')
+    .includes('PLAYING_STYLES[style] || PLAYING_STYLES.super_ultra_aggressive'),
+  false,
+  'no call site may still default an unknown style to the Ultra persona');
+
 assert.equal(engine.resolveAggressionLevel(1), 1);
 assert.equal(engine.resolveAggressionLevel(4), 2);
 assert.equal(engine.applyAggressionLevel(engine.PLAYING_STYLES.super_ultra_aggressive, 1).riskBudget.equal, 120,
@@ -79,6 +122,14 @@ const hugeCp = { score: 900, scoreType: 'cp', depth: 30, pv: ['d1d3'] };
 for (const style of Object.keys(engine.PLAYING_STYLES)) {
   assert.equal(engine.selectPVForStyle([hugeCp, slowerMate, fastestMate], attackFen, style, 'w')[0].score, 2, `${style} must preserve the fastest forced mate`);
 }
+
+// N2 — Normal's metadata is mate-disciplined: next to a winning mate a
+// non-mating line costs infinitely more, it does not report "costs nothing".
+const normalMateMeta = engine.selectPVForStyle([hugeCp, slowerMate, fastestMate], attackFen, 'normal', 'w');
+assert.equal(normalMateMeta[0].pv[0], 'd1h5', 'Normal ranks the fastest forced mate first');
+assert.equal(normalMateMeta[0]._styleAnalysis.evalLoss, 0);
+assert.equal(normalMateMeta.find(pv => pv.pv[0] === 'd1d3')._styleAnalysis.evalLoss, Infinity,
+  'a +900cp line next to a forced mate must not report evalLoss 0');
 
 const sacrificeFen = '6k1/7p/8/8/8/3Q4/8/6K1 w - - 0 1';
 const realSac = engine.analyzeCandidate(sacrificeFen, ['d3h7', 'g8h7'], 'w', -40, 'cp', 24);

@@ -114,8 +114,14 @@ assert.equal(policy.resolveMultiPv({ humanLikeMode: true }), 5,
   'human mode auto width requests the maximum candidate pool');
 assert.equal(policy.resolveMultiPv({ humanLikeMode: true, candidateLines: 3 }), 3,
   'an explicit candidate-lines choice still wins over human mode');
-assert.equal(policy.resolveMultiPv({ style: 'normal' }), 2, 'the internal objective profile keeps a narrow auto width');
-assert.equal(policy.resolveMultiPv({}), 5, 'the single-persona default requests the wide ranking pool');
+assert.equal(policy.resolveMultiPv({ style: 'normal' }), 2,
+  'the objective default keeps a narrow auto width — its single-PV pass-through needs no pool');
+assert.equal(policy.resolveMultiPv({ style: 'super_ultra_aggressive' }), 5, 'the persona requests the wide ranking pool');
+assert.equal(policy.resolveMultiPv({ style: 'aggressive' }), 5, 'Aggressive ranks a candidate pool too');
+assert.equal(policy.resolveQuality({ style: 'normal' }).id, 'auto',
+  'the objective default holds auto quality instead of escalating depth');
+assert.equal(policy.resolveQuality({ style: 'super_ultra_aggressive' }).chessApiDepth, 14,
+  'the persona still escalates the requested depth');
 
 const humanQuality = policy.resolveQuality({ humanLikeMode: true });
 assert.equal(humanQuality.id, 'balanced',

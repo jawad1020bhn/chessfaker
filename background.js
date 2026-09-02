@@ -31,12 +31,18 @@ const KEEPALIVE_ALARM_INTERVAL_MIN = 1;
 const DEFAULT_SETTINGS = {
   analysisQuality: 'auto',
   candidateLines: 'auto',
-  style: 'super_ultra_aggressive',
+  // Factory default is the objective baseline (F1): the primary hint is the
+  // engine's own best move. The Ultra persona is opt-in.
+  style: 'normal',
   aggressionLevel: 'auto',
   // Style-scoped preference; the side panel and hint engine require the exact
   // Ultra Super Aggressive style before honoring this flag.
   earlyKingHuntEnabled: false,
+  // Opt-in book preference for the attack styles (always on for Normal).
+  bookFirstOpenings: false,
   humanLikeMode: false,
+  // Sparring: never slip once the position is clearly won.
+  sparringStrictness: false,
   // Sparring partner strength for "play human" mode (HumanForm anchors).
   sparringStrength: 1100,
   autoAnalyze: true,
@@ -55,21 +61,28 @@ function normalizeSettings(value = {}) {
   const candidate = value && typeof value === 'object' ? value : {};
   const migrated = AnalysisPolicy.migrateLegacySettings(candidate);
   const booleanKeys = [
-    'humanLikeMode', 'earlyKingHuntEnabled', 'autoAnalyze', 'showThreats',
+    'humanLikeMode', 'earlyKingHuntEnabled', 'bookFirstOpenings', 'sparringStrictness',
+    'autoAnalyze', 'showThreats',
     'showCriticalMoments', 'showOpeningExplorer', 'showTablebase',
     'useChessApi', 'useLichessCloud', 'useMastersExplorer'
   ];
   const normalized = { ...DEFAULT_SETTINGS };
   normalized.analysisQuality = AnalysisPolicy.normalizeQuality(migrated.analysisQuality);
   normalized.candidateLines = AnalysisPolicy.normalizeCandidateLines(migrated.candidateLines);
-  // Single-persona product: every legacy style lands on the Ultra persona.
-  // The old Aggressive/Normal intent maps to the dial's Level I ("Sound
-  // Storm"), unless the stored settings already carry an explicit level.
-  normalized.style = DEFAULT_SETTINGS.style;
-  const legacyLevel = ['normal', 'aggressive'].includes(migrated.style) ? 1 : 2;
+  // F1 / N1: honour a valid stored style instead of overwriting it with the
+  // factory default. Retired persona flavours consolidate onto Ultra; anything
+  // unrecognised degrades to the objective baseline, never to the most
+  // aggressive persona. A stored Normal/Aggressive preference no longer
+  // collapses onto the dial's Level I.
+  const STYLE_IDS = ['normal', 'aggressive', 'super_ultra_aggressive'];
+  const RETIRED_ULTRA_STYLES = ['super_aggressive', 'ultra_aggressive_stealth', 'kamikaze', 'berserker'];
+  const storedStyle = typeof migrated.style === 'string' ? migrated.style.trim().toLowerCase() : '';
+  normalized.style = STYLE_IDS.includes(storedStyle)
+    ? storedStyle
+    : (RETIRED_ULTRA_STYLES.includes(storedStyle) ? 'super_ultra_aggressive' : DEFAULT_SETTINGS.style);
   normalized.aggressionLevel = ['auto', 1, 2, 3].includes(migrated.aggressionLevel)
     ? migrated.aggressionLevel
-    : legacyLevel;
+    : 'auto';
   for (const key of booleanKeys) normalized[key] = typeof migrated[key] === 'boolean' ? migrated[key] : DEFAULT_SETTINGS[key];
   const strength = Math.round(Number(migrated.sparringStrength));
   normalized.sparringStrength = Number.isFinite(strength) ? strength : DEFAULT_SETTINGS.sparringStrength;
@@ -1094,10 +1107,15 @@ function buildAttackBookResult(fen, playerColor, options) {
   }
 }
 
-// Style ranking and human-like sparring both need a candidate pool — with
-// the single-persona product this is always true.
-function stylePoolNeeded() {
-  return true;
+// Style ranking, human-like sparring and the book-first preference all need
+// a candidate pool. The objective Normal style with everything else off does
+// not: its single-PV pass-through rule means one authoritative line IS the
+// answer (spec 2.2.1), so widening it would only add noise (F4).
+function stylePoolNeeded(settings = {}) {
+  if (settings.humanLikeMode === true) return true;
+  if (settings.bookFirstOpenings === true) return true;
+  if (settings.earlyKingHuntEnabled === true && settings.style === 'super_ultra_aggressive') return true;
+  return settings.style !== 'normal';
 }
 
 // Build a rankable pool around a single authoritative cloud line: keep the

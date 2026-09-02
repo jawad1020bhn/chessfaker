@@ -179,6 +179,21 @@
         <section class="md-settings-block" aria-labelledby="set-play">
           <h3 id="set-play" class="md-typescale-title-sm">How you want to play</h3>
 
+          <label class="visually-hidden" for="setting-style">Playing style</label>
+          <select id="setting-style" class="visually-hidden" tabindex="-1">
+            <option value="normal" selected>Normal — objective best move</option>
+            <option value="aggressive">Aggressive — fastest sound win</option>
+            <option value="super_ultra_aggressive">Ultra Attack — the persona</option>
+          </select>
+          <p class="md-field-label">Style</p>
+          <div class="md-segmented md-btn-group md-btn-group--wrap" role="radiogroup" aria-label="Playing style">
+            <span class="md-segmented__indicator" aria-hidden="true"></span>
+            <button type="button" class="md-btn-group__item" data-expressive-setting="setting-style" data-value="normal" role="radio">Normal</button>
+            <button type="button" class="md-btn-group__item" data-expressive-setting="setting-style" data-value="aggressive" role="radio">Aggressive</button>
+            <button type="button" class="md-btn-group__item" data-expressive-setting="setting-style" data-value="super_ultra_aggressive" role="radio">Ultra</button>
+          </div>
+          <p class="md-help">Normal gives you the engine's own best move. The Ultra persona trades evaluation for attack — opt in deliberately.</p>
+
           <label class="visually-hidden" for="setting-aggression">Aggression level</label>
           <select id="setting-aggression" class="visually-hidden" tabindex="-1">
             <option value="auto" selected>Auto — match the opponent</option>
@@ -210,8 +225,20 @@
 
           <div class="md-switch-row">
             <div>
+              <p class="md-switch-row__title">Book-first openings</p>
+              <p class="md-help">Let master opening theory take the primary slot when it is within 50cp of the engine's choice. Always on for Normal; opt-in for the attack styles.</p>
+            </div>
+            <label class="md-switch">
+              <input type="checkbox" id="setting-book-first">
+              <span class="md-switch__track" aria-hidden="true"><span class="md-switch__thumb"></span></span>
+              <span class="visually-hidden">Book-first openings</span>
+            </label>
+          </div>
+
+          <div class="md-switch-row">
+            <div>
               <p class="md-switch-row__title">Play human</p>
-              <p class="human-mode-sub md-help">Prefer natural plans over engine-echo moves.</p>
+              <p class="human-mode-sub md-help">Sparring mode plays <strong>deliberately weaker</strong> than the engine to feel human — turn it off for maximum strength.</p>
               <span class="human-mode-status visually-hidden">Off</span>
             </div>
             <input type="checkbox" id="setting-human-like-mode" class="human-mode-checkbox visually-hidden" tabindex="-1">

@@ -302,6 +302,39 @@ function send(message, sender = { id: 'test-extension-id' }) {
   assert.equal(guardStats.total, 3, 'correlation guard records all three player moves');
   assert.equal(guardStats.matches, 2, 'two of three moves are human-like/sensible');
 
+  // ── F1 / N1: the worker's settings normalization honours the restored
+  // objective styles instead of collapsing everything onto the persona.
+  assert.equal(typeof context.normalizeSettings, 'function', 'normalizeSettings is reachable from the worker context');
+  // (DEFAULT_SETTINGS is a top-level `const`, so it is not a property of the
+  // vm global object — assert the factory default through the function.)
+  assert.equal(context.normalizeSettings({}).style, 'normal', 'the factory default is the objective baseline');
+  assert.equal(context.normalizeSettings({ style: 'normal' }).style, 'normal', 'a stored Normal preference survives');
+  assert.equal(context.normalizeSettings({ style: 'aggressive' }).style, 'aggressive', 'a stored Aggressive preference survives');
+  assert.equal(context.normalizeSettings({ style: 'super_ultra_aggressive' }).style, 'super_ultra_aggressive');
+  for (const retired of ['super_aggressive', 'ultra_aggressive_stealth', 'kamikaze', 'berserker']) {
+    assert.equal(context.normalizeSettings({ style: retired }).style, 'super_ultra_aggressive',
+      `${retired} was a persona flavour and consolidates onto Ultra`);
+  }
+  for (const junk of [undefined, null, '', 'Nonsense', 42]) {
+    assert.equal(context.normalizeSettings({ style: junk }).style, 'normal',
+      `unrecognised style ${JSON.stringify(junk)} degrades to the objective baseline`);
+  }
+  assert.equal(context.normalizeSettings({ style: 'normal' }).aggressionLevel, 'auto',
+    'a stored Normal preference is no longer collapsed onto the dial');
+  assert.equal(context.normalizeSettings({ style: 'super_ultra_aggressive', aggressionLevel: 3 }).aggressionLevel, 3,
+    'an explicit dial level is still honoured');
+  assert.equal(context.normalizeSettings({}).bookFirstOpenings, false, 'book-first openings is opt-in for the personas');
+  assert.equal(context.normalizeSettings({ bookFirstOpenings: 'yes' }).bookFirstOpenings, false,
+    'book-first openings is coerced to a boolean');
+
+  // F4 support: the objective default does not need a widened pool at all.
+  assert.equal(context.stylePoolNeeded({ style: 'normal' }), false,
+    'Normal with everything else off keeps the single-PV pass-through rule');
+  assert.equal(context.stylePoolNeeded({ style: 'normal', humanLikeMode: true }), true, 'sparring still needs a pool');
+  assert.equal(context.stylePoolNeeded({ style: 'normal', bookFirstOpenings: true }), true, 'book-first needs a pool');
+  assert.equal(context.stylePoolNeeded({ style: 'super_ultra_aggressive' }), true, 'the persona needs a pool');
+  assert.equal(context.stylePoolNeeded({ style: 'aggressive' }), true, 'Aggressive needs a pool');
+
   console.log('background smoke tests passed');
 })().catch(error => {
   console.error(error);

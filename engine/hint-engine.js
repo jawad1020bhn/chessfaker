@@ -36,22 +36,56 @@
   const ULTRA_BONUS_SCALE = 0.125;
   const EXACT_HINT_LEVEL_NAME = 'Exact Move';
 
-  // ─── Playing Styles (6 styles, incl. Berserker) ────────────────────
+  // ─── Playing Styles ────────────────────────────────────────────────
+  // Three user-selectable styles. `normal` is the factory default and the
+  // objective baseline: it short-circuits the persona machinery entirely and
+  // returns the engine's own order (see selectEngineLane). `aggressive` is
+  // the "fastest sound win" middle of the strength axis. The Ultra persona
+  // stays the opt-in flagship, scaled by the aggression dial.
   const PLAYING_STYLES = {
-    // Internal objective anchor — no longer a user-selectable style. The
-    // product is the single Ultra persona; this profile keeps the objective
-    // fast path alive for diagnostics and as the low anchor of a future
-    // strictness control.
     normal: {
       id: 'normal',
-      internal: true,
       name: 'Normal',
-      desc: 'Objective best play with reliable conversion and resilient defense.',
+      desc: 'Objective best play — the engine\'s own move order, with reliable conversion and resilient defense.',
       riskBudget: { winning: 15, equal: 20, worse: 30 },
       sacrificeTolerance: 0,
       kingHuntBonus: 0,
       diversity: 0,
-      weights: {}
+      // Normal short-circuits before weights are read, so the table stays
+      // empty by design.
+      weights: {},
+      lossWeight: 1.5,
+      conversionFrom: 200
+    },
+    // "Fastest sound win": rewards checks, tempo, open king files and SOUND
+    // sacrifices; penalizes speculation, unsupported attacks and own-king
+    // danger. Its chess-sized budget (35/85/140) may spend ~1.4 pawns only
+    // when already worse.
+    aggressive: {
+      id: 'aggressive',
+      name: 'Aggressive',
+      desc: 'The fastest sound win — relentless forcing play and clean conversion, with no gambling.',
+      riskBudget: { winning: 35, equal: 85, worse: 140 },
+      sacrificeTolerance: 90,
+      kingHuntBonus: 55,
+      diversity: 0,
+      weights: {
+        check: 75,
+        forcingPly: 24,
+        kingPressure: 22,
+        defenderRemoval: 28,
+        tempo: 26,
+        development: 16,
+        openKingFile: 30,
+        sustainedAttack: 38,
+        soundSacrifice: 45,
+        speculativeSacrifice: -55,
+        simplification: -12,
+        ownKingDanger: -32,
+        unsupportedAttack: -30
+      },
+      lossWeight: 1.25,
+      conversionFrom: 200
     },
     super_ultra_aggressive: {
       id: 'super_ultra_aggressive',
@@ -73,7 +107,12 @@
         const chaos = getChaosEngine();
         return (chaos && chaos.profile && chaos.profile.weights) || {};
       },
-      phaseAggressionScale: 1.5
+      phaseAggressionScale: 1.5,
+      // Preserved from the rebalancing work (see the Preserve List): eval
+      // cost carries real weight at 1.0 with ULTRA_BONUS_SCALE 0.125, and
+      // conversion mode engages from +200 at Level II/III.
+      lossWeight: 1.0,
+      conversionFrom: 200
     }
   };
 
@@ -115,6 +154,15 @@
     return { ...profile, riskBudget: scaledBudget, diversity: cfg.diversity, openingCostCap: cfg.openingCostCap, aggression: cfg };
   }
 
+  // Single source of truth for style resolution (F1). An unknown, stale or
+  // retired style id must degrade to the OBJECTIVE profile, never to the most
+  // aggressive one: a settings blob written by an older build should make the
+  // hint safer, not wilder. Every call site resolves through here so the
+  // fallback is one assertion, not three.
+  function resolveStyleProfile(style) {
+    return PLAYING_STYLES[style] || PLAYING_STYLES.normal;
+  }
+
   // ─── Ultra Super Aggressive Attack module integration -------------
   // The Ultra Super Aggressive Attack style lives in engine/chaos-attack.js
   // (loaded before this file). It owns computeFeatures / styleBonus /
@@ -150,10 +198,12 @@
     return earlyKingHuntEngine;
   }
 
-  function earlyKingHuntRequested(_style, enabled) {
-    // Single-persona product: the style gate is always satisfied; the
-    // opt-in flag alone decides. (Signature kept for compatibility.)
-    return enabled === true;
+  function earlyKingHuntRequested(style, enabled) {
+    // The add-on is a persona feature: it never runs for Normal, Aggressive
+    // or an unknown/custom style id, even if a stale settings object still
+    // carries `earlyKingHuntEnabled: true` (spec 2.2.7 — the objective
+    // styles are immune to every persona mechanism).
+    return style === 'super_ultra_aggressive' && enabled === true;
   }
 
   // Opening repertoires were removed. Style ranks legal engine candidates only.
@@ -910,7 +960,7 @@
 
   // ─── Winning Plan Generation ───────────────────────────────────────
   function generateWinningPlan(evalScore, scoreType, position, playerColor, fen, style, earlyKingHuntEnabled = false) {
-    const currentStyle = PLAYING_STYLES[style] || PLAYING_STYLES.super_ultra_aggressive;
+    const currentStyle = resolveStyleProfile(style);
     if (scoreType === 'mate') {
       if (evalScore > 0) return `Force checkmate in ${Math.abs(evalScore)} move${Math.abs(evalScore) !== 1 ? 's' : ''}!`;
       return `Stop the forced mate — use every check, tempo, and escape square available.`;
@@ -1702,7 +1752,55 @@
   // metadata used to keep hints, candidates, and explanations synchronized.
   // Book PVs (Masters win rates, owned repertoire) are kept in their own
   // lane: a pure book pool ranks inside the lane, a mixed pool appends the
-  // book lane (ineligible for the style pick) after the engine ranking.
+  // book lane (ineligible for the style pick) after the engine ranking —
+  // except for the bounded book-first preference below.
+  //
+  // Repertoire/book soft preference (spec 2.2.3). A book move may take the
+  // PRIMARY slot only within this many centipawns of the engine's best — and
+  // never over a winning mate. Book scores stay win-rate-derived; this is a
+  // bounded preference, not a re-scoring.
+  const BOOK_FIRST_TOLERANCE_CP = 50;
+
+  // Who gets the book preference: the objective Normal profile always (that
+  // is where the 8.5 baseline shipped it), the persona only when the user
+  // opts in with the "Book-first openings" setting.
+  function bookFirstAllowed(style, humanLikeMode, context = {}) {
+    const profile = resolveStyleProfile(style);
+    if (profile.id === 'normal') return !humanLikeMode;
+    return context.bookFirstOpenings === true;
+  }
+
+  // Promotes the best book-lane candidate to the primary slot when it is
+  // within tolerance of the engine's top line. Never displaces a winning
+  // mate (spec 2.2.3 / 2.2.4).
+  function promoteBookWithinTolerance(ranked, playerColor, tolerance = BOOK_FIRST_TOLERANCE_CP) {
+    if (!Array.isArray(ranked) || ranked.length < 2) return ranked;
+    const top = ranked[0];
+    if (!top || top._styleAnalysis?.bookLane) return ranked;
+    const bestScore = playerScore(top, playerColor);
+    if (top.scoreType === 'mate' && bestScore > 0) return ranked;
+    const bestMove = top.pv?.[0];
+    const index = ranked.findIndex((pv, i) =>
+      i > 0 && pv._styleAnalysis?.bookLane &&
+      pv.scoreType !== 'mate' &&
+      pv.pv?.[0] && pv.pv?.[0] !== bestMove &&
+      playerScore(pv, playerColor) >= bestScore - tolerance);
+    if (index < 0) return ranked;
+    const promoted = ranked[index];
+    const reordered = [promoted, ...ranked.slice(0, index), ...ranked.slice(index + 1)];
+    return reordered.map((pv, rank) => ({
+      ...pv,
+      _styleAnalysis: {
+        ...pv._styleAnalysis,
+        styleRank: rank + 1,
+        eligible: rank === 0 ? true : pv._styleAnalysis.eligible,
+        reasons: rank === 0
+          ? [`book preference — within ${tolerance}cp of the engine's best`, ...(pv._styleAnalysis.reasons || [])]
+          : pv._styleAnalysis.reasons
+      }
+    }));
+  }
+
   function selectPVForStyle(pvs, fen, style, playerColor, humanLikeMode = false, context = {}) {
     if (!Array.isArray(pvs) || pvs.length === 0) return [];
     const bookPvs = pvs.filter(p => p.scoreType === 'book');
@@ -1715,14 +1813,14 @@
       ...pv,
       _styleAnalysis: { ...pv._styleAnalysis, eligible: false, styleRank: offset + pv._styleAnalysis.styleRank }
     }));
-    return [...engineRanked, ...tagged];
+    const merged = [...engineRanked, ...tagged];
+    return bookFirstAllowed(style, humanLikeMode, context)
+      ? promoteBookWithinTolerance(merged, playerColor)
+      : merged;
   }
 
   function selectEngineLane(pvs, fen, style, playerColor, humanLikeMode = false, context = {}) {
-    const profile = applyAggressionLevel(
-      PLAYING_STYLES[style] || PLAYING_STYLES.super_ultra_aggressive,
-      context.aggressionLevel
-    );
+    const profile = applyAggressionLevel(resolveStyleProfile(style), context.aggressionLevel);
     const earlyKingHuntEnabled = earlyKingHuntRequested(profile.id, context.earlyKingHuntEnabled);
     if (pvs.length === 1) {
       // A single-PV source cannot be re-ranked, but the opt-in still annotates
@@ -1749,17 +1847,38 @@
       .sort((a, b) => b.utility - a.utility);
     const objectiveBest = objective[0];
 
+    // Normal is the objective baseline (F1 / spec 2.2): the engine's own
+    // order, no persona machinery, no diversity, no dial. Mate discipline
+    // still governs the METADATA — with a winning mate on top, a non-mating
+    // line does not cost "nothing". The old subtraction reported evalLoss 0
+    // for a +800cp candidate next to a mate-in-2 (score 2), which made the
+    // losing alternative look free.
     if (profile.id === 'normal' && !humanLikeMode) {
-      return objective.map((entry, rank) => ({
-        ...entry.pv,
-        _styleAnalysis: {
-          objectiveRank: rank + 1,
-          styleRank: rank + 1,
-          evalLoss: Math.max(0, objectiveBest.score - entry.score),
-          reasons: ['objective best play'],
-          risks: [], mode: profile.id
+      const bestIsWinningMateForNormal = objectiveBest.pv.scoreType === 'mate' && objectiveBest.score > 0;
+      return objective.map((entry, rank) => {
+        let evalLoss;
+        if (bestIsWinningMateForNormal) {
+          evalLoss = entry.pv.scoreType === 'mate' && entry.score > 0
+            ? Math.max(0, Math.abs(entry.score) - Math.abs(objectiveBest.score))
+            : Infinity;
+        } else if (entry.pv.scoreType === 'mate') {
+          evalLoss = entry.score > 0 ? 0 : Infinity;
+        } else if (objectiveBest.pv.scoreType === 'mate') {
+          evalLoss = Infinity;
+        } else {
+          evalLoss = Math.max(0, objectiveBest.score - entry.score);
         }
-      }));
+        return {
+          ...entry.pv,
+          _styleAnalysis: {
+            objectiveRank: rank + 1,
+            styleRank: rank + 1,
+            evalLoss,
+            reasons: ['objective best play'],
+            risks: [], mode: profile.id
+          }
+        };
+      });
     }
 
     const bestIsWinningMate = objectiveBest.pv.scoreType === 'mate' && objectiveBest.score > 0;
@@ -1767,7 +1886,7 @@
     // advantage the persona switches to the retired Aggressive style's
     // "fastest sound win" discipline (trade counterplay, drive the finish).
     // Level I converts earlier (from +120), II/III from +200.
-    const conversion = !bestIsWinningMate && objectiveBest.score > (profile.aggression?.conversionFrom ?? 200);
+    const conversion = !bestIsWinningMate && objectiveBest.score > (profile.aggression?.conversionFrom ?? profile.conversionFrom ?? 200);
     const budget = riskBudgetFor(profile, objectiveBest.score);
     const candidates = objective.map((entry, rank) => {
       let evalLoss;
@@ -1802,11 +1921,12 @@
       analysis.mode = profile.id;
       const eligible = styleSafetyAllows(analysis, evalLoss, profile, objectiveBest, conversion);
       const bonus = eligible ? candidateStyleBonus(analysis, profile, { conversion }) : -Infinity;
-      // Aggressive is especially focused on converting quickly: objective cost
-      // remains expensive, while checks and sustained forcing play can overcome it.
-      // Ultra paid 0.62 while its bonuses were ~10x every other style's —
-      // with bonuses rescaled, eval cost now carries real weight (1.0).
-      const lossWeight = profile.id === 'normal' ? 1.5 : 1.0;
+      // Per-style eval cost. Normal is the strictest (1.5); Aggressive pays
+      // 1.25 so checks and sustained forcing play can still overcome it;
+      // Ultra keeps 1.0 — it paid 0.62 while its bonuses were ~10x every
+      // other style's, and with bonuses rescaled the eval term must count
+      // (Preserve List: do not revert to 0.62).
+      const lossWeight = Number.isFinite(profile.lossWeight) ? profile.lossWeight : 1.0;
       const styleScore = eligible ? bonus - evalLoss * lossWeight : -Infinity;
       analysis.attackSubTotal = analysis.attackMomentum ||
         ((analysis.kingPressureDelta || 0) + (analysis.penetrationDelta || 0) + (analysis.pawnStormDelta || 0));
@@ -1954,10 +2074,7 @@
     const { fen, pvs, bestMove, source, tablebaseData, openingData } = analysisData;
     const position = assessPosition(fen);
     const isWhite = playerColor === 'w';
-    const currentStyle = applyAggressionLevel(
-      PLAYING_STYLES[style] || PLAYING_STYLES.super_ultra_aggressive,
-      humanContext.aggressionLevel
-    );
+    const currentStyle = applyAggressionLevel(resolveStyleProfile(style), humanContext.aggressionLevel);
     const earlyKingHuntEnabled = earlyKingHuntRequested(currentStyle.id, humanContext.earlyKingHuntEnabled);
 
     // Apply the rebuilt, mate-safe style ranking. Normal also receives objective
@@ -2631,11 +2748,16 @@
     uciToSan,
     detectCriticalMoment,
     selectPVForStyle,
+    selectEngineLane,
     analyzeCandidate,
     PLAYING_STYLES,
     AGGRESSION_LEVELS,
     resolveAggressionLevel,
     applyAggressionLevel,
+    resolveStyleProfile,
+    bookFirstAllowed,
+    promoteBookWithinTolerance,
+    BOOK_FIRST_TOLERANCE_CP,
     styleSafetyAllows,
     EXACT_HINT_LEVEL,
     // Exposed for deterministic regression tests and progressive-PV consumers.

@@ -37,11 +37,21 @@
   let refreshSafetyTimer = null;
   let humanPlanState = null;
 
-  // Single-persona product: the style is constant; legacy intents (Normal,
-  // Aggressive) land on the dial's Level I ("Sound Storm"). 'auto' scales
-  // with the detected opponent rating (fallback: Level II).
-  const STYLE = 'super_ultra_aggressive';
-  const normalizeStyle = () => STYLE;
+  // Three selectable styles (F1). Unknown or retired values degrade to the
+  // OBJECTIVE baseline, never to the most aggressive persona: a settings blob
+  // written by an older build must make the hints safer, not wilder. The
+  // aggression dial only exists for the Ultra persona — Normal and Aggressive
+  // ignore it entirely (spec 2.2.7).
+  const STYLE_IDS = ['normal', 'aggressive', 'super_ultra_aggressive'];
+  // Persona flavours retired by earlier builds. They were all attack styles,
+  // so they land on the Ultra persona rather than on the objective baseline.
+  const RETIRED_ULTRA_STYLES = ['super_aggressive', 'ultra_aggressive_stealth', 'kamikaze', 'berserker'];
+  function normalizeStyle(value) {
+    const v = String(value == null ? '' : value).trim().toLowerCase();
+    if (STYLE_IDS.includes(v)) return v;
+    if (RETIRED_ULTRA_STYLES.includes(v)) return 'super_ultra_aggressive';
+    return 'normal';
+  }
   const normalizeAggression = (style, level) => {
     if (level === 'auto') return 'auto';
     if ([1, 2, 3].includes(Number(level))) return Number(level);
@@ -61,11 +71,14 @@
     analysisQuality: 'auto',
     theme: 'system',
     candidateLines: 'auto',
-    style: 'super_ultra_aggressive',
+    style: 'normal',
     aggressionLevel: 'auto',
     // Kept as a style-scoped preference. The engine activates it only when
     // style === 'super_ultra_aggressive'; other styles ignore it completely.
     earlyKingHuntEnabled: false,
+    // Opt-in book preference for the attack styles. The objective Normal
+    // profile always applies it (bounded at 50cp, never over a winning mate).
+    bookFirstOpenings: false,
     humanLikeMode: false,
     sparringStrength: 1100,
     autoAnalyze: true,
@@ -89,8 +102,36 @@
 
   const LEVEL_NAMES = { 1: 'I · Sound', 2: 'II · Ultra', 3: 'III · Chaos' };
 
+  // The objective styles have no dial, so they carry their own copy.
+  const STYLE_COPY = {
+    normal: 'Normal: objective best play — the engine\'s own move order, with no evaluation traded for style.',
+    aggressive: 'Aggressive: the fastest sound win — relentless forcing play and clean conversion, no gambling.'
+  };
+  const STYLE_CHIP_LABELS = { normal: 'Normal', aggressive: 'Aggressive' };
+
+  // The dial and the Early King Hunt add-on belong to the Ultra persona only.
+  // Outside it they are inert, so the sheet says so instead of implying a
+  // control that the engine deliberately ignores.
+  function updateStyleScopedUI(isUltra) {
+    const dial = document.querySelector('[data-expressive-setting="setting-aggression"]');
+    const dialGroup = dial ? dial.closest('.md-segmented') : null;
+    if (dialGroup) {
+      dialGroup.classList.toggle('is-inert', !isUltra);
+      dialGroup.setAttribute('aria-disabled', isUltra ? 'false' : 'true');
+      dialGroup.querySelectorAll('.md-btn-group__item').forEach((btn) => { btn.disabled = !isUltra; });
+    }
+  }
+
   function updateStyleDescription() {
     const el = $('#style-description');
+    const isUltra = settings.style === 'super_ultra_aggressive';
+    updateStyleScopedUI(isUltra);
+    updateEarlyKingHuntUI();
+    if (!isUltra) {
+      if (el) el.textContent = STYLE_COPY[settings.style] || STYLE_COPY.normal;
+      updatePersonaChip(settings.style, false);
+      return;
+    }
     if (!el) return;
     const level = effectiveAggressionLevel();
     const auto = settings.aggressionLevel === 'auto';
@@ -106,12 +147,19 @@
   function updatePersonaChip(level, auto) {
     const chip = $('#persona-chip');
     if (!chip) return;
-    const label = auto ? `Auto · ${ROMAN[level]}` : LEVEL_NAMES[level] || LEVEL_NAMES[2];
+    // Objective styles show their own name on the chip; only the persona
+    // carries a dial level.
+    const isStyleChip = typeof level === 'string';
+    const label = isStyleChip
+      ? (STYLE_CHIP_LABELS[level] || 'Normal')
+      : (auto ? `Auto · ${ROMAN[level]}` : LEVEL_NAMES[level] || LEVEL_NAMES[2]);
     if (chip.dataset.level !== String(level) || chip.textContent !== label) {
       chip.dataset.level = String(level);
       chip.textContent = label;
-      chip.title = `Ultra Attack — ${auto ? `Auto → ${ROMAN[level]}` : LEVEL_NAMES[level]}` +
-        (auto && opponentRating ? ` (opponent ${opponentRating})` : '');
+      chip.title = isStyleChip
+        ? (label === 'Aggressive' ? 'Aggressive — fastest sound win' : 'Normal — objective best play')
+        : `Ultra Attack — ${auto ? `Auto → ${ROMAN[level]}` : LEVEL_NAMES[level]}` +
+          (auto && opponentRating ? ` (opponent ${opponentRating})` : '');
       chip.classList.remove('is-resolving');
       // restart the pop keyframe
       void chip.offsetWidth;
@@ -130,9 +178,11 @@
     const container = $('#early-king-hunt-setting');
     const checkbox = $('#setting-early-king-hunt');
     if (!container || !checkbox) return;
+    const available = settings.style === 'super_ultra_aggressive';
     container.hidden = false;
     container.setAttribute('aria-hidden', 'false');
-    checkbox.disabled = false;
+    container.classList.toggle('is-inert', !available);
+    checkbox.disabled = !available;
     checkbox.checked = settings.earlyKingHuntEnabled === true;
   }
 
@@ -620,8 +670,9 @@
           ...migrated,
           theme: (migrated.theme === 'light' || migrated.theme === 'dark') ? migrated.theme : 'system',
           style: normalizeStyle(migrated.style),
-          aggressionLevel: normalizeAggression(migrated.style, migrated.aggressionLevel),
+          aggressionLevel: normalizeAggression(normalizeStyle(migrated.style), migrated.aggressionLevel),
           earlyKingHuntEnabled: migrated.earlyKingHuntEnabled === true,
+          bookFirstOpenings: migrated.bookFirstOpenings === true,
           analysisQuality: window.AnalysisPolicy
             ? window.AnalysisPolicy.normalizeQuality(migrated.analysisQuality)
             : (migrated.analysisQuality || 'auto'),
@@ -696,8 +747,10 @@
       'setting-analysis-quality': settings.analysisQuality,
       'setting-theme': settings.theme,
       'setting-candidate-lines': settings.candidateLines,
+      'setting-style': settings.style,
       'setting-aggression': String(settings.aggressionLevel),
       'setting-early-king-hunt': settings.earlyKingHuntEnabled,
+      'setting-book-first': settings.bookFirstOpenings,
       'setting-human-like-mode': settings.humanLikeMode,
       'setting-sparring-strength': settings.sparringStrength,
       'setting-auto-analyze': settings.autoAnalyze,
@@ -885,12 +938,17 @@
         applyThemePreference();
       },
       'setting-candidate-lines': (v) => { settings.candidateLines = v === 'auto' ? 'auto' : parseInt(v, 10); },
+      'setting-style': (v) => {
+        settings.style = normalizeStyle(v);
+        updateStyleDescription();
+      },
       'setting-aggression': (v) => {
         if (v === 'auto') settings.aggressionLevel = 'auto';
         else settings.aggressionLevel = [1, 2, 3].includes(Number(v)) ? Number(v) : 2;
         updateStyleDescription();
       },
       'setting-early-king-hunt': (v) => { settings.earlyKingHuntEnabled = v === true; },
+      'setting-book-first': (v) => { settings.bookFirstOpenings = v === true; },
       'setting-human-like-mode': (v) => { settings.humanLikeMode = v; },
       'setting-sparring-strength': (v) => {
         const strength = Math.round(Number(v));
@@ -914,7 +972,7 @@
         handler(val);
         const savePromise = saveSettings();
         applySettingsToUI();
-        if ((id === 'setting-aggression' || id === 'setting-human-like-mode' || id === 'setting-early-king-hunt' || id === 'setting-show-threats') && lastAnalysis) {
+        if ((id === 'setting-style' || id === 'setting-book-first' || id === 'setting-aggression' || id === 'setting-human-like-mode' || id === 'setting-early-king-hunt' || id === 'setting-show-threats') && lastAnalysis) {
           humanPlanState = null;
           renderAnalysis(lastAnalysis);
           // Human mode changes routing policy too (steady depth, max MultiPV),
@@ -923,7 +981,9 @@
             savePromise.finally(() => requestAnalysis(true));
           }
         }
-        if (['setting-use-chess-api', 'setting-use-lichess-cloud', 'setting-use-masters-explorer', 'setting-analysis-quality', 'setting-candidate-lines'].includes(id) && currentFen) {
+        // Style changes the provider policy too (Normal asks for MultiPV 2
+        // and auto quality; the persona escalates), so re-fetch.
+        if (['setting-style', 'setting-use-chess-api', 'setting-use-lichess-cloud', 'setting-use-masters-explorer', 'setting-analysis-quality', 'setting-candidate-lines'].includes(id) && currentFen) {
           // Ensure the worker sees the new source policy before it routes.
           savePromise.finally(() => requestAnalysis(true));
         }
@@ -1901,6 +1961,8 @@
       {
         activePlan: humanPlanState?.activePlan || null,
         earlyKingHuntEnabled: isEarlyKingHuntActive(),
+        bookFirstOpenings: settings.bookFirstOpenings === true,
+        sparringStrictness: settings.sparringStrictness === true,
         aggressionLevel: effectiveAggressionLevel(),
         formSession: settings.humanLikeMode ? (data.formSession || null) : null
       }
