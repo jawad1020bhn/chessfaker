@@ -35,32 +35,23 @@
   let lastCriticalAlert = null;
   let isRefreshing = false;
   let refreshSafetyTimer = null;
-  let humanPlanState = null;
 
-  // Three selectable styles (F1). Unknown or retired values degrade to the
-  // OBJECTIVE baseline, never to the most aggressive persona: a settings blob
-  // written by an older build must make the hints safer, not wilder. The
-  // aggression dial only exists for the Ultra persona — Normal and Aggressive
-  // ignore it entirely (spec 2.2.7).
-  const STYLE_IDS = ['normal', 'aggressive', 'super_ultra_aggressive'];
-  // Persona flavours retired by earlier builds. They were all attack styles,
-  // so they land on the Ultra persona rather than on the objective baseline.
-  const RETIRED_ULTRA_STYLES = ['super_aggressive', 'ultra_aggressive_stealth', 'kamikaze', 'berserker'];
+  // Two product styles: Objective (normal) and Aggressive (the persona). The
+  // old middle "aggressive" and every retired persona flavour consolidate onto
+  // the Aggressive persona; anything unrecognised degrades to the OBJECTIVE
+  // baseline — safer, not wilder (F1 / N1).
+  const STYLE_IDS = ['normal', 'super_ultra_aggressive'];
+  const AGGRESSIVE_STYLE_IDS = ['aggressive', 'super_aggressive', 'ultra_aggressive_stealth', 'kamikaze', 'berserker'];
   function normalizeStyle(value) {
     const v = String(value == null ? '' : value).trim().toLowerCase();
-    if (STYLE_IDS.includes(v)) return v;
-    if (RETIRED_ULTRA_STYLES.includes(v)) return 'super_ultra_aggressive';
+    if (v === 'normal') return 'normal';
+    if (AGGRESSIVE_STYLE_IDS.includes(v) || v === 'super_ultra_aggressive') return 'super_ultra_aggressive';
     return 'normal';
   }
-  const normalizeAggression = (style, level) => {
-    if (level === 'auto') return 'auto';
-    if ([1, 2, 3].includes(Number(level))) return Number(level);
-    return style === 'normal' || style === 'aggressive' ? 1 : 'auto';
-  };
   let opponentRating = null;
 
+  // Intensity is auto-scaled by opponent rating only — the manual dial is gone.
   function effectiveAggressionLevel() {
-    if (settings.aggressionLevel !== 'auto') return settings.aggressionLevel;
     const suggested = window.AnalysisPolicy
       ? window.AnalysisPolicy.suggestAggressionLevel(opponentRating)
       : null;
@@ -68,27 +59,17 @@
   }
 
   let settings = {
-    analysisQuality: 'auto',
-    theme: 'system',
-    candidateLines: 'auto',
     style: 'normal',
     aggressionLevel: 'auto',
-    // Kept as a style-scoped preference. The engine activates it only when
-    // style === 'super_ultra_aggressive'; other styles ignore it completely.
-    earlyKingHuntEnabled: false,
-    // Opt-in book preference for the attack styles. The objective Normal
-    // profile always applies it (bounded at 50cp, never over a winning mate).
-    bookFirstOpenings: false,
-    humanLikeMode: false,
-    sparringStrength: 1100,
-    // Strict sparring: no human variety once the position is ahead at all.
-    // (Above a clear win the engine locks the pick regardless — G1.)
-    sparringStrictness: false,
+    theme: 'system',
+    // Internal, always-on — no user-facing toggle remains.
+    analysisQuality: 'auto',
+    candidateLines: 'auto',
+    earlyKingHuntEnabled: true,
+    bookFirstOpenings: true,
     autoAnalyze: true,
     showThreats: true,
     showCriticalMoments: true,
-    // Still gate background fetching that feeds the coach tab (opening name,
-    // tablebase-backed winning plans); the explore UI is gone.
     showOpeningExplorer: true,
     showTablebase: true,
     useChessApi: true,
@@ -96,73 +77,30 @@
     useMastersExplorer: true
   };
 
-  const STYLE_DESCRIPTIONS = {
-    1: 'Sound Storm (I): fastest sound win — relentless pressure, early conversion, no gambling.',
-    2: 'Ultra Attack (II): the signature persona — fearless, organized attack with verified compensation.',
-    3: 'Max Chaos (III): widest risk budgets and the most variety. Bring the storm.'
-  };
-  const ROMAN = { 1: 'I', 2: 'II', 3: 'III' };
-
-  const LEVEL_NAMES = { 1: 'I · Sound', 2: 'II · Ultra', 3: 'III · Chaos' };
-
-  // The objective styles have no dial, so they carry their own copy.
   const STYLE_COPY = {
-    normal: 'Normal: objective best play — the engine\'s own move order, with no evaluation traded for style.',
-    aggressive: 'Aggressive: the fastest sound win — relentless forcing play and clean conversion, no gambling.'
+    normal: 'Objective: the engine\'s own best move, with no evaluation traded for style.',
+    super_ultra_aggressive: 'Aggressive: a customized attacking style that generates its own moves beyond the engine\'s top lines — intensity auto-scales with the opponent.'
   };
-  const STYLE_CHIP_LABELS = { normal: 'Normal', aggressive: 'Aggressive' };
-
-  // The dial and the Early King Hunt add-on belong to the Ultra persona only.
-  // Outside it they are inert, so the sheet says so instead of implying a
-  // control that the engine deliberately ignores.
-  function updateStyleScopedUI(isUltra) {
-    const dial = document.querySelector('[data-expressive-setting="setting-aggression"]');
-    const dialGroup = dial ? dial.closest('.md-segmented') : null;
-    if (dialGroup) {
-      dialGroup.classList.toggle('is-inert', !isUltra);
-      dialGroup.setAttribute('aria-disabled', isUltra ? 'false' : 'true');
-      dialGroup.querySelectorAll('.md-btn-group__item').forEach((btn) => { btn.disabled = !isUltra; });
-    }
-  }
+  const STYLE_CHIP_LABELS = { normal: 'Objective', super_ultra_aggressive: 'Aggressive' };
 
   function updateStyleDescription() {
     const el = $('#style-description');
-    const isUltra = settings.style === 'super_ultra_aggressive';
-    updateStyleScopedUI(isUltra);
-    updateEarlyKingHuntUI();
-    if (!isUltra) {
-      if (el) el.textContent = STYLE_COPY[settings.style] || STYLE_COPY.normal;
-      updatePersonaChip(settings.style, false);
-      return;
-    }
-    if (!el) return;
-    const level = effectiveAggressionLevel();
-    const auto = settings.aggressionLevel === 'auto';
-    const ratingNote = auto && opponentRating ? ` (opponent ${opponentRating})` : '';
-    el.textContent = auto
-      ? `Auto → ${ROMAN[level]}${ratingNote}. ${STYLE_DESCRIPTIONS[level]}`
-      : STYLE_DESCRIPTIONS[level] || STYLE_DESCRIPTIONS[2];
-    updatePersonaChip(level, auto);
+    if (el) el.textContent = STYLE_COPY[settings.style] || STYLE_COPY.normal;
+    updatePersonaChip(settings.style);
   }
 
-  // The hero chip mirrors the resolved persona level. It pops whenever the
-  // resolution CHANGES (Auto re-scaling with a new opponent, dial moves).
-  function updatePersonaChip(level, auto) {
+  // The hero chip mirrors the active style. It pops whenever the resolution
+  // CHANGES (switching styles, or Auto re-scaling with a new opponent).
+  function updatePersonaChip(style) {
     const chip = $('#persona-chip');
     if (!chip) return;
-    // Objective styles show their own name on the chip; only the persona
-    // carries a dial level.
-    const isStyleChip = typeof level === 'string';
-    const label = isStyleChip
-      ? (STYLE_CHIP_LABELS[level] || 'Normal')
-      : (auto ? `Auto · ${ROMAN[level]}` : LEVEL_NAMES[level] || LEVEL_NAMES[2]);
-    if (chip.dataset.level !== String(level) || chip.textContent !== label) {
-      chip.dataset.level = String(level);
+    const label = STYLE_CHIP_LABELS[style] || 'Objective';
+    if (chip.dataset.level !== style || chip.textContent !== label) {
+      chip.dataset.level = style;
       chip.textContent = label;
-      chip.title = isStyleChip
-        ? (label === 'Aggressive' ? 'Aggressive — fastest sound win' : 'Normal — objective best play')
-        : `Ultra Attack — ${auto ? `Auto → ${ROMAN[level]}` : LEVEL_NAMES[level]}` +
-          (auto && opponentRating ? ` (opponent ${opponentRating})` : '');
+      chip.title = style === 'super_ultra_aggressive'
+        ? `Aggressive — auto intensity ${['', 'I', 'II', 'III'][effectiveAggressionLevel()] || 'II'}${opponentRating ? ` (opponent ${opponentRating})` : ''}`
+        : 'Objective — the engine\'s own best move';
       chip.classList.remove('is-resolving');
       // restart the pop keyframe
       void chip.offsetWidth;
@@ -171,22 +109,7 @@
   }
 
   function isEarlyKingHuntActive() {
-    return settings.earlyKingHuntEnabled === true;
-  }
-
-  // The preference is preserved when the user changes style, but the control
-  // is unavailable outside Ultra Super Aggressive and the engine receives a
-  // true flag only through the exact style-scoped predicate above.
-  function updateEarlyKingHuntUI() {
-    const container = $('#early-king-hunt-setting');
-    const checkbox = $('#setting-early-king-hunt');
-    if (!container || !checkbox) return;
-    const available = settings.style === 'super_ultra_aggressive';
-    container.hidden = false;
-    container.setAttribute('aria-hidden', 'false');
-    container.classList.toggle('is-inert', !available);
-    checkbox.disabled = !available;
-    checkbox.checked = settings.earlyKingHuntEnabled === true;
+    return settings.style === 'super_ultra_aggressive';
   }
 
   // ─── DOM References ─────────────────────────────────────────────────
@@ -670,22 +593,11 @@
           : result.settings;
         settings = {
           ...settings,
-          ...migrated,
           theme: (migrated.theme === 'light' || migrated.theme === 'dark') ? migrated.theme : 'system',
-          style: normalizeStyle(migrated.style),
-          aggressionLevel: normalizeAggression(normalizeStyle(migrated.style), migrated.aggressionLevel),
-          earlyKingHuntEnabled: migrated.earlyKingHuntEnabled === true,
-          bookFirstOpenings: migrated.bookFirstOpenings === true,
-          sparringStrictness: migrated.sparringStrictness === true,
-          analysisQuality: window.AnalysisPolicy
-            ? window.AnalysisPolicy.normalizeQuality(migrated.analysisQuality)
-            : (migrated.analysisQuality || 'auto'),
-          candidateLines: window.AnalysisPolicy
-            ? window.AnalysisPolicy.normalizeCandidateLines(migrated.candidateLines)
-            : (migrated.candidateLines || 'auto')
+          style: normalizeStyle(migrated.style)
         };
         applySettingsToUI();
-        if (settings.style !== result.settings.style) chrome.storage.local.set({ settings });
+        if (settings.style !== normalizeStyle(result.settings.style)) chrome.storage.local.set({ settings });
         if (lastAnalysis) renderAnalysis(lastAnalysis);
       }
     });
@@ -698,6 +610,8 @@
   }
 
   // ─── M3E slider: custom visuals driven by the native range input ─────
+  // (No sliders remain in the slimmed settings sheet; kept so any future
+  // range control inherits the expressive visuals for free.)
   function initMdSliders() {
     $$('[data-md-slider]').forEach((slider) => {
       const input = slider.querySelector('input[type="range"]');
@@ -713,16 +627,7 @@
         handle.style.left = `${frac * 100}%`;
       };
 
-      let bumpTimer = null;
-      const bumpChip = () => {
-        const chip = document.getElementById('sparring-strength-value');
-        if (!chip) return;
-        chip.classList.add('is-bumped');
-        clearTimeout(bumpTimer);
-        bumpTimer = setTimeout(() => chip.classList.remove('is-bumped'), 140);
-      };
-
-      input.addEventListener('input', () => { render(); bumpChip(); });
+      input.addEventListener('input', render);
       input.addEventListener('pointerdown', () => slider.classList.add('is-dragging'));
       window.addEventListener('pointerup', () => slider.classList.remove('is-dragging'));
       render();
@@ -748,22 +653,8 @@
 
   function applySettingsToUI() {
     const mapping = {
-      'setting-analysis-quality': settings.analysisQuality,
       'setting-theme': settings.theme,
-      'setting-candidate-lines': settings.candidateLines,
-      'setting-style': settings.style,
-      'setting-aggression': String(settings.aggressionLevel),
-      'setting-early-king-hunt': settings.earlyKingHuntEnabled,
-      'setting-book-first': settings.bookFirstOpenings,
-      'setting-human-like-mode': settings.humanLikeMode,
-      'setting-sparring-strength': settings.sparringStrength,
-      'setting-sparring-strictness': settings.sparringStrictness,
-      'setting-auto-analyze': settings.autoAnalyze,
-      'setting-show-threats': settings.showThreats,
-      'setting-show-critical-moments': settings.showCriticalMoments,
-      'setting-use-chess-api': settings.useChessApi,
-      'setting-use-lichess-cloud': settings.useLichessCloud,
-      'setting-use-masters-explorer': settings.useMastersExplorer,
+      'setting-style': settings.style
     };
     Object.entries(mapping).forEach(([id, val]) => {
       const el = $(`#${id}`);
@@ -771,22 +662,7 @@
       if (el.type === 'checkbox') el.checked = val;
       else el.value = val;
     });
-    const humanStatus = document.querySelector('.human-mode-status');
-    if (humanStatus) humanStatus.textContent = settings.humanLikeMode ? 'On' : 'Off';
-    const strengthRow = document.getElementById('sparring-strength-row');
-    if (strengthRow) strengthRow.hidden = !settings.humanLikeMode;
-    const strictnessRow = document.getElementById('sparring-strictness-row');
-    if (strictnessRow) strictnessRow.hidden = !settings.humanLikeMode;
-    const strengthOutput = document.getElementById('sparring-strength-value');
-    if (strengthOutput) strengthOutput.textContent = String(settings.sparringStrength);
-    const thinkingNote = document.getElementById('human-thinking-note');
-    if (thinkingNote) thinkingNote.hidden = !settings.humanLikeMode;
-    $$('.human-mode-opt').forEach(btn => {
-      const active = (btn.dataset.mode === 'on') === settings.humanLikeMode;
-      btn.setAttribute('aria-checked', active ? 'true' : 'false');
-    });
     updateStyleDescription();
-    updateEarlyKingHuntUI();
     syncExpressiveControls();
     syncAllSegments();
   }
@@ -798,10 +674,6 @@
       const selected = String(field.type === 'checkbox' ? field.checked : field.value) === String(btn.dataset.value);
       btn.classList.toggle('is-selected', selected);
       btn.setAttribute('aria-checked', selected ? 'true' : 'false');
-    });
-    $$('.human-mode-opt').forEach((btn) => {
-      const active = (btn.dataset.mode === 'on') === settings.humanLikeMode;
-      btn.classList.toggle('is-selected', active);
     });
   }
 
@@ -928,27 +800,20 @@
       });
     }
 
-    // One-click step-down offered by the aggression telemetry row.
+    // One-click step-down offered by the aggression telemetry row: the only
+    // softer option left is the objective baseline.
     const applySuggestion = (patch) => {
       Object.assign(settings, patch);
       saveSettings();
       applySettingsToUI();
-      humanPlanState = null;
       if (lastAnalysis) renderAnalysis(lastAnalysis);
       if (currentFen) requestAnalysis(true);
     };
-    const btnSofter = document.getElementById('btn-suggest-level-1');
-    if (btnSofter) {
-      btnSofter.addEventListener('click', () => {
-        applySuggestion({ aggressionLevel: 1 });
-        showToast('Aggression set to Level I — Sound Storm', 'success', 2500);
-      });
-    }
     const btnObjective = document.getElementById('btn-suggest-normal');
     if (btnObjective) {
       btnObjective.addEventListener('click', () => {
-        applySuggestion({ style: 'normal', aggressionLevel: 'auto' });
-        showToast('Style set to Normal — objective best play', 'success', 2500);
+        applySuggestion({ style: 'normal' });
+        showToast('Style set to Objective — the engine\'s own best move', 'success', 2500);
       });
     }
 
@@ -963,37 +828,14 @@
     if (dom.btnCloseSettings) dom.btnCloseSettings.addEventListener('click', closeSettingsSheet);
 
     const settingEls = {
-      'setting-analysis-quality': (v) => { settings.analysisQuality = v; },
       'setting-theme': (v) => {
         settings.theme = (v === 'light' || v === 'dark') ? v : 'system';
         applyThemePreference();
       },
-      'setting-candidate-lines': (v) => { settings.candidateLines = v === 'auto' ? 'auto' : parseInt(v, 10); },
       'setting-style': (v) => {
         settings.style = normalizeStyle(v);
         updateStyleDescription();
-      },
-      'setting-aggression': (v) => {
-        if (v === 'auto') settings.aggressionLevel = 'auto';
-        else settings.aggressionLevel = [1, 2, 3].includes(Number(v)) ? Number(v) : 2;
-        updateStyleDescription();
-      },
-      'setting-early-king-hunt': (v) => { settings.earlyKingHuntEnabled = v === true; },
-      'setting-book-first': (v) => { settings.bookFirstOpenings = v === true; },
-      'setting-human-like-mode': (v) => { settings.humanLikeMode = v; },
-      'setting-sparring-strength': (v) => {
-        const strength = Math.round(Number(v));
-        settings.sparringStrength = Number.isFinite(strength) ? strength : 1100;
-        const out = document.getElementById('sparring-strength-value');
-        if (out) out.textContent = String(settings.sparringStrength);
-      },
-      'setting-sparring-strictness': (v) => { settings.sparringStrictness = v === true; },
-      'setting-auto-analyze': (v) => { settings.autoAnalyze = v; },
-      'setting-show-threats': (v) => { settings.showThreats = v; },
-      'setting-show-critical-moments': (v) => { settings.showCriticalMoments = v; },
-      'setting-use-chess-api': (v) => { settings.useChessApi = v; },
-      'setting-use-lichess-cloud': (v) => { settings.useLichessCloud = v; },
-      'setting-use-masters-explorer': (v) => { settings.useMastersExplorer = v; },
+      }
     };
 
     Object.entries(settingEls).forEach(([id, handler]) => {
@@ -1004,37 +846,18 @@
         handler(val);
         const savePromise = saveSettings();
         applySettingsToUI();
-        if ((id === 'setting-style' || id === 'setting-book-first' || id === 'setting-aggression' || id === 'setting-human-like-mode' || id === 'setting-sparring-strictness' || id === 'setting-early-king-hunt' || id === 'setting-show-threats') && lastAnalysis) {
-          humanPlanState = null;
+        if (id === 'setting-style' && lastAnalysis) {
           renderAnalysis(lastAnalysis);
-          // Human mode changes routing policy too (steady depth, max MultiPV),
-          // so a fresh analysis must replace results fetched under the old one.
-          if (id === 'setting-human-like-mode' && currentFen) {
-            savePromise.finally(() => requestAnalysis(true));
-          }
         }
-        // Style changes the provider policy too (Normal asks for MultiPV 2
-        // and auto quality; the persona escalates), so re-fetch.
-        if (['setting-style', 'setting-use-chess-api', 'setting-use-lichess-cloud', 'setting-use-masters-explorer', 'setting-analysis-quality', 'setting-candidate-lines'].includes(id) && currentFen) {
-          // Ensure the worker sees the new source policy before it routes.
+        // Style changes the provider policy (Objective asks for MultiPV 2 and
+        // auto quality; Aggressive escalates), so re-fetch.
+        if (id === 'setting-style' && currentFen) {
           savePromise.finally(() => requestAnalysis(true));
         }
       });
     });
 
     chrome.runtime.onMessage.addListener(handleMessage);
-
-    // Human-mode segmented control (Engine | Human) drives the hidden checkbox.
-    $$('.human-mode-opt').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const el = $('#setting-human-like-mode');
-        if (!el) return;
-        const on = btn.dataset.mode === 'on';
-        if (el.checked === on) return;
-        el.checked = on;
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-      });
-    });
 
     $$('[data-expressive-setting]').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -1210,7 +1033,6 @@
       // Clear local engine-recommendation tracking too.
       lastEngineRecommendationFen = null;
       lastEngineRecommendationUci = null;
-      humanPlanState = null;
     }
 
     // Turn-based analysis — check whose turn it is before analyzing
@@ -1515,23 +1337,19 @@
   function updateAggressionSuggestion(s) {
     const box = document.getElementById('aggression-suggestion');
     if (!box) return;
-    const isUltra = settings.style === 'super_ultra_aggressive';
+    const isAggressive = settings.style === 'super_ultra_aggressive';
     const level = effectiveAggressionLevel();
-    const budget = isUltra
+    const budget = isAggressive
       ? AGGRESSION_COST_BUDGET_PAWNS[level] ?? 1.5
-      : (settings.style === 'aggressive' ? 1.0 : Infinity);
+      : Infinity;
     const pawns = s.costCp / 100;
     const over = Number.isFinite(budget) && s.picks >= 3 && pawns > budget;
     box.hidden = !over;
     if (!over) return;
     const text = document.getElementById('aggression-suggestion-text');
     if (text) {
-      text.textContent = isUltra
-        ? `The persona has paid −${pawns.toFixed(1)}p over ${s.picks} picks at Level ${ROMAN[level]} (budget ~${budget.toFixed(1)}p). Softer settings convert wins more reliably.`
-        : `Aggressive has paid −${pawns.toFixed(1)}p over ${s.picks} picks. Normal gives you the engine's own best move.`;
+      text.textContent = `The aggressive style has paid −${pawns.toFixed(1)}p over ${s.picks} picks (budget ~${budget.toFixed(1)}p). The objective style converts wins more reliably.`;
     }
-    const softer = document.getElementById('btn-suggest-level-1');
-    if (softer) softer.hidden = !isUltra;
   }
 
   // ─── Request Analysis ──────────────────────────────────────────────
@@ -1561,39 +1379,27 @@
     const objectivePvs = data.pvs || [];
     const earlyKingHuntActive = isEarlyKingHuntActive();
     const styledPvs = objectivePvs.length > 0 && data.source !== 'tablebase' &&
-      (objectivePvs.length > 1 || settings.humanLikeMode || earlyKingHuntActive)
+      (objectivePvs.length > 1 || earlyKingHuntActive)
       ? window.ChessHintEngine.selectPVForStyle(
           objectivePvs,
           data.fen,
           settings.style,
           effectiveColor,
-          settings.humanLikeMode,
           {
-            activePlan: humanPlanState?.activePlan || null,
             openingData: data.openingData,
             earlyKingHuntEnabled: earlyKingHuntActive,
             aggressionLevel: effectiveAggressionLevel(),
-            formSession: settings.humanLikeMode ? (data.formSession || null) : null
+            bookFirstOpenings: true
           }
         )
       : objectivePvs;
     const viewData = { ...data, pvs: styledPvs };
 
-    // Track the move the panel actually recommends. In human-like mode
-    // this is the human-natural styled pick (possibly different from the raw
-    // engine top move); the correlation guard uses it to distinguish human-like
-    // play from blind engine-top copies, and the FEN-diff reporter uses it as
-    // the expected move for the position.
+    // Track the move the panel actually recommends so the FEN-diff reporter
+    // and the "Sensible moves" stat can compare the player's play to it.
     if (styledPvs.length > 0 && styledPvs[0].pv && styledPvs[0].pv.length > 0) {
       lastEngineRecommendationFen = data.fen;
       lastEngineRecommendationUci = styledPvs[0].pv[0];
-      if (settings.humanLikeMode) {
-        chrome.runtime.sendMessage({
-          type: 'record_human_recommendation',
-          fen: data.fen,
-          uci: styledPvs[0].pv[0]
-        }).catch(() => {});
-      }
     }
 
     // The evaluation bar remains objective; every move-oriented section below
@@ -2017,19 +1823,12 @@
       effectiveColor,
       settings.style,
       null,
-      settings.humanLikeMode,
       {
-        activePlan: humanPlanState?.activePlan || null,
         earlyKingHuntEnabled: isEarlyKingHuntActive(),
         bookFirstOpenings: settings.bookFirstOpenings === true,
-        sparringStrictness: settings.sparringStrictness === true,
-        aggressionLevel: effectiveAggressionLevel(),
-        formSession: settings.humanLikeMode ? (data.formSession || null) : null
+        aggressionLevel: effectiveAggressionLevel()
       }
     );
-    if (settings.humanLikeMode && hints.styleAnalysis?.plan) {
-      humanPlanState = { activePlan: hints.styleAnalysis.plan, startedAtFen: data.fen };
-    }
     recordAggressionPick(hints, data.fen);
 
     if (dom.hintText) {
@@ -2074,11 +1873,10 @@
 
     if (dom.hintCard) {
       const styleClass = settings.style === 'super_ultra_aggressive' ? ' super-ultra-mode' : '';
-      const humanClass = settings.humanLikeMode ? ' human-mode' : '';
       // Keep md-hero__stage: rewriting className wholesale on the first
       // render previously dropped it, losing the hero's z-index stacking
       // and min-height so hint text could paint beneath the blobs.
-      dom.hintCard.className = 'hint-card md-hero__stage exact-move' + styleClass + humanClass;
+      dom.hintCard.className = 'hint-card md-hero__stage exact-move' + styleClass;
     }
 
   }

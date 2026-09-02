@@ -113,7 +113,7 @@ assert.deepEqual(
 
 const clearlyWinningQuiet = { ...quiet, score: 300 };
 const costlyCheck = { ...forcingCheck, score: 220 };
-assert.equal(engine.selectPVForStyle([clearlyWinningQuiet, costlyCheck], attackFen, 'super_ultra_aggressive', 'w', false, { aggressionLevel: 1 })[0].pv[0], 'd1d2',
+assert.equal(engine.selectPVForStyle([clearlyWinningQuiet, costlyCheck], attackFen, 'super_ultra_aggressive', 'w', { aggressionLevel: 1 })[0].pv[0], 'd1d2',
   'Level I (Sound Storm) must not spend outside its tighter winning budget');
 
 const fastestMate = { score: 2, scoreType: 'mate', depth: 30, pv: ['d1h5'] };
@@ -165,14 +165,12 @@ assert.equal(engine.selectPVForStyle([engineBest, bookFar], attackFen, 'normal',
   'a book move 80cp behind the engine best does not get promoted');
 assert.equal(engine.selectPVForStyle([engineBest, bookClose], attackFen, ULTRA, 'w')[0].pv[0], 'd1d2',
   'the persona ignores the book lane unless the user opts in');
-assert.equal(engine.selectPVForStyle([engineBest, bookClose], attackFen, ULTRA, 'w', false, { bookFirstOpenings: true })[0].pv[0], 'd1d3',
+assert.equal(engine.selectPVForStyle([engineBest, bookClose], attackFen, ULTRA, 'w', { bookFirstOpenings: true })[0].pv[0], 'd1d3',
   'book-first openings opts the persona in');
 assert.equal(engine.BOOK_FIRST_TOLERANCE_CP, 50, 'the book preference tolerance is 50cp');
 const mateBest = { score: 2, scoreType: 'mate', depth: 30, pv: ['d1h5'] };
 assert.equal(engine.selectPVForStyle([mateBest, bookClose], attackFen, 'normal', 'w')[0].pv[0], 'd1h5',
   'the book preference never displaces a winning mate');
-assert.equal(engine.selectPVForStyle([engineBest, bookClose], attackFen, 'normal', 'w', true)[0].pv[0], 'd1d2',
-  'sparring mode is immune to the book preference');
 
 const sacrificeFen = '6k1/7p/8/8/8/3Q4/8/6K1 w - - 0 1';
 const realSac = engine.analyzeCandidate(sacrificeFen, ['d3h7', 'g8h7'], 'w', -40, 'cp', 24);
@@ -219,46 +217,20 @@ assert.equal(legacyLevelHint.level, 5, 'exact-only mode normalizes legacy level 
 assert.equal(legacyLevelHint.main, 'Qd2', 'legacy level requests receive the exact move with no label prefix');
 assert.ok(legacyLevelHint.bestMoveFromTo?.includes('d1 → d2'));
 
-// Human-like mode stays inside objective/style budgets but prefers natural plans.
+// The objective style keeps the engine's own best move: a merely "natural"
+// development move never displaces it.
 const naturalFen = '4k3/8/8/8/8/8/8/3QK1N1 w - - 0 1';
 const engineQueenMove = { score: 20, scoreType: 'cp', depth: 24, pv: ['d1d2'] };
 const naturalDevelopment = { score: 10, scoreType: 'cp', depth: 24, pv: ['g1f3'] };
-assert.equal(engine.selectPVForStyle([engineQueenMove, naturalDevelopment], naturalFen, 'normal', 'w', false)[0].pv[0], 'd1d2');
-const humanNormal = engine.selectPVForStyle(
-  [engineQueenMove, naturalDevelopment],
-  naturalFen,
-  'normal',
-  'w',
-  true,
-  { activePlan: 'complete development' }
-);
-assert.equal(humanNormal[0].pv[0], 'g1f3');
-assert.match(humanNormal[0]._styleAnalysis.humanSummary, /develops a new piece naturally/);
-assert.equal(humanNormal[0]._styleAnalysis.planContinuity, true);
-assert.equal(
-  engine.selectPVForStyle([quiet, forcingCheck], attackFen, 'super_ultra_aggressive', 'w', true)[0].pv[0],
-  'd1h5',
-  'human-like Aggressive must preserve the fastest sound forcing route'
-);
+assert.equal(engine.selectPVForStyle([engineQueenMove, naturalDevelopment], naturalFen, 'normal', 'w')[0].pv[0], 'd1d2',
+  'the objective style keeps the engine best move over a merely natural alternative');
 
-for (const style of Object.keys(engine.PLAYING_STYLES)) {
-  assert.equal(
-    engine.selectPVForStyle([hugeCp, slowerMate, fastestMate], attackFen, style, 'w', true)[0].score,
-    2,
-    `human-like ${style} must preserve the fastest forced mate`
-  );
-}
-
-const onePvHumanHint = engine.generateHints({ fen: naturalFen, pvs: [naturalDevelopment], moveHistory: [] }, 5, 'w', 'normal', 'none', true);
-assert.doesNotMatch(onePvHumanHint.main, /^Human choice:/, 'human-like hint leads with the move, not a style label');
-assert.match(onePvHumanHint.main, /^[a-hNBRQK]/);
-assert.equal(onePvHumanHint.styleAnalysis.limitedCandidates, true);
 // Style policy must never replace a forced mate with a non-mating line.
 const forcedMateFen = '6k1/5Q2/6K1/8/8/8/8/8 w - - 0 1';
 const forcedMatePv = { score: 1, scoreType: 'mate', depth: 28, pv: ['f7g7'] };
 const highCpOtherPv = { score: 900, scoreType: 'cp', depth: 28, pv: ['f7f8'] };
 const mateSafe = engine.selectPVForStyle(
-  [forcedMatePv, highCpOtherPv], forcedMateFen, 'normal', 'w', false
+  [forcedMatePv, highCpOtherPv], forcedMateFen, 'normal', 'w'
 );
 assert.equal(mateSafe[0].pv[0], 'f7g7', 'style policy cannot displace a forced mate');
 
@@ -272,31 +244,19 @@ assert.equal(pawnStormAdvance.pawnStormDelta, 1, 'only a new pawn-storm advance 
 const invade = engine.analyzeCandidate('6k1/8/8/8/8/5N2/8/6K1 w - - 0 1', ['f3g5'], 'w', 10, 'cp', 20);
 assert.equal(invade.penetrationDelta, 1, 'only a move entering enemy territory receives penetration credit');
 
-// Human-like Chaos prefers strong attacks over merely natural quiet moves.
+// Chaos prefers strong attacks over merely quiet moves.
 const chaosRefFen = '6k1/7p/8/8/8/3Q4/8/6K1 w - - 0 1';
 const safeQuietMove = { score: 100, scoreType: 'cp', depth: 24, pv: ['d3d2'] };
 const attackSacMove = { score: 90, scoreType: 'cp', depth: 24, pv: ['d3h7', 'g8h7'] };
-const humanChaosResult = engine.selectPVForStyle(
+const chaosPick = engine.selectPVForStyle(
   [safeQuietMove, attackSacMove],
   chaosRefFen,
   'super_ultra_aggressive',
-  'w',
-  true
+  'w'
 );
-assert.equal(humanChaosResult[0].pv[0], 'd3h7', 'Human-like Chaos prefers strong attacks over merely natural quiet moves');
-assert.ok(humanChaosResult[0]._styleAnalysis.penetrationDelta > 0, 'recognizes penetration feature');
-assert.ok(humanChaosResult[0]._styleAnalysis.kingPressureDelta > 0, 'recognizes king-pressure delta feature');
-
-// Human Chaos coach voice: prefix + plan must be human-flavored, not engine-speak.
-const humanChaosHint = engine.generateHints(
-  { fen: chaosRefFen, pvs: [attackSacMove, safeQuietMove], moveHistory: [] },
-  5, 'w', 'super_ultra_aggressive', 'none', true
-);
-assert.doesNotMatch(humanChaosHint.main, /^Human Chaos Attack choice:/, 'human-like Chaos leads with the move, not a style label');
-assert.match(humanChaosHint.main, /^[a-hNBRQK]/);
-assert.doesNotMatch(humanChaosHint.main, /Why it feels natural/, 'verbose reason list removed');
-assert.doesNotMatch(humanChaosHint.main, /Human plan:/, 'plan merged into the move line');
-assert.ok(!/^Chaos Attack \(vs <=1100\) choice:/.test(humanChaosHint.main), 'raw engine-prefix must not leak in human mode');
+assert.equal(chaosPick[0].pv[0], 'd3h7', 'Chaos prefers strong attacks over merely quiet moves');
+assert.ok(chaosPick[0]._styleAnalysis.penetrationDelta > 0, 'recognizes penetration feature');
+assert.ok(chaosPick[0]._styleAnalysis.kingPressureDelta > 0, 'recognizes king-pressure delta feature');
 
 // Ultra Super Aggressive must never prefix the hero with its style name: the
 // user picked the style in settings, so the panel leads with the move.
@@ -349,7 +309,7 @@ assert.ok(drawContemptPick[0]._styleAnalysis.risks.includes('rejects a near-equa
 // A1 — Attack units respond to the moving piece joining the king-zone attack.
 assert.ok(e4Features.attackUnitDelta >= 0, 'attack unit delta is defined and non-negative from the start position');
 // C1 — attack sub-total is exposed for the two-phase re-rank.
-assert.ok(Number.isFinite(humanChaosResult[0]._styleAnalysis.attackSubTotal), 'style analysis exposes the attack sub-total tiebreaker');
+assert.ok(Number.isFinite(chaosPick[0]._styleAnalysis.attackSubTotal), 'style analysis exposes the attack sub-total tiebreaker');
 
 // ── Advanced Chaos Attack primitives ──
 // B1 — King cage: covering a king escape square tightens the mating net.
@@ -631,16 +591,12 @@ const noFork = engine.analyzeCandidate('8/2q1k3/8/8/3N4/8/8/6K1 w - - 0 1', ['d4
 assert.equal(noFork.knightForkMove, false, 'a knight move attacking at most one piece is not a fork');
 assert.equal(noFork.knightForkCount, 0, 'the fork count stays zero');
 // H2d — The fork changes selection: the fork beats a quiet move even with a
-// lower raw score, for both the style ranking and human-like mode.
+// lower raw score.
 const forkPick = engine.selectPVForStyle(
   [{ score: 20, scoreType: 'cp', depth: 20, pv: ['d4e2'] }, { score: 15, scoreType: 'cp', depth: 20, pv: ['d4d5'] }],
   '6k1/2q1r3/8/8/3N4/8/8/6K1 w - - 0 1', 'super_ultra_aggressive', 'w');
 assert.equal(forkPick[0].pv[0], 'd4d5', 'the forking knight wins the selection');
 assert.ok(forkPick[0]._styleAnalysis.reasons.includes('forks 2 enemy pieces with the knight'), 'the style scoring names the fork');
-const forkPickHuman = engine.selectPVForStyle(
-  [{ score: 20, scoreType: 'cp', depth: 20, pv: ['d4e2'] }, { score: 15, scoreType: 'cp', depth: 20, pv: ['d4d5'] }],
-  '6k1/2q1r3/8/8/3N4/8/8/6K1 w - - 0 1', 'super_ultra_aggressive', 'w', true);
-assert.equal(forkPickHuman[0].pv[0], 'd4d5', 'human-like Chaos also loves the fork');
 const royalPick = engine.selectPVForStyle(
   [{ score: 20, scoreType: 'cp', depth: 20, pv: ['d4e2'] }, { score: 15, scoreType: 'cp', depth: 20, pv: ['d4d5'] }],
   '8/2q1k3/8/8/3N4/8/8/6K1 w - - 0 1', 'super_ultra_aggressive', 'w');

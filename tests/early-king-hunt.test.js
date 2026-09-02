@@ -59,7 +59,6 @@ const selectedEarly = engine.selectPVForStyle(
   openingFen,
   'super_ultra_aggressive',
   'w',
-  false,
   { earlyKingHuntEnabled: true }
 );
 assert.equal(selectedEarly[0].pv[0], 'd1h5', 'the enabled early hunt can prefer the direct attack within its risk budget');
@@ -77,7 +76,6 @@ const selectedOff = engine.selectPVForStyle(
   openingFen,
   'super_ultra_aggressive',
   'w',
-  false,
   { earlyKingHuntEnabled: false }
 );
 assert.equal(selectedOff[0].pv[0], 'd1h5', 'the disabled setting leaves the existing Ultra Super Aggressive choice path intact');

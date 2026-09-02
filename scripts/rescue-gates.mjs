@@ -17,7 +17,7 @@ const ROOT = new URL('..', import.meta.url).pathname;
 // the user actually runs. (engine/attack-book.js is a background-only module
 // and is deliberately not loaded here.)
 const PRODUCTION_MODULES = [
-  'core-utils.js', 'analysis-policy.js', 'human-form.js',
+  'core-utils.js', 'analysis-policy.js',
   'chaos-attack.js', 'early-king-hunt.js', 'hint-engine.js'
 ];
 
@@ -32,7 +32,6 @@ for (const file of PRODUCTION_MODULES) {
 }
 const E = sandbox.window.ChessHintEngine;
 const Policy = sandbox.AnalysisPolicy;
-const HF = sandbox.HumanForm;
 
 const pv = (score, moves, scoreType = 'cp', depth = 25, extra = {}) =>
   ({ scoreType, score, depth, pv: moves, ...extra });
@@ -142,15 +141,14 @@ const results = [];
 function record(gate, ok, detail) { results.push({ gate, ok, detail }); }
 
 // ═══ G0 — default-hint fidelity ══════════════════════════════════════
-// With factory defaults (style 'normal', sparring off) the primary pick must
-// equal the top cloud PV. The one sanctioned exception is the bounded
-// book-first preference (≤50cp), which cannot fire on these engine-only
-// pools.
+// With factory defaults (style 'normal') the primary pick must equal the top
+// cloud PV. The one sanctioned exception is the bounded book-first
+// preference (≤50cp), which cannot fire on these engine-only pools.
 console.log('═══ G0 · default-hint fidelity (style = normal, factory defaults) ═══');
 let g0Match = 0;
 const g0Total = Object.values(PROBES).length;
 for (const [name, probe] of Object.entries(PROBES)) {
-  const out = E.selectPVForStyle(structuredClone(probe.pool), probe.fen, 'normal', 'w', false, {});
+  const out = E.selectPVForStyle(structuredClone(probe.pool), probe.fen, 'normal', 'w', {});
   const got = pick(out);
   const ok = got === probe.expect.topCloud;
   if (ok) g0Match++;
@@ -170,7 +168,7 @@ record('G0 unknown style → normal (all sites)', staleSites === 0 &&
   [undefined, 'berserker', 'kamikaze', ''].every(s => E.resolveStyleProfile(s).id === 'normal'),
   `${staleSites} stale Ultra-fallback site(s) in hint-engine.js`);
 
-// ═══ G1 — win preservation, Auto ceiling, opening sanity, sparring ═══
+// ═══ G1 — win preservation, Auto ceiling, opening sanity, divergence ═══
 console.log('\n═══ G1 · win preservation across styles and dial levels ═══');
 const winningProbes = ['mateVsMaterial', 'wonEndgameTrade', 'upSixHundredMateInThree', 'upTwoFiftyNoMate'];
 let winKept = 0, winTotal = 0;
@@ -181,7 +179,7 @@ for (const style of STYLES) {
       const probe = PROBES[name];
       const before = topCloudScore(probe);
       const ctx = { aggressionLevel: level === 'auto' ? (Policy.suggestAggressionLevel(1500) || 2) : level };
-      const out = E.selectPVForStyle(structuredClone(probe.pool), probe.fen, style, 'w', false, ctx);
+      const out = E.selectPVForStyle(structuredClone(probe.pool), probe.fen, style, 'w', ctx);
       const loss = Number(meta(out).evalLoss ?? 0) || 0;
       const after = before - loss;
       const kept = winClass(after) === winClass(before) || (probe.expect.maxEvalLoss != null && loss <= probe.expect.maxEvalLoss);
@@ -209,56 +207,40 @@ let openOk = 0;
 const OPEN_N = 8;
 for (let n = 1; n <= OPEN_N; n++) {
   const fen = P5.replace(/ 4 4$/, ` ${n} ${n}`);
-  const out = E.selectPVForStyle(structuredClone(PROBES.italianOpening.pool), fen, 'super_ultra_aggressive', 'w', false, { aggressionLevel: 1 });
+  const out = E.selectPVForStyle(structuredClone(PROBES.italianOpening.pool), fen, 'super_ultra_aggressive', 'w', { aggressionLevel: 1 });
   if (PROBES.italianOpening.expect.openingClass.includes(pick(out))) openOk++;
 }
 record('G1 opening sanity at Level I ≥ 80%', openOk / OPEN_N >= 0.8,
   `${openOk}/${OPEN_N} O-O/d3/Nc3-class picks in the Italian pool`);
 
-// Sparring: differentiation in EQUAL positions (≥4×) and zero slips while
-// clearly winning (bestScore > 250) at any strength.
-// A "slip" is the sparring model deviating from the pick the SAME style and
-// dial make with sparring OFF — not merely deviating from the engine's top
-// line. The persona's own budgeted style choice (≤ the winning-tier budget)
-// is by design, and counting it as a slip would make the metric measure the
-// persona rather than the form model.
-const SESSIONS = ['game-1', 'game-2', 'game-3'];
-function sparringSweep(probe, style, rating, positions, ctx = {}) {
-  let slips = 0, total = 0;
-  for (let n = 1; n <= positions; n++) {
-    const fen = probe.fen.replace(/ \d+ \d+$/, ` ${n} ${n}`);
-    const enginePick = pick(E.selectPVForStyle(structuredClone(probe.pool), fen, style, 'w', false, ctx));
-    for (const seed of SESSIONS) {
-      const session = HF.createSession({ rating, seed });
-      const out = E.selectPVForStyle(structuredClone(probe.pool), fen, style, 'w', true, { ...ctx, formSession: session });
-      total++;
-      if (pick(out) !== enginePick) slips++;
-    }
-  }
-  return { slips, total };
-}
-const equalTotal = OPEN_N * SESSIONS.length;
-const s600 = sparringSweep(PROBES.italianOpening, 'super_ultra_aggressive', 600, OPEN_N).slips;
-const s1600 = sparringSweep(PROBES.italianOpening, 'super_ultra_aggressive', 1600, OPEN_N).slips;
-const ratio = s1600 === 0 ? (s600 > 0 ? Infinity : 1) : s600 / s1600;
-record('G1 sparring differentiation ≥ 4× in equal positions', ratio >= 4,
-  `600 → ${s600}/${equalTotal} slips, 1600 → ${s1600}/${equalTotal} (${s1600 === 0 ? '∞' : ratio.toFixed(1)}×)`);
-
-let winSlips = 0, winSlipTotal = 0;
-for (const rating of [600, 900, 1100, 1300, 1600]) {
-  for (const style of STYLES) {
-    for (const level of [1, 2, 3]) {
-      for (const name of winningProbes) {
-        const probe = PROBES[name];
-        const sweep = sparringSweep(probe, style, rating, 4, { aggressionLevel: level });
-        winSlips += sweep.slips;
-        winSlipTotal += sweep.total;
-      }
-    }
-  }
-}
-record('G1 zero slips while winning (bestScore > 250)', winSlips === 0,
-  `${winSlips}/${winSlipTotal} sparring picks deviated from the non-sparring pick in clearly won positions`);
+// Divergence is the core product promise: the Aggressive persona must pick a
+// move DIFFERENT from the objective (Stockfish) top line when a concrete
+// attacking alternative exists inside its risk budget — not merely relabel the
+// engine's own best move. At the same time it must never diverge when the
+// engine line is already a forced mate or a clearly winning conversion.
+//   • greekGiftEqual: +40 central best vs +10 Bxh7+ sac → persona takes d3h7.
+//   • upTwoFiftyNoMate: +300 trade vs +270 queen aggression → persona takes d1d5.
+//   • mateVsMaterial / wonEndgameTrade: mate/win conversion is preserved.
+const DIVERGENCE_PROBES = ['greekGiftEqual', 'upTwoFiftyNoMate'];
+const CONVERGENCE_PROBES = ['mateVsMaterial', 'wonEndgameTrade', 'upSixHundredMateInThree'];
+const diverged = DIVERGENCE_PROBES.filter((name) => {
+  const probe = PROBES[name];
+  const normalPick = pick(E.selectPVForStyle(structuredClone(probe.pool), probe.fen, 'normal', 'w', {}));
+  const ultraPick = pick(E.selectPVForStyle(structuredClone(probe.pool), probe.fen, 'super_ultra_aggressive', 'w', {}));
+  console.log(`  ${name.padEnd(20)} normal=${normalPick}  ultra=${ultraPick}  ${normalPick !== ultraPick ? '(diverged)' : '(SAME — no differentiation)'}`);
+  return normalPick !== ultraPick;
+});
+const converged = CONVERGENCE_PROBES.every((name) => {
+  const probe = PROBES[name];
+  const normalPick = pick(E.selectPVForStyle(structuredClone(probe.pool), probe.fen, 'normal', 'w', {}));
+  const ultraPick = pick(E.selectPVForStyle(structuredClone(probe.pool), probe.fen, 'super_ultra_aggressive', 'w', {}));
+  console.log(`  ${name.padEnd(20)} normal=${normalPick}  ultra=${ultraPick}  ${normalPick === ultraPick ? '(preserved)' : '(DIVERGED — unsafe)'}`);
+  return normalPick === ultraPick;
+});
+record('G1 aggressive divergence: persona picks a different attacking move', diverged.length === DIVERGENCE_PROBES.length,
+  `${diverged.length}/${DIVERGENCE_PROBES.length} attack-opportunity probes diverged from the objective top line`);
+record('G1 win preservation: persona never diverges from mate/win conversion', converged,
+  `${CONVERGENCE_PROBES.length} mate/win probes preserved the objective line`);
 
 // ═══ G2 — pool integrity ═════════════════════════════════════════════
 console.log('\n═══ G2 · pool integrity (widened single-PV pools) ═══');
@@ -269,7 +251,7 @@ for (const style of STYLES) {
       const pool = structuredClone(probe.pool).map((p, i) => (
         probe === PROBES.singlePvWidened ? p : (i === 0 ? p : { ...p, localPool: true })
       ));
-      const out = E.selectPVForStyle(pool, probe.fen, style, 'w', false, { aggressionLevel: level });
+      const out = E.selectPVForStyle(pool, probe.fen, style, 'w', { aggressionLevel: level });
       widenTotal++;
       if (pick(out) === probe.expect.topCloud) widenOk++;
       else console.log(`  FAIL ${style}/L${level} picked ${pick(out)} over cloud ${probe.expect.topCloud}`);

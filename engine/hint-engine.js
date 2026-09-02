@@ -36,6 +36,19 @@
   const ULTRA_BONUS_SCALE = 0.125;
   const EXACT_HINT_LEVEL_NAME = 'Exact Move';
 
+  // ─── Divergence & generated-candidate pricing ────────────────────────
+  // DIVERGENCE_PREMIUM — bounded reward for a SAFE, concretely-attacking
+  // candidate whose first move differs from the objective best. Sized in the
+  // post-scaling domain (see candidateStyleBonus) so it tips near-ties without
+  // dwarfing the eval-loss term.
+  const DIVERGENCE_PREMIUM = { aggressive: 45, super_ultra_aggressive: 45 };
+  // ATTACK_CANDIDATE_PENALTY_CP — the objective cost of trusting a shallow
+  // on-device search for a generated attack candidate. Added to evalLoss so a
+  // weak local eval can never under-state the cost of diverging; the
+  // divergence premium must genuinely overcome this uncertainty before a
+  // generated move can take the primary slot.
+  const ATTACK_CANDIDATE_PENALTY_CP = 40;
+
   // ─── Playing Styles ────────────────────────────────────────────────
   // Three user-selectable styles. `normal` is the factory default and the
   // objective baseline: it short-circuits the persona machinery entirely and
@@ -1364,7 +1377,6 @@
       followUpUci: line[2] || null,
       masterGames: 0,
       // plan is assigned below, after the ChaosEngine merges its features.
-      humanReasons: [], humanRisks: [],
       reasons: [], risks: []
     };
 
@@ -1544,6 +1556,30 @@
     // Restore the engine-owned momentum after Chaos's internal overwrite.
     candidate.attackMomentum = (candidate.kingPressureDelta || 0) +
       (candidate.penetrationDelta || 0) + (candidate.pawnStormDelta || 0);
+
+    // ── Divergence premium (D1) ──────────────────────────────────────
+    // The aggressive style is meant to be *different* from the engine, not a
+    // different caption on the engine's own top move. A candidate whose first
+    // move differs from the objective best receives a bounded premium ONLY
+    // when it carries concrete attacking evidence — bare difference is never
+    // rewarded. The premium is added AFTER the ultra scaling so it lives in
+    // the same magnitude as the (already-scaled) attack vocabulary; it can
+    // tip a near-tie toward the attacking alternative but can never out-vote
+    // the hard gates, which run before scoring (styleSafetyAllows).
+    const divergenceWeight = Number(DIVERGENCE_PREMIUM[style.id]) || 0;
+    if (divergenceWeight && context.objectiveBestMove &&
+        candidate.first && candidate.first !== context.objectiveBestMove) {
+      const attackingEvidence = candidate.givesCheck ||
+        candidate.tempoThreatCount > 0 ||
+        candidate.kingPressureDelta > 0 ||
+        candidate.pawnStormDelta > 0 ||
+        candidate.penetrationDelta > 0 ||
+        (candidate.sacrifice && candidate.chaosSacrificeTrigger);
+      if (attackingEvidence) {
+        bonus += divergenceWeight;
+        candidate.reasons.push('diverges from the engine top move with a concrete attacking point');
+      }
+    }
     return bonus;
   }
 
@@ -1635,64 +1671,6 @@
     return true;
   }
 
-  function humanNaturalness(candidate, profile, context = {}, bestScore = 0) {
-    let score = 0;
-    const reward = (condition, amount, reason) => {
-      if (!condition) return;
-      score += amount;
-      if (reason) candidate.humanReasons.push(reason);
-    };
-    const penalize = (condition, amount, reason) => {
-      if (!condition) return;
-      score -= amount;
-      if (reason) candidate.humanRisks.push(reason);
-    };
-
-    reward(candidate.castling, 38, 'gets the king safe with a familiar plan');
-    reward(candidate.development, 30, 'develops a new piece naturally');
-    reward(candidate.centralMove, 10, 'improves central influence');
-    reward(candidate.tempo, 24, 'creates an easy-to-follow tempo threat');
-    reward(candidate.supportedDestination, 12, 'places the piece on a supported square');
-    reward(candidate.givesCheck && candidate.forcingPly >= 2, 18, 'starts a clear forcing sequence');
-    reward(candidate.sustainedAttack, 24, 'keeps a coherent attack going');
-    reward(context.activePlan && candidate.plan === context.activePlan, 28, `continues the ${candidate.plan} plan`);
-    if (candidate.masterGames > 0) {
-      const popularity = Math.min(28, Math.log10(candidate.masterGames + 1) * 8);
-      reward(true, popularity, `has practical master-game experience (${candidate.masterGames} games)`);
-    }
-
-    if (profile.id !== 'super_ultra_aggressive') {
-      penalize(candidate.earlyQueenMove && !candidate.givesCheck && !candidate.tempo, 28, 'moves the queen early without a forcing gain');
-      penalize(candidate.edgePawnMove && candidate.kingPressureDelta <= 0, 16, 'pushes an edge pawn without immediate purpose');
-      penalize(candidate.unsupportedAttack, 30, 'leaves the attacking piece hard to support');
-      penalize(candidate.ownKingDangerDelta > 1.5, Math.min(30, candidate.ownKingDangerDelta * 5), 'makes your own king harder to handle');
-      penalize(candidate.calculationBurden > 7, Math.min(24, (candidate.calculationBurden - 7) * 3), 'requires a long precise continuation');
-    }
-    // H1 — Self-safety hard gate: a human would never box their own
-    // king in with no escape squares — not even a fearless attacker.
-    penalize(candidate.ownKingTrapped, 60, 'boxes in your own king with no escape squares');
-
-    if (profile.id === 'normal') {
-      reward(bestScore > 180 && candidate.simplification > 1, 18, 'converts the advantage with a simpler position');
-      penalize(candidate.sacrifice, 26, 'introduces unnecessary material risk');
-    } else {
-      // ── Chaos human feel delegation ─────────────────────────────────
-      // The Chaos-only rewards for the kill-geometry, mating-square math,
-      // opening traps, second-move vision, and tactical toolkit all live in
-      // engine/chaos-attack.js (humanFeel). Future Chaos enhancements never
-      // touch this engine again.
-      const chaosH = getChaosEngine();
-      if (chaosH) {
-        score += chaosH.humanFeel(candidate);
-      }
-    }
-
-    candidate.naturalnessScore = Math.round(score);
-    candidate.planContinuity = Boolean(context.activePlan && candidate.plan === context.activePlan);
-    candidate.humanSummary = candidate.humanReasons.slice(0, 3).join(', ');
-    return score;
-  }
-
   function playerScore(pv, playerColor) {
     const score = Number(pv?.score) || 0;
     return playerColor === 'w' ? score : -score;
@@ -1775,12 +1753,12 @@
   // bounded preference, not a re-scoring.
   const BOOK_FIRST_TOLERANCE_CP = 50;
 
-  // Who gets the book preference: the objective Normal profile always (that
-  // is where the 8.5 baseline shipped it), the persona only when the user
-  // opts in with the "Book-first openings" setting.
-  function bookFirstAllowed(style, humanLikeMode, context = {}) {
+  // Who gets the bounded book preference: always on for both product styles.
+  // Normal applies it unconditionally (spec 2.2.3); the persona applies it
+  // because the setting is now internal and always-on.
+  function bookFirstAllowed(style, context = {}) {
     const profile = resolveStyleProfile(style);
-    if (profile.id === 'normal') return !humanLikeMode;
+    if (profile.id === 'normal') return true;
     return context.bookFirstOpenings === true;
   }
 
@@ -1817,31 +1795,31 @@
     }));
   }
 
-  function selectPVForStyle(pvs, fen, style, playerColor, humanLikeMode = false, context = {}) {
+  function selectPVForStyle(pvs, fen, style, playerColor, context = {}) {
     if (!Array.isArray(pvs) || pvs.length === 0) return [];
     const bookPvs = pvs.filter(p => p.scoreType === 'book');
     const enginePvs = pvs.filter(p => p.scoreType !== 'book');
     if (bookPvs.length > 0 && enginePvs.length === 0) return tagBookLane(bookPvs);
-    if (bookPvs.length === 0) return selectEngineLane(pvs, fen, style, playerColor, humanLikeMode, context);
-    const engineRanked = selectEngineLane(enginePvs, fen, style, playerColor, humanLikeMode, context);
+    if (bookPvs.length === 0) return selectEngineLane(pvs, fen, style, playerColor, context);
+    const engineRanked = selectEngineLane(enginePvs, fen, style, playerColor, context);
     const offset = engineRanked.length;
     const tagged = tagBookLane(bookPvs).map(pv => ({
       ...pv,
       _styleAnalysis: { ...pv._styleAnalysis, eligible: false, styleRank: offset + pv._styleAnalysis.styleRank }
     }));
     const merged = [...engineRanked, ...tagged];
-    return bookFirstAllowed(style, humanLikeMode, context)
+    return bookFirstAllowed(style, context)
       ? promoteBookWithinTolerance(merged, playerColor)
       : merged;
   }
 
-  function selectEngineLane(pvs, fen, style, playerColor, humanLikeMode = false, context = {}) {
+  function selectEngineLane(pvs, fen, style, playerColor, context = {}) {
     const profile = applyAggressionLevel(resolveStyleProfile(style), context.aggressionLevel);
     const earlyKingHuntEnabled = earlyKingHuntRequested(profile.id, context.earlyKingHuntEnabled);
     if (pvs.length === 1) {
       // A single-PV source cannot be re-ranked, but the opt-in still annotates
       // the line and applies the same safety checks so diagnostics stay honest.
-      if (!humanLikeMode && !earlyKingHuntEnabled) return pvs;
+      if (!earlyKingHuntEnabled) return pvs;
       const only = pvs[0];
       const score = playerScore(only, playerColor);
       const meta = analyzeCandidate(
@@ -1852,11 +1830,9 @@
       meta.objectiveRank = 1;
       meta.styleRank = 1;
       meta.mode = profile.id;
-      meta.humanLikeMode = humanLikeMode;
       meta.limitedCandidates = true;
       meta.masterGames = Number(only._masterData?.totalGames || context.openingData?.moves?.find(move => move.uci === only.pv?.[0])?.total || 0);
       candidateStyleBonus(meta, profile);
-      if (humanLikeMode) humanNaturalness(meta, profile, context, score);
       return [{ ...only, _styleAnalysis: meta }];
     }
     const objective = pvs.map((pv, index) => ({ pv, index, utility: objectiveUtility(pv, playerColor), score: playerScore(pv, playerColor) }))
@@ -1890,7 +1866,7 @@
     // line does not cost "nothing". The old subtraction reported evalLoss 0
     // for a +800cp candidate next to a mate-in-2 (score 2), which made the
     // losing alternative look free.
-    if (profile.id === 'normal' && !humanLikeMode) {
+    if (profile.id === 'normal') {
       const bestIsWinningMateForNormal = objectiveBest.pv.scoreType === 'mate' && objectiveBest.score > 0;
       return objective.map((entry, rank) => {
         let evalLoss;
@@ -1953,17 +1929,27 @@
       // real bonus so consecutive picks form one coherent attack instead of
       // greedy per-move choices.
       analysis.siegeContinuity = Boolean(context.activePlan && analysis.plan === context.activePlan);
+      // Generated attack candidates are searched by the shallow on-device
+      // engine, so their objective cost is less trustworthy than a cloud line.
+      // Price that uncertainty into evalLoss before the safety gates and the
+      // style contest see it — divergence may be sought, never assumed cheap.
+      if (entry.pv.attackCandidate === true && Number.isFinite(evalLoss)) {
+        evalLoss += ATTACK_CANDIDATE_PENALTY_CP;
+        analysis.attackCandidate = true;
+        analysis.candidateKind = entry.pv.candidateKind || 'candidate';
+        analysis.candidateTag = entry.pv.candidateTag || 'attack line';
+      }
       analysis.evalLoss = evalLoss;
       analysis.objectiveRank = rank + 1;
       analysis.mode = profile.id;
       const benched = isBenched(entry);
       if (benched) {
         analysis.poolBenched = true;
-        analysis.humanRisks = analysis.humanRisks || [];
-        analysis.humanRisks.push('on-device search — cannot outrank the cloud analysis');
       }
       const eligible = !benched && styleSafetyAllows(analysis, evalLoss, profile, objectiveBest, conversion);
-      const bonus = eligible ? candidateStyleBonus(analysis, profile, { conversion }) : -Infinity;
+      const bonus = eligible
+        ? candidateStyleBonus(analysis, profile, { conversion, objectiveBestMove: objectiveBest.pv.pv?.[0] })
+        : -Infinity;
       // Per-style eval cost. Normal is the strictest (1.5); Aggressive pays
       // 1.25 so checks and sustained forcing play can still overcome it;
       // Ultra keeps 1.0 — it paid 0.62 while its bonuses were ~10x every
@@ -1989,88 +1975,12 @@
       b.styleScore - a.styleScore ||
       (profile.id === 'super_ultra_aggressive' ? (b.analysis.attackSubTotal - a.analysis.attackSubTotal) : 0) ||
       b.utility - a.utility);
-    if (humanLikeMode && eligible.length > 0 && !bestIsWinningMate) {
-      const formModule = (typeof globalThis !== 'undefined' && globalThis.HumanForm) || null;
-      const formParams = formModule
-        ? formModule.paramsFor(context.formSession, fen, objectiveBest.score)
-        : null;
-      const standardBest = eligible[0].styleScore;
-      // Base margin per style, scaled by the form model: lower sparring
-      // strengths (and good-form / clearly-winning sessions) consider a wider
-      // pool of in-character candidates. Hard safety gates are unaffected —
-      // every shortlist member already passed styleSafetyAllows.
-      const baseMargin = profile.id === 'normal' ? 32 : 90;
-      const absoluteMargin = formParams
-        ? baseMargin * Math.max(0.5, formParams.marginScale)
-        : baseMargin;
-      // Absolute margins were calibrated when ultra bonuses ran ~2500 points;
-      // they starved ultra's shortlist to a single candidate, which silently
-      // disabled the strength slider (no slip candidates could ever exist).
-      // A relative component keeps the shortlist populated whatever the
-      // bonus magnitude, capped so it can never admit half the pool.
-      const relativeMargin = Math.abs(standardBest) * 0.12;
-      const shortlistMargin = Math.max(absoluteMargin, Math.min(relativeMargin, absoluteMargin * 4));
-      const shortlist = eligible.filter(candidate => standardBest - candidate.styleScore <= shortlistMargin);
-      for (const candidate of shortlist) {
-        const naturalness = humanNaturalness(candidate.analysis, profile, context, objectiveBest.score);
-        // Chaos gives human-naturalness extra weight so a fearless, natural
-        // attacking move beats a dry, engine-perfect but unremarkable line.
-        // The form model scales this weight by sparring strength.
-        const humanWeightBase = profile.id === 'normal' ? 0.8 : 0.7;
-        const humanWeight = humanWeightBase * (formParams ? formParams.naturalnessScale : 1);
-        candidate.humanScore = candidate.styleScore + naturalness * humanWeight;
-      }
-      // Winning lock (F3 / G1). In a clearly won position the sparring model
-      // gets no say at all: no naturalness reorder, no slip roll — technique
-      // decides, not variety. `sparringStrictness` extends the same lock down
-      // to a mere advantage for users who want sparring realism without ever
-      // leaking a win. A forced mate never reaches this block at all
-      // (`!bestIsWinningMate` above), which subsumes the "no slips inside
-      // mate in six" rule.
-      const winningLock = objectiveBest.score > 250 ||
-        (context.sparringStrictness === true && objectiveBest.score > 100);
-      if (!winningLock) {
-      shortlist.sort((a, b) => b.humanScore - a.humanScore || b.styleScore - a.styleScore || b.utility - a.utility);
-      // C2 — Human "in-character" selection, driven by the deterministic form
-      // model. Instead of always playing the top-ranked candidate, weaker
-      // sparring strengths (and relaxed winning positions) sometimes choose a
-      // slightly worse but fully safe shortlist move — exactly how real players
-      // of that strength behave. Deterministic per (session seed, fen), so the
-      // same position never flickers between choices.
-      if (formParams && shortlist.length > 1) {
-        const top = shortlist[0];
-        const roll = stableFenFraction(fen, `${context.formSession?.seed || ''}|slip`);
-        const slipLossCeiling = Number.isFinite(formParams.slipLossCeiling) ? formParams.slipLossCeiling : 100;
-        if (roll < formParams.slipChance) {
-          const slipCandidates = shortlist.filter((c, index) => index > 0 &&
-            (top.pv.pv?.[0] !== c.pv.pv?.[0]) &&
-            Number.isFinite(c.analysis.evalLoss) &&
-            c.analysis.evalLoss <= slipLossCeiling);
-          if (slipCandidates.length > 0) {
-            // Prefer the most human-natural slipped option; ties break by rank.
-            slipCandidates.sort((a, b) =>
-              (b.analysis.naturalnessScore || 0) - (a.analysis.naturalnessScore || 0));
-            const chosen = slipCandidates[0];
-            const chosenIndex = shortlist.indexOf(chosen);
-            if (chosenIndex > 0) {
-              shortlist[chosenIndex] = shortlist[0];
-              shortlist[0] = chosen;
-            }
-          }
-        }
-      }
-      }
-      const shortlisted = new Set(shortlist);
-      eligible = [...shortlist, ...eligible.filter(candidate => !shortlisted.has(candidate))];
-    }
-
-
     // Stable, tightly controlled variety for Chaos Attack only. It never applies
     // to mate lines and only considers a near-tied second attacking candidate.
     // Variety is an equal-position luxury (G1): the swap is additionally
     // gated on the objective evaluation, so a winning position never trades
     // its top pick for a near-tie. Level I's diversity rate is already 0.
-    if (!humanLikeMode && profile.diversity > 0 && !bestIsWinningMate && eligible.length > 1 &&
+    if (profile.diversity > 0 && !bestIsWinningMate && eligible.length > 1 &&
         objectiveBest.score <= 100 &&
         eligible[0].styleScore - eligible[1].styleScore <= Math.max(2, Math.round(18 * ULTRA_BONUS_SCALE)) &&
         stableFenFraction(fen, profile.id) < profile.diversity) {
@@ -2089,8 +1999,7 @@
         eligible: candidate.eligible,
         localPool: candidate.pv.localPool === true,
         poolBenched: candidate.analysis.poolBenched === true,
-        humanLikeMode,
-        humanScore: Number.isFinite(candidate.humanScore) ? Math.round(candidate.humanScore) : null
+        attackCandidate: candidate.analysis.attackCandidate === true
       }
     }));
   }
@@ -2129,24 +2038,24 @@
   }
 
   // ─── Generate Hints (Main Entry) ───────────────────────────────────
-  function generateHints(analysisData, _legacyHintLevel, playerColor, style, _legacyRepertoire, humanLikeMode = false, humanContext = {}) {
+  function generateHints(analysisData, _legacyHintLevel, playerColor, style, _legacyRepertoire, context = {}) {
     const hintLevel = EXACT_HINT_LEVEL;
     const { fen, pvs, bestMove, source, tablebaseData, openingData } = analysisData;
     const position = assessPosition(fen);
     const isWhite = playerColor === 'w';
-    const currentStyle = applyAggressionLevel(resolveStyleProfile(style), humanContext.aggressionLevel);
-    const earlyKingHuntEnabled = earlyKingHuntRequested(currentStyle.id, humanContext.earlyKingHuntEnabled);
+    const currentStyle = applyAggressionLevel(resolveStyleProfile(style), context.aggressionLevel);
+    const earlyKingHuntEnabled = earlyKingHuntRequested(currentStyle.id, context.earlyKingHuntEnabled);
 
     // Apply the rebuilt, mate-safe style ranking. Normal also receives objective
     // metadata, while one-PV sources remain unchanged and are explained honestly.
     let rankedPVs = pvs?.[0]?._styleAnalysis
       ? pvs
-      : (pvs && pvs.length > 1 ? selectPVForStyle(pvs, fen, style, playerColor, humanLikeMode, {
-        ...humanContext,
+      : (pvs && pvs.length > 1 ? selectPVForStyle(pvs, fen, style, playerColor, {
+        ...context,
         earlyKingHuntEnabled,
         openingData
       }) : (pvs || []));
-    if ((humanLikeMode || earlyKingHuntEnabled) && rankedPVs.length === 1 && !rankedPVs[0]._styleAnalysis) {
+    if (earlyKingHuntEnabled && rankedPVs.length === 1 && !rankedPVs[0]._styleAnalysis) {
       const only = rankedPVs[0];
       const score = playerScore(only, playerColor);
       const meta = analyzeCandidate(
@@ -2157,12 +2066,8 @@
       meta.objectiveRank = 1;
       meta.styleRank = 1;
       meta.mode = currentStyle.id;
-      meta.humanLikeMode = humanLikeMode;
       meta.limitedCandidates = true;
       candidateStyleBonus(meta, currentStyle, { conversion: only.scoreType !== 'mate' && score > 200 });
-      if (humanLikeMode) {
-        humanNaturalness(meta, currentStyle, { ...humanContext, openingData }, score);
-      }
       rankedPVs = [{ ...only, _styleAnalysis: meta }];
     }
     const bestPV = rankedPVs.length > 0 ? rankedPVs[0] : null;
@@ -2190,8 +2095,7 @@
       winningPlan: '',
       styleAnnotation: '',
       styleName: currentStyle.name,
-      humanLikeMode,
-      selectionMode: humanLikeMode ? 'human-like' : 'standard',
+      selectionMode: 'standard',
       source: source || 'unknown',
       // Expose turn info for UI rendering
       isAssistedPlayerTurn,
@@ -2220,14 +2124,6 @@
         hints.bestMoveFromTo = `${sideLabel}: ${pieceName}: ${from} \u2192 ${to}`;
       }
       hints.winningPlan = generateTablebasePlan(tablebaseData, playerColor);
-      if (humanLikeMode) {
-        const category = tablebaseData.category || 'unknown';
-        hints.main += category === 'draw'
-          ? ' Human plan: keep the position active and preserve the drawing setup; avoid unnecessary pawn moves.'
-          : category === 'win' || category === 'syzygy-win'
-            ? ' Human plan: improve the king, restrict counterplay, and convert one clear step at a time.'
-            : ' Human plan: make the opponent prove the win and keep creating practical obstacles.';
-      }
       return hints;
     }
 
@@ -2249,7 +2145,7 @@
           kind: 'book', label: 'Opening book',
           text: `${(meta.reasons || ['book move'])[0]} — theory, not an engine evaluation.`
         });
-      } else if (!humanLikeMode && currentStyle.id !== 'normal') {
+      } else if (currentStyle.id !== 'normal') {
         const reasons = (meta.reasons || []).slice(0, 3);
         const risks = (meta.risks || []).slice(0, 2);
         if (reasons.length) {
@@ -2326,7 +2222,7 @@
         kind: 'context', label: 'Candidate pool',
         text: 'One cloud line — widened with fast local analysis so style ranking stays active (extra lines are lower confidence).'
       });
-    } else if (hints.styleAnalysis?.limitedCandidates && (currentStyle.id !== 'normal' || humanLikeMode)) {
+    } else if (hints.styleAnalysis?.limitedCandidates && currentStyle.id !== 'normal') {
       hints.captions.push({
         kind: 'context', label: 'Candidate pool',
         text: 'Only a single analysis line is available — style ranking is paused for this move.'

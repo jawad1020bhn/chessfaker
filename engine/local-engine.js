@@ -333,7 +333,86 @@
     };
   }
 
-  const exported = { analyze, evaluateWhite };
+  // ─── Style-directed candidate search ────────────────────────────────
+  // Ranks a small set of generated attacking candidates (from
+  // engine/attack-candidates.js) instead of the full legal-move set. For each
+  // candidate it reports the three numbers the safety layer needs:
+  //   score  — the OBJECTIVE white-relative eval from the same shallow search
+  //            `analyze` uses (so evalLoss vs the cloud best stays honest);
+  //   pv     — [candidate, best shallow reply] (so sacrifice detection and
+  //            forcing-PV counting read a real opponent answer, not the first
+  //            arbitrary legal move);
+  //   attackValue — a cheap attack bias (check / capture value / proximity to
+  //            the enemy king) used only to ORDER the candidates here. The
+  //            style ranker decides eligibility and final order downstream.
+  // This is the `style: 'attack'` search hook: the objective search in
+  // `analyze` is untouched, and the attack bias never leaks into scores.
+  function analyzeCandidates(fen, candidates, options = {}) {
+    const api = contract();
+    if (!api || !root.ChessCore || !root.ChessCore.parseFen(fen)) return [];
+    const list = Array.isArray(candidates) ? candidates : [];
+    if (!list.length) return [];
+    const maxDepth = Math.max(1, Math.min(8, Number(options.maxDepth) || 4));
+    const timeMs = Math.max(40, Math.min(1200, Number(options.timeMs) || 180));
+    const deadline = Date.now() + timeMs;
+    const whiteToMove = fen.split(' ')[1] !== 'b';
+    const parsed = root.ChessCore.parseFen(fen);
+    const enemyIsWhite = !whiteToMove;
+    const enemyKing = api.findKing(parsed.board, enemyIsWhite);
+
+    const out = [];
+    for (const cand of list) {
+      const uci = cand && cand.uci;
+      if (!uci || Date.now() >= deadline) break;
+      const child = api.applyMoveToFen(fen, uci);
+      if (!child) continue;
+      const childParsed = root.ChessCore.parseFen(child);
+      const childBoard = childParsed && childParsed.board;
+      const state = { nodes: 0, ply: 1, timedOut: false };
+      const score = search(child, maxDepth - 1, -Infinity, Infinity, !whiteToMove, deadline, state);
+
+      // Best shallow reply, so a two-ply PV exists for the ranker's
+      // sacrifice/forcing classification.
+      let reply = null;
+      const childWhite = child.split(' ')[1] !== 'b';
+      for (const move of orderedMoves(child)) {
+        const grandchild = api.applyMoveToFen(child, move);
+        if (!grandchild) continue;
+        const rstate = { nodes: 0, ply: 1, timedOut: false };
+        const rscore = quiesce(grandchild, -Infinity, Infinity, !childWhite, deadline + timeMs, rstate, 2);
+        if (childWhite ? rscore > (reply ? reply.score : -Infinity) : rscore < (reply ? reply.score : Infinity)) {
+          reply = { move, score: rscore };
+        }
+        if (Date.now() >= deadline + timeMs) break;
+      }
+
+      let attackValue = childBoard && api.kingInCheck(childBoard, enemyIsWhite) ? 4 : 0;
+      const fromCol = uci.charCodeAt(0) - 97;
+      const fromRow = 8 - Number(uci[1]);
+      const toCol = uci.charCodeAt(2) - 97;
+      const toRow = 8 - Number(uci[3]);
+      const captured = parsed.board[toRow][toCol];
+      if (captured) attackValue += (PIECE[captured.toLowerCase()] || 0) / 100;
+      if (enemyKing) attackValue += Math.max(0, 2 - Math.max(Math.abs(toRow - enemyKing.row), Math.abs(toCol - enemyKing.col)));
+
+      out.push({
+        uci,
+        kind: cand.kind || 'candidate',
+        tag: cand.tag || 'attack line',
+        scoreType: Math.abs(score) >= 90000 ? 'mate' : 'cp',
+        score: Math.abs(score) >= 90000 ? (score > 0 ? 1 : -1) : score,
+        depth: maxDepth,
+        pv: reply ? [uci, reply.move] : [uci],
+        attackValue
+      });
+    }
+    out.sort((a, b) =>
+      (b.attackValue - a.attackValue) ||
+      (whiteToMove ? (b.score - a.score) : (a.score - b.score)));
+    return out;
+  }
+
+  const exported = { analyze, analyzeCandidates, evaluateWhite };
   root.LocalEngine = exported;
   if (typeof module !== 'undefined' && module.exports) module.exports = exported;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

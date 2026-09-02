@@ -3,8 +3,8 @@ importScripts(
   'engine/api-coordinator.js',
   'engine/analysis-contract.js',
   'engine/analysis-policy.js',
-  'engine/human-form.js',
   'engine/local-engine.js',
+  'engine/attack-candidates.js',
   'engine/attack-book.js'
 );
 
@@ -28,30 +28,27 @@ const KEEPALIVE_ALARM = 'chess-hint-keepalive';
 const KEEPALIVE_ALARM_INTERVAL_MIN = 1;
 
 // ─── Default Settings ────────────────────────────────────────────────
+// The user-facing sheet is down to Style + Theme + read-only provider pulse.
+// Everything below is an internal, always-on behavior — no user toggle
+// remains for it (see docs/AGGRESSIVE-DIVERGENCE-PLAN.md §5).
 const DEFAULT_SETTINGS = {
+  // Factory default is the objective baseline (F1): the primary hint is the
+  // engine's own best move. The Aggressive persona is opt-in.
+  style: 'normal',
+  // Auto-scaled by opponent rating (AnalysisPolicy.suggestAggressionLevel).
+  // The manual dial is gone; the engine still resolves a concrete level.
+  aggressionLevel: 'auto',
+  theme: 'system',
+  // Internal, always-on.
   analysisQuality: 'auto',
   candidateLines: 'auto',
-  // Factory default is the objective baseline (F1): the primary hint is the
-  // engine's own best move. The Ultra persona is opt-in.
-  style: 'normal',
-  aggressionLevel: 'auto',
-  // Style-scoped preference; the side panel and hint engine require the exact
-  // Ultra Super Aggressive style before honoring this flag.
-  earlyKingHuntEnabled: false,
-  // Opt-in book preference for the attack styles (always on for Normal).
-  bookFirstOpenings: false,
-  humanLikeMode: false,
-  // Sparring: never slip once the position is clearly won.
-  sparringStrictness: false,
-  // Sparring partner strength for "play human" mode (HumanForm anchors).
-  sparringStrength: 1100,
+  earlyKingHuntEnabled: true,
+  bookFirstOpenings: true,
   autoAnalyze: true,
   showThreats: true,
   showCriticalMoments: true,
-  // These gate background fetching that feeds opening names and tablebase-backed plans.
   showOpeningExplorer: true,
   showTablebase: true,
-  // Individual analysis providers can be excluded without bypassing safeguards.
   useChessApi: true,
   useLichessCloud: true,
   useMastersExplorer: true
@@ -61,7 +58,7 @@ function normalizeSettings(value = {}) {
   const candidate = value && typeof value === 'object' ? value : {};
   const migrated = AnalysisPolicy.migrateLegacySettings(candidate);
   const booleanKeys = [
-    'humanLikeMode', 'earlyKingHuntEnabled', 'bookFirstOpenings', 'sparringStrictness',
+    'earlyKingHuntEnabled', 'bookFirstOpenings',
     'autoAnalyze', 'showThreats',
     'showCriticalMoments', 'showOpeningExplorer', 'showTablebase',
     'useChessApi', 'useLichessCloud', 'useMastersExplorer'
@@ -69,23 +66,22 @@ function normalizeSettings(value = {}) {
   const normalized = { ...DEFAULT_SETTINGS };
   normalized.analysisQuality = AnalysisPolicy.normalizeQuality(migrated.analysisQuality);
   normalized.candidateLines = AnalysisPolicy.normalizeCandidateLines(migrated.candidateLines);
-  // F1 / N1: honour a valid stored style instead of overwriting it with the
-  // factory default. Retired persona flavours consolidate onto Ultra; anything
+  // Two product styles. The objective baseline stays the fallback; the old
+  // middle "aggressive" and every retired persona flavour consolidate onto the
+  // Aggressive persona (whose auto dial already carries their soul). Anything
   // unrecognised degrades to the objective baseline, never to the most
-  // aggressive persona. A stored Normal/Aggressive preference no longer
-  // collapses onto the dial's Level I.
-  const STYLE_IDS = ['normal', 'aggressive', 'super_ultra_aggressive'];
-  const RETIRED_ULTRA_STYLES = ['super_aggressive', 'ultra_aggressive_stealth', 'kamikaze', 'berserker'];
+  // aggressive persona (F1 / N1 — safer, not wilder).
   const storedStyle = typeof migrated.style === 'string' ? migrated.style.trim().toLowerCase() : '';
-  normalized.style = STYLE_IDS.includes(storedStyle)
-    ? storedStyle
-    : (RETIRED_ULTRA_STYLES.includes(storedStyle) ? 'super_ultra_aggressive' : DEFAULT_SETTINGS.style);
+  normalized.style = storedStyle === 'normal'
+    ? 'normal'
+    : ['aggressive', 'super_ultra_aggressive', 'super_aggressive', 'ultra_aggressive_stealth', 'kamikaze', 'berserker'].includes(storedStyle)
+      ? 'super_ultra_aggressive'
+      : DEFAULT_SETTINGS.style;
   normalized.aggressionLevel = ['auto', 1, 2, 3].includes(migrated.aggressionLevel)
     ? migrated.aggressionLevel
     : 'auto';
+  normalized.theme = migrated.theme === 'light' || migrated.theme === 'dark' ? migrated.theme : 'system';
   for (const key of booleanKeys) normalized[key] = typeof migrated[key] === 'boolean' ? migrated[key] : DEFAULT_SETTINGS[key];
-  const strength = Math.round(Number(migrated.sparringStrength));
-  normalized.sparringStrength = Number.isFinite(strength) ? strength : DEFAULT_SETTINGS.sparringStrength;
   return normalized;
 }
 
@@ -316,11 +312,8 @@ function semanticSourceOrder(fen, settings = DEFAULT_SETTINGS) {
   // Styled play is ranked, not followed: the ranker needs a candidate pool,
   // and only the Lichess cloud eval returns several lines. chess-api answers
   // with a single move, which silently switches any style persona off. When
-  // a non-normal style (or human-like sparring) is active, prefer the
-  // multi-line source; book sources keep their position, and the sequential
-  // failover chain is untouched.
-  // Single-persona product: the style is always active, so the multi-line
-  // source is always preferred for ranking.
+  // a non-normal style is active, prefer the multi-line source; book sources
+  // keep their position, and the sequential failover chain is untouched.
   {
     const cloud = sources.indexOf('lichess-cloud');
     const chessApi = sources.indexOf('chess-api');
@@ -335,14 +328,11 @@ function semanticSourceOrder(fen, settings = DEFAULT_SETTINGS) {
 
 // ─── Engine-correlation coach ──────────────────────────────────────────
 // Stores the engine's first-choice UCI move keyed by FEN-of-side-to-move.
-// When the side panel is in human-like mode it also stores the human-natural
-// recommendation for the same FEN. A player move that blindly copies the
-// engine's exact top pick (while a different natural recommendation was
-// offered) is flagged as copying; any own or recommended move counts as
-// "sensible". This drives the training "Sensible moves" stat.
+// A player move that matches the stored recommendation counts as "sensible".
+// This drives the informational "Sensible moves" fact row — a stat, not a
+// setting.
 const ENGINE_MOVE_BY_FEN_LIMIT = 200;
 const engineMoveByFen = new Map();
-const humanMoveByFen = new Map();
 const correlationWindow = []; // array of booleans (true = sensible move)
 let correlationMatches = 0;
 let correlationTotal = 0;
@@ -363,63 +353,25 @@ function recordEngineRecommendation(fen, uci) {
   }
 }
 
-// The side panel reports the human-natural move it actually recommended
-// (from its style/human-like selection). Distinct from the raw engine top pick.
-function recordHumanRecommendation(fen, uci) {
-  if (!fen || !uci) return;
-  humanMoveByFen.set(fen, uci);
-  persistSessionState();
-  if (humanMoveByFen.size > ENGINE_MOVE_BY_FEN_LIMIT) {
-    const toRemove = Math.ceil(humanMoveByFen.size * 0.25);
-    let removed = 0;
-    for (const k of humanMoveByFen.keys()) {
-      if (removed >= toRemove) break;
-      humanMoveByFen.delete(k);
-      removed++;
-    }
-  }
-}
-
 // Accepts either:
 //   { prevFen, playerUci }  — exact UCI the player played
 //   { prevFen, actualFen }  — resulting FEN (we'll infer match by FEN-diff)
 // Returns { matched, sensible, expected, recentPct } or null if no stored
 // recommendation.
-//
-// The "Sensible moves" stat is a human-likeness guard:
-//  * Human-like mode (a distinct human recommendation exists): a move is
-//    sensible when the player did NOT blindly copy the engine's exact top pick.
-//    Playing the recommended human move, or any own natural move, is human-like
-//    and fair-play safe.
-//  * Standard mode (no separate human recommendation): following the
-//    recommendation (the engine's move) counts as sensible, preserving the
-//    classic "did you play the suggested move" behaviour.
 function recordPlayerMove(prevFen, payload) {
   if (!prevFen) return null;
-  const engineTop = engineMoveByFen.get(prevFen);
-  const humanMove = humanMoveByFen.get(prevFen);
-  const expected = humanMove || engineTop;
+  const expected = engineMoveByFen.get(prevFen);
   if (!expected) return null;
 
   let playedUci = null;
   if (payload && payload.playerUci) {
     playedUci = payload.playerUci;
   } else if (payload && payload.actualFen) {
-    // Infer which of our stored moves the player actually played by applying
-    // each to prevFen and comparing piece-placement + side-to-move.
-    if (engineTop && didPlayerPlayEngineMove(prevFen, engineTop, payload.actualFen)) playedUci = engineTop;
-    else if (humanMove && didPlayerPlayEngineMove(prevFen, humanMove, payload.actualFen)) playedUci = humanMove;
+    if (didPlayerPlayEngineMove(prevFen, expected, payload.actualFen)) playedUci = expected;
   }
 
-  let sensible;
-  if (humanMove && humanMove !== engineTop) {
-    // Human-like mode: a blind copy of the engine's exact top pick (ignoring
-    // the different natural recommendation) is copying, not thinking.
-    sensible = playedUci !== engineTop;
-  } else {
-    // Standard mode: playing the suggested move is sensible play.
-    sensible = Boolean(playedUci) && playedUci === expected;
-  }
+  // Playing the suggested move is sensible play.
+  const sensible = Boolean(playedUci) && playedUci === expected;
   correlationWindow.push(sensible);
   if (correlationWindow.length > 8) correlationWindow.shift();
   correlationTotal++;
@@ -452,7 +404,6 @@ function getCorrelationStats() {
 
 function resetCorrelationTracker() {
   engineMoveByFen.clear();
-  humanMoveByFen.clear();
   correlationWindow.length = 0;
   correlationMatches = 0;
   correlationTotal = 0;
@@ -484,11 +435,6 @@ async function hydrateSessionState() {
             if (Array.isArray(pair)) engineMoveByFen.set(pair[0], pair[1]);
           }
         }
-        if (Array.isArray(saved.humanMoves)) {
-          for (const pair of saved.humanMoves.slice(-ENGINE_MOVE_BY_FEN_LIMIT)) {
-            if (Array.isArray(pair)) humanMoveByFen.set(pair[0], pair[1]);
-          }
-        }
         if (Array.isArray(saved.correlationWindow)) correlationWindow.push(...saved.correlationWindow.filter(v => typeof v === 'boolean'));
         if (Number.isFinite(saved.correlationMatches)) correlationMatches = saved.correlationMatches;
         if (Number.isFinite(saved.correlationTotal)) correlationTotal = saved.correlationTotal;
@@ -516,7 +462,6 @@ function persistSessionState() {
   const snapshot = {
     [SESSION_STATE_KEY]: {
       engineMoves: [...engineMoveByFen.entries()].slice(-ENGINE_MOVE_BY_FEN_LIMIT),
-      humanMoves: [...humanMoveByFen.entries()].slice(-ENGINE_MOVE_BY_FEN_LIMIT),
       correlationWindow: [...correlationWindow],
       correlationMatches: correlationMatches,
       correlationTotal: correlationTotal,
@@ -1107,14 +1052,13 @@ function buildAttackBookResult(fen, playerColor, options) {
   }
 }
 
-// Style ranking, human-like sparring and the book-first preference all need
-// a candidate pool. The objective Normal style with everything else off does
-// not: its single-PV pass-through rule means one authoritative line IS the
-// answer (spec 2.2.1), so widening it would only add noise (F4).
+// Style ranking, the attack lane and the book-first preference all need a
+// candidate pool. The objective Normal style does not: its single-PV
+// pass-through rule means one authoritative line IS the answer (spec 2.2.1),
+// so widening it would only add noise (F4).
 function stylePoolNeeded(settings = {}) {
-  if (settings.humanLikeMode === true) return true;
   if (settings.bookFirstOpenings === true) return true;
-  if (settings.earlyKingHuntEnabled === true && settings.style === 'super_ultra_aggressive') return true;
+  if (settings.style === 'super_ultra_aggressive') return true;
   return settings.style !== 'normal';
 }
 
@@ -1143,6 +1087,58 @@ function widenSingleLinePool(result, fen, multiPv, quality) {
     };
   } catch (error) {
     console.warn('[Background] Pool widening failed:', error?.message || error);
+    return null;
+  }
+}
+
+// ─── Aggressive attack lane ───────────────────────────────────────────
+// The divergence fix. The cloud engine's own top lines are a tight cluster
+// around the best (quiet) move, so re-ranking them can never produce a
+// genuinely different aggressive style. Here we GENERATE attacking candidates
+// (checks, captures, sacrifices, king-zone strikes, pawn storms) from the full
+// legal-move set, search each with the shallow on-device engine (objective
+// score + a real reply), and append them to the pool WITHOUT reordering the
+// authoritative cloud line. The style ranker then decides, under its existing
+// safety gates, whether any generated move may take the primary slot.
+// Only the Aggressive persona builds a lane; the objective Normal pass-through
+// is untouched.
+function buildAttackLane(result, fen, playerColor, quality) {
+  try {
+    if (!globalThis.AttackCandidates || typeof AttackCandidates.rootCandidates !== 'function') return null;
+    if (!globalThis.LocalEngine || typeof LocalEngine.analyzeCandidates !== 'function') return null;
+    const cloudMoves = (result.pvs || []).map(p => p && p.pv && p.pv[0]).filter(Boolean);
+    const candidates = AttackCandidates.rootCandidates({ fen, playerColor, cloudMoves });
+    if (!candidates.length) return null;
+    const searched = LocalEngine.analyzeCandidates(fen, candidates, {
+      maxDepth: Math.max(4, (quality && quality.localDepth) || 4),
+      timeMs: Math.max(120, (quality && quality.localTimeMs) || 180)
+    });
+    const extras = searched
+      .filter(c => c && c.pv && c.pv[0] && !cloudMoves.includes(c.pv[0]))
+      .slice(0, 6);
+    if (!extras.length) return null;
+    return {
+      ...result,
+      poolExpanded: true,
+      attackLane: true,
+      pvs: [
+        ...result.pvs,
+        ...extras.map((c, index) => ({
+          multipv: result.pvs.length + index + 1,
+          scoreType: c.scoreType,
+          score: c.score,
+          depth: c.depth,
+          seldepth: c.depth,
+          pv: c.pv,
+          nodes: 0, nps: 0, time: 0,
+          attackCandidate: true,
+          candidateKind: c.kind,
+          candidateTag: c.tag
+        }))
+      ]
+    };
+  } catch (error) {
+    console.warn('[Background] Attack-lane assembly failed:', error?.message || error);
     return null;
   }
 }
@@ -1295,7 +1291,7 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
   }
   const settings = settingsEarly || normalizeSettings((await chrome.storage.local.get('settings')).settings);
   const quality = AnalysisPolicy.resolveQuality(settings, {
-    earlyKingHunt: settings.style === 'super_ultra_aggressive' && settings.earlyKingHuntEnabled === true
+    earlyKingHunt: settings.style === 'super_ultra_aggressive'
   });
   const chessApiParams = AnalysisPolicy.chessApiRequestParams(quality, multiPv);
   const priority = options.refresh ? 'manual-current-position' : 'current-player-turn';
@@ -1503,24 +1499,22 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
     }
   }
 
-  // Offline sparring realism: in "play human" mode, human-game statistics stay
-  // useful into the early middlegame, so explorer enrichment runs over the
-  // extended sparring range (moves ~1-18) instead of only plausible openings.
-  const sparringHuman = settings.humanLikeMode === true;
-  const enrichmentRangeOk = sparringHuman
-    ? AnalysisPolicy.isSparringRangeFen(fen)
-    : isPlausibleOpening(fen);
+  // ── Aggressive attack lane (the divergence fix) ───────────────────
+  // Only the Aggressive persona generates candidates beyond the cloud's own
+  // top lines. The objective Normal style is the spec 2.2.1 pass-through and
+  // is never widened. The cloud line stays pv[0]; the lane only ADDS options.
+  if (settings.style !== 'normal' && Array.isArray(bestResult.pvs) && bestResult.pvs.length > 0) {
+    const lane = buildAttackLane(bestResult, fen, playerColor, quality);
+    if (lane) bestResult = lane;
+  }
+
+  // Opening enrichment stays useful into the early middlegame for opening
+  // naming and book-first preference.
+  const enrichmentRangeOk = isPlausibleOpening(fen);
   if (hasReliablePositionMetadata && settings.showOpeningExplorer === true && enrichmentRangeOk) {
     if (usedSource === 'masters-explorer') bestResult.openingData = openingDataFromMastersResult(bestResult);
     const cachedOpening = bestResult.openingData ? null : await apiCoordinator.getCached(openingCacheKey(fen), 'openingExplorer');
     if (cachedOpening?.ok) bestResult.openingData = cachedOpening.data;
-
-    // In sparring range, a cached player-explorer result also counts as usable
-    // popularity data even when it did not win source selection.
-    if (!bestResult.openingData && sparringHuman && usedSource !== 'opening-explorer') {
-      const sparringCachedOpening = await apiCoordinator.getCached(openingCacheKey(fen), 'openingExplorer');
-      if (sparringCachedOpening?.ok) bestResult.openingData = sparringCachedOpening.data;
-    }
 
     const shouldEnrich = !bestResult.openingData && usedSource !== 'masters-explorer' &&
       apiCoordinator.isPositionCurrent(positionToken) &&
@@ -1533,27 +1527,7 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
     }
   }
 
-  // Attach the deterministic form session so the panel's style/human-like
-  // selection uses exactly the same parameters the background computed.
-  if (sparringHuman) {
-    bestResult.formSession = getFormSession(settings);
-  }
-
   return bestResult;
-}
-
-// ─── Sparring form session ─────────────────────────────────────────────
-// One stable session per game, keyed by the correlation tracker's game id.
-// Deterministic given the game: re-analyzing a position never re-rolls form.
-function getFormSession(settings) {
-  const humanForm = (typeof self !== 'undefined' && self.HumanForm) ||
-    (typeof globalThis !== 'undefined' ? globalThis.HumanForm : null);
-  if (!humanForm) return null;
-  const rating = Number(settings.sparringStrength) || humanForm.RATING_DEFAULT;
-  return humanForm.createSession({
-    rating,
-    seed: `game-${lastAnalysisGameId || 'default'}`
-  });
 }
 
 // ─── Error Classification for User-Friendly Messages ─────────────────
@@ -1778,10 +1752,10 @@ function handleRuntimeMessage(message, sender, sendResponse) {
       }
 
       const quality = AnalysisPolicy.resolveQuality(settings, {
-        earlyKingHunt: settings.earlyKingHuntEnabled === true
+        earlyKingHunt: settings.style === 'super_ultra_aggressive'
       });
       const resolvedMultiPv = AnalysisPolicy.resolveMultiPv(settings, {
-        earlyKingHunt: settings.earlyKingHuntEnabled === true
+        earlyKingHunt: settings.style === 'super_ultra_aggressive'
       });
       let exactHintBlocked = null;
       if (message.positionReliable !== true) {
@@ -1999,15 +1973,6 @@ function handleRuntimeMessage(message, sender, sendResponse) {
     return false;
   }
 
-  // The side panel reports the natural move it actually recommended
-  // (from its style/human-like selection), so the coach can distinguish
-  // the player's own choices from blind engine-top copies.
-  if (msgType === 'record_human_recommendation') {
-    recordHumanRecommendation(message.fen, message.uci);
-    sendResponse({ ok: true });
-    return false;
-  }
-
   if (msgType === 'get_correlation_stats') {
     sendResponse(getCorrelationStats());
     return false;
@@ -2041,24 +2006,28 @@ chrome.runtime.onInstalled.addListener(() => {
         'minimalFootprint', 'smartThrottling', 'cacheFirstMode']) {
         if (s[obsolete] !== undefined) { delete s[obsolete]; updated = true; }
       }
-      // Consolidate legacy playing styles into the rebuilt three-mode system.
-      if (['super_aggressive', 'ultra_aggressive_stealth', 'kamikaze', 'berserker'].includes(s.style)) {
-        s.style = 'super_ultra_aggressive';
-        updated = true;
-      } else if (!['normal', 'aggressive', 'super_ultra_aggressive'].includes(s.style)) {
+      // Consolidate the retired style model onto the two product styles:
+      // Objective (normal) and Aggressive (super_ultra_aggressive).
+      const AGGRESSIVE_IDS = ['aggressive', 'super_ultra_aggressive', 'super_aggressive', 'ultra_aggressive_stealth', 'kamikaze', 'berserker'];
+      if (AGGRESSIVE_IDS.includes(s.style)) {
+        if (s.style !== 'super_ultra_aggressive') { s.style = 'super_ultra_aggressive'; updated = true; }
+      } else if (s.style !== 'normal') {
         s.style = 'normal';
         updated = true;
       }
 
-      if (s.humanLikeMode === undefined) { s.humanLikeMode = false; updated = true; }
-      if (s.sparringStrength === undefined) { s.sparringStrength = 1100; updated = true; }
-      else {
-        const strength = Math.round(Number(s.sparringStrength));
-        s.sparringStrength = Number.isFinite(strength) ? strength : 1100;
-        if (s.sparringStrength !== strength) updated = true;
+      // Human/Sparring mode is removed (aggressive is now genuinely different,
+      // so "play weaker" is redundant). Delete the dead keys.
+      for (const dead of ['humanLikeMode', 'sparringStrength', 'sparringStrictness']) {
+        if (s[dead] !== undefined) { delete s[dead]; updated = true; }
       }
-      if (s.earlyKingHuntEnabled === undefined) { s.earlyKingHuntEnabled = false; updated = true; }
-      else if (typeof s.earlyKingHuntEnabled !== 'boolean') { s.earlyKingHuntEnabled = Boolean(s.earlyKingHuntEnabled); updated = true; }
+      // Removed toggles become always-on internal behaviors.
+      for (const dead of ['analysisQuality', 'candidateLines', 'autoAnalyze', 'showThreats',
+        'showCriticalMoments', 'showOpeningExplorer', 'showTablebase']) {
+        if (s[dead] !== undefined) { delete s[dead]; updated = true; }
+      }
+      if (s.earlyKingHuntEnabled !== undefined) { delete s.earlyKingHuntEnabled; updated = true; }
+      if (s.bookFirstOpenings !== undefined) { delete s.bookFirstOpenings; updated = true; }
       if (s.hintLevel !== undefined) { delete s.hintLevel; updated = true; }
       if (s.repertoire !== undefined) { delete s.repertoire; updated = true; }
       if (s.whiteRepertoire !== undefined) { delete s.whiteRepertoire; updated = true; }
@@ -2067,15 +2036,12 @@ chrome.runtime.onInstalled.addListener(() => {
         if (s[obsolete] !== undefined) { delete s[obsolete]; updated = true; }
       }
 
-      const migratedQuality = AnalysisPolicy.migrateLegacySettings(s);
-      if (s.analysisQuality !== migratedQuality.analysisQuality) { s.analysisQuality = migratedQuality.analysisQuality; updated = true; }
-      if (s.candidateLines !== migratedQuality.candidateLines) { s.candidateLines = migratedQuality.candidateLines; updated = true; }
       if (s.depthTarget !== undefined) { delete s.depthTarget; updated = true; }
       if (s.cloudDepth !== undefined) { delete s.cloudDepth; updated = true; }
       if (s.correlationThreshold !== undefined) { delete s.correlationThreshold; updated = true; }
-      if (s.useChessApi === undefined) { s.useChessApi = true; updated = true; }
-      if (s.useLichessCloud === undefined) { s.useLichessCloud = true; updated = true; }
-      if (s.useMastersExplorer === undefined) { s.useMastersExplorer = true; updated = true; }
+      if (s.useChessApi !== undefined) { delete s.useChessApi; updated = true; }
+      if (s.useLichessCloud !== undefined) { delete s.useLichessCloud; updated = true; }
+      if (s.useMastersExplorer !== undefined) { delete s.useMastersExplorer; updated = true; }
 
       if (updated) {
         chrome.storage.local.set({ settings: s });

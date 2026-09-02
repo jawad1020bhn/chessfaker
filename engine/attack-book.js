@@ -15,7 +15,7 @@
  * SAN move history; any opponent deviation outside the book simply means
  * "no coverage" and the caller falls through to the local engine.
  *
- * Classic global + CommonJS export, mirroring human-form.js.
+ * Classic global + CommonJS export, mirroring the other engine modules.
  */
 (function (root) {
   'use strict';
