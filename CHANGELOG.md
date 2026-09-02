@@ -55,8 +55,13 @@ dispositions, and the acceptance gates are in CI.
   mate discipline in all styles, win preservation, the Auto ceiling, pool
   order including the depth-exception, the book-first preference,
   `localPool` survival through sealing, and the restored panel controls.
-- **CI is active** at `.github/workflows/ci.yml`: suites, `npm run gates`,
-  the persona probe, lint and the store package.
+- `npm run gates` (`scripts/rescue-gates.mjs`) asserts G0–G2 on the fixed
+  probe set, loading exactly the sidepanel's module set.
+- **CI still needs one human command to switch on.** The GitHub App token
+  that edits this repo has no `workflows` permission, so a push adding
+  `.github/workflows/ci.yml` is rejected. `docs/ci-workflow.example.yml`
+  carries the complete, tested workflow (suites, gates, probe, lint,
+  package) and the copy-and-push command to enable it.
 - `docs/rescue/` carries the anchor table, the new-findings register and the
   assumption ledger.
 

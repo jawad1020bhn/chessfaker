@@ -84,7 +84,10 @@ node tests/hint-engine.test.js   # any single suite directly
 (`scripts/rescue-gates.mjs`): default-hint fidelity, win preservation, the
 Auto ceiling, opening sanity, sparring differentiation, pool integrity and
 the HumanEvaluator quarantine guard. `npm run probe` runs the older
-persona-efficacy probe. Both run in CI (`.github/workflows/ci.yml`).
+persona-efficacy probe.
+
+CI is defined in `docs/ci-workflow.example.yml` and enabled by copying it to
+`.github/workflows/ci.yml` (the command is at the top of that file).
 
 ## Lint & formatting
 

@@ -1,11 +1,17 @@
-# GitHub Actions CI — reference copy.
+# GitHub Actions CI — enable in one step
 #
-# CI is ACTIVE at .github/workflows/ci.yml (it runs the regression suites,
-# the hint-quality acceptance gates from scripts/rescue-gates.mjs, the
-# persona-efficacy probe, lint and the store package). This file is kept as
-# the readable reference and as the template to restore from; edit both, or
-# edit this one and copy it over:
-#   cp docs/ci-workflow.example.yml .github/workflows/ci.yml
+# This repository's automation ships as an example because the automation
+# that edits this repo cannot create workflow files: the GitHub App token
+# has no `workflows` permission, so a push that adds
+# `.github/workflows/*.yml` is rejected outright.
+#
+# To enable CI, run this once from a checkout with your own credentials:
+#
+#   mkdir -p .github/workflows && cp docs/ci-workflow.example.yml .github/workflows/ci.yml
+#   git add .github/workflows/ci.yml && git commit -m "ci: enable" && git push
+#
+# Nothing else needs to change — every job below runs commands that already
+# exist in package.json / scripts/.
 
 name: CI
 
@@ -16,16 +22,35 @@ on:
 
 jobs:
   test:
-    name: Tests (bare Node)
+    name: Regression suites (bare Node)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # The ten suites are self-contained (plain node:test-free assert
-      # scripts) — no install step needed.
+      # The twelve suites under tests/ are self-contained plain-assert
+      # scripts — no install step needed. A failing suite blocks merge.
       - run: node scripts/run-tests.mjs
+
+  gates:
+    name: Hint-quality acceptance gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Harness A from the hint-quality rescue brief: loads exactly the
+      # production module set and asserts G0–G2 — default-hint fidelity,
+      # fallback safety, win preservation, the Auto ceiling, opening
+      # sanity, sparring differentiation, pool integrity and the
+      # HumanEvaluator quarantine guard. Exits non-zero on any FAIL.
+      - run: node scripts/rescue-gates.mjs
+      # The persona-efficacy gates must not regress either.
+      - run: node scripts/style-efficacy-probe.mjs | tee /tmp/probe.log
+      - name: No persona gate may report FAIL
+        run: '! grep -q "\[FAIL\]" /tmp/probe.log'
 
   lint:
     name: Lint & format tooling

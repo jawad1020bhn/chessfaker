@@ -14,7 +14,7 @@
 > | **Pool integrity (F4)** | `localPool` extras from single-line widening may inform and fill the display list but can never take the primary slot while a cloud PV is present (exception: cloud depth <12, local depth ≥5, agreement within 30cp). |
 > | **F5/F6 — no code in this tree** | `engine/human-evaluator.js` does not exist here and no shipped file references `HumanEvaluator`. The pool-replacement hazard is real if it is ever re-added, so it is pinned by a guard assertion (`npm run gates`) rather than a fix. |
 > | **F7 — premise false here** | `tests/` was not deleted: 12 suites, `node scripts/run-tests.mjs` exits 0. What *was* missing was coverage of style resolution, Normal semantics, win preservation, the Auto ceiling and pool order — all added. |
-> | **CI is active** | `.github/workflows/ci.yml` runs the suites, `scripts/rescue-gates.mjs` (G0–G2), the probe below, lint and the store package. |
+> | **CI is ready, not yet switched on** | `docs/ci-workflow.example.yml` holds the complete workflow (suites, `scripts/rescue-gates.mjs` G0–G2, the probe below, lint, store package). The GitHub App token used to edit this repo has no `workflows` permission, so enabling it is a one-line copy-and-push by a human — the command is at the top of that file. |
 >
 > Reproduce the rescue gates with `npm run gates`; the persona gates below
 > with `npm run probe`. Assumption ledger: `docs/rescue/ASSUMPTIONS.md`.
