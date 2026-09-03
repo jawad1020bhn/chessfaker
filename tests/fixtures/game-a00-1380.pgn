@@ -1,0 +1,13 @@
+[Event "Reported loss — Aggressive persona as Black"]
+[White "bot"]
+[Black "Aggressive persona"]
+[Result "1-0"]
+[TimeControl "600"]
+[WhiteElo "1380"]
+[ECO "A00"]
+
+1. g3 d5 2. Bg2 c6 3. b3 e5 4. Bb2 Qd6 5. d3 Nh6 6. Nd2 f6 7. a4 Nd7 8. Nh3 g6
+9. e4 g5 10. exd5 cxd5 11. O-O g4 12. Ng5 fxg5 13. c4 Kf7 14. Bxd5+ Kg6 15. Ne4
+Qc7 16. Qd2 Be7 17. Ba3 Nb6 18. Bxe7 Nxd5 19. Qxg5+ Kf7 20. Nd6+ Qxd6 21. Bxd6
+Nf6 22. Qxh6 e4 23. Be5 Ne8 24. Bxh8 Bf5 25. dxe4 Bxe4 26. Rfe1 Bf3 27. h3 Be2
+28. Rxe2 gxh3 29. Qxh3 h6 30. Qxh6 Rb8 31. Rae1 Rc8 32. Re7+ 1-0

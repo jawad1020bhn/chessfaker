@@ -59,9 +59,25 @@ const selectedEarly = engine.selectPVForStyle(
   openingFen,
   'super_ultra_aggressive',
   'w',
-  { earlyKingHuntEnabled: true }
+  // Phase 4: divergence is a function of opponent strength. Against a club
+  // opponent the hunt may spend eval on the direct attack...
+  { earlyKingHuntEnabled: true, opponentRating: 1150 }
 );
 assert.equal(selectedEarly[0].pv[0], 'd1h5', 'the enabled early hunt can prefer the direct attack within its risk budget');
+
+// ...but against a strong opponent the same position converges to the
+// objective move: a 50cp donation is outside the 1400-1700 band's window.
+const selectedStrong = engine.selectPVForStyle(
+  [
+    { score: 80, scoreType: 'cp', depth: 22, pv: quietPv },
+    { score: 30, scoreType: 'cp', depth: 22, pv: directAttackPv }
+  ],
+  openingFen,
+  'super_ultra_aggressive',
+  'w',
+  { earlyKingHuntEnabled: true, opponentRating: 1600 }
+);
+assert.equal(selectedStrong[0].pv[0], quietPv[0], 'against 1600 the persona plays the objective move');
 assert.equal(selectedEarly[0]._styleAnalysis.earlyKingHuntActive, true);
 assert.ok(selectedEarly[0]._styleAnalysis.earlyKingHuntBonus > 0);
 assert.ok(selectedEarly[0]._styleAnalysis.reasons.some(reason => reason.includes('Early King Hunt')));
@@ -76,7 +92,9 @@ const selectedOff = engine.selectPVForStyle(
   openingFen,
   'super_ultra_aggressive',
   'w',
-  { earlyKingHuntEnabled: false }
+  // Same club-band opponent as above, so this isolates the add-on flag rather
+  // than the Phase 4 strength gate.
+  { earlyKingHuntEnabled: false, opponentRating: 1150 }
 );
 assert.equal(selectedOff[0].pv[0], 'd1h5', 'the disabled setting leaves the existing Ultra Super Aggressive choice path intact');
 assert.equal(selectedOff[0]._styleAnalysis.earlyKingHuntActive, false);

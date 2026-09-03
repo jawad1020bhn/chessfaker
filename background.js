@@ -1102,20 +1102,45 @@ function widenSingleLinePool(result, fen, multiPv, quality) {
 // safety gates, whether any generated move may take the primary slot.
 // Only the Aggressive persona builds a lane; the objective Normal pass-through
 // is untouched.
-function buildAttackLane(result, fen, playerColor, quality) {
+function buildAttackLane(result, fen, playerColor, quality, divergence) {
   try {
     if (!globalThis.AttackCandidates || typeof AttackCandidates.rootCandidates !== 'function') return null;
     if (!globalThis.LocalEngine || typeof LocalEngine.analyzeCandidates !== 'function') return null;
+    // Phase 4: above the club band the lane is switched off entirely — a
+    // generated, shallow-searched move cannot beat 1400+ opposition.
+    if (divergence && divergence.attackLane === false) return null;
     const cloudMoves = (result.pvs || []).map(p => p && p.pv && p.pv[0]).filter(Boolean);
     const candidates = AttackCandidates.rootCandidates({ fen, playerColor, cloudMoves });
     if (!candidates.length) return null;
+    // Phase 2: verify the extras with a DEEPER search than the pool search,
+    // and measure them against the local engine's own best move — the same
+    // yardstick — so a shallow score cannot flatter a bad move.
+    const verifyDepth = Math.max(5, ((quality && quality.localDepth) || 4) + 1);
+    const verifyTime = Math.max(200, ((quality && quality.localTimeMs) || 180) * 2);
     const searched = LocalEngine.analyzeCandidates(fen, candidates, {
-      maxDepth: Math.max(4, (quality && quality.localDepth) || 4),
-      timeMs: Math.max(120, (quality && quality.localTimeMs) || 180)
+      maxDepth: verifyDepth,
+      timeMs: verifyTime
     });
+    if (!searched.length) return null;
+    const localReference = LocalEngine.analyze(fen, { multiPv: 1, maxDepth: verifyDepth, timeMs: verifyTime });
+    const toMover = (score) => (playerColor === 'w' ? Number(score) || 0 : -(Number(score) || 0));
+    const referenceScore = localReference && localReference.pvs && localReference.pvs[0]
+      ? toMover(localReference.pvs[0].score)
+      : null;
+    const window = Number.isFinite(divergence && divergence.maxDivergenceCp)
+      ? Math.max(30, divergence.maxDivergenceCp * 2)
+      : 60;
     const extras = searched
       .filter(c => c && c.pv && c.pv[0] && !cloudMoves.includes(c.pv[0]))
-      .slice(0, 6);
+      // A candidate needs a CONCRETE point, not just an attacking shape.
+      .filter(c => ['check', 'capture', 'sac', 'kingzone', 'storm'].includes(c.kind))
+      // ...and it must survive the deeper local search: no move that the same
+      // engine considers materially worse than its own best may be offered.
+      .filter(c => referenceScore === null || c.scoreType === 'mate' ||
+        toMover(c.score) >= referenceScore - window)
+      // Only the best 1-2 extras are admitted (it used to be 6, which is how
+      // h6/h5/f5/g5 all reached the ranker at once).
+      .slice(0, 2);
     if (!extras.length) return null;
     return {
       ...result,
@@ -1504,7 +1529,9 @@ async function _performCloudAnalysisInternal(fen, playerColor, options = {}) {
   // top lines. The objective Normal style is the spec 2.2.1 pass-through and
   // is never widened. The cloud line stays pv[0]; the lane only ADDS options.
   if (settings.style !== 'normal' && Array.isArray(bestResult.pvs) && bestResult.pvs.length > 0) {
-    const lane = buildAttackLane(bestResult, fen, playerColor, quality);
+    const divergence = AnalysisPolicy.divergencePolicyFor(options.opponentRating);
+    bestResult.divergenceBand = divergence.band;
+    const lane = buildAttackLane(bestResult, fen, playerColor, quality, divergence);
     if (lane) bestResult = lane;
   }
 
@@ -1800,6 +1827,8 @@ function handleRuntimeMessage(message, sender, sendResponse) {
         multiPv: resolvedMultiPv,
         settings,
         quality,
+        // Phase 4: opponent strength decides how far the persona may diverge.
+        opponentRating: Number.isFinite(Number(message.opponentRating)) ? Number(message.opponentRating) : null,
         moveHistory: message.gameInfo?.moveHistory || [],
         refresh: Boolean(message.refresh),
         positionToken,

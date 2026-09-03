@@ -1366,6 +1366,7 @@
         ? window.AnalysisPolicy.resolveMultiPv(settings, { earlyKingHunt: isEarlyKingHuntActive() })
         : 3,
       hintLevel: EXACT_HINT_LEVEL,
+      opponentRating,
       refresh: refresh,
       tabId: activeTabId,
       positionReliable,
@@ -1389,6 +1390,8 @@
             openingData: data.openingData,
             earlyKingHuntEnabled: earlyKingHuntActive,
             aggressionLevel: effectiveAggressionLevel(),
+            // Phase 4: the ranker gates divergence on opponent strength.
+            opponentRating,
             bookFirstOpenings: true
           }
         )
@@ -1826,7 +1829,8 @@
       {
         earlyKingHuntEnabled: isEarlyKingHuntActive(),
         bookFirstOpenings: settings.bookFirstOpenings === true,
-        aggressionLevel: effectiveAggressionLevel()
+        aggressionLevel: effectiveAggressionLevel(),
+        opponentRating
       }
     );
     recordAggressionPick(hints, data.fen);
